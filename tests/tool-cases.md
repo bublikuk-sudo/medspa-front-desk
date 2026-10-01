@@ -82,3 +82,25 @@ has been pushed.
 
 Airtable node output shape (n8n 2.41.5, Airtable node 2.2): Search returns `{ id, createdTime, fields: { ... } }`,
 so expressions read `$json.fields.<column>`, not `$json.<column>`.
+
+### search_knowledge
+
+`search_knowledge(question)` embeds the question, takes the 3 nearest paragraphs of the `medspa_knowledge`
+PGVector table and returns `FOUND\n[topic] text\n\n[topic] text...` (the topic line that the ingest put in front
+of the embedded text is stripped again) or `NOT_FOUND`. The output also carries `scores`, the raw values.
+
+The `score` on this node is the pgvector cosine DISTANCE (0 = identical, 2 = opposite), so a LOWER value is better.
+`Rank` therefore has `HIGHER_IS_BETTER = false`. `THRESHOLD` is `null`: measured on 60 questions, no single cut-off
+separates answerable from unanswerable ones (in-base questions score 0.27-0.76, out-of-base 0.51-0.93), so with a
+non-empty index the tool always returns `FOUND` with 3 paragraphs and the agent has to judge relevance itself.
+Details and the sweep table: `raw/n8n/2026-10-01-pgvector-knowledge-base-report.md`.
+
+Run the ingest by hand with `docker compose exec -T -e N8N_RUNNERS_BROKER_PORT=5690 n8n n8n execute --id <id of wf4-knowledge-ingest>`
+(from `/opt/medspa/deploy`; without the extra port the CLI fails with "Task Broker's port 5679 is already in use").
+
+| case | why |
+|---|---|
+| `kb_hours`, `kb_botox_prep` | the best match is the right paragraph (`FOUND` then `[topic]` on the next line, so the top result is asserted, not just any of the 3) |
+| `kb_paraphrase_shave` | "Do I need to shave before laser?" shares no sentence with the laser paragraph and must still find it first |
+| `kb_strips_topic_line` | the verdict shows `[topic] text` once: the topic line added for embedding is cut off |
+| `kb_out_of_base` (DISABLED, commented out in the tsv) | the brief expects `NOT_FOUND` for a weather question, but the weather question scores 0.697, worse than in-base questions such as "Where exactly are you located?" (0.755). A threshold that blocks the weather question (0.56 was tried through the real node) turned 11 of 36 genuine in-base questions into `NOT_FOUND`. Enable the row only after `THRESHOLD` in the `Rank` node is set |
