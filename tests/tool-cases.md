@@ -59,3 +59,18 @@ Cases are appended to the tsv together with the tools they test (tasks 7-12).
 The calendar fixtures cases (`fixtures_list_empty`, `fixtures_create_and_delete`)
 are added once the `MedSpa Google Calendar` credential exists and `test-fixtures`
 has been pushed.
+
+### find_client
+
+`find_client(contact_id)` returns `NEW` or a one-line `KNOWN ...` card. Cases:
+
+| case | why |
+|---|---|
+| `find_client_unknown` | a `contact_id` with no `Clients` row gives `NEW` (the Airtable Search emits one empty item, which the `Known?` check treats as no client) |
+| `find_client_no_name` | a row without `name` is also `NEW`: the agent has not asked for the name yet |
+| `find_client_known` | the full card: last visit from the latest `done` appointment, plus `upcoming=[appt_id service_id start_iso; ...]` with only future `booked`/`reminded`/`confirmed` rows; this is the only place `cancel_booking` gets an `appt_id` from. No `owner_notes` is expected here because `Clients.notes` is empty |
+| `find_client_no_appts` | a named client with no appointments gives `upcoming=[]` and no `last_visit` part, not an error |
+| `find_client_owner_notes` | non-empty `Clients.notes` is appended as `owner_notes="..."`, with double quotes turned into single quotes and whitespace collapsed |
+
+Airtable node output shape (n8n 2.41.5, Airtable node 2.2): Search returns `{ id, createdTime, fields: { ... } }`,
+so expressions read `$json.fields.<column>`, not `$json.<column>`.
