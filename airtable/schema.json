@@ -1,0 +1,71 @@
+{
+  "name": "MedSpa Front Desk",
+  "tables": [
+    { "name": "Settings", "fields": [
+      { "name": "business_name", "type": "singleLineText" },
+      { "name": "timezone", "type": "singleLineText" },
+      { "name": "working_hours", "type": "multilineText" },
+      { "name": "calendar_id", "type": "singleLineText" },
+      { "name": "owner_contact", "type": "singleLineText" },
+      { "name": "whatsapp_number", "type": "singleLineText" },
+      { "name": "intake_form_url", "type": "url" },
+      { "name": "cancellation_hours", "type": "number", "options": { "precision": 0 } },
+      { "name": "reminder_hours_before", "type": "number", "options": { "precision": 0 } },
+      { "name": "pending_ttl_min", "type": "number", "options": { "precision": 0 } },
+      { "name": "slot_step_min", "type": "number", "options": { "precision": 0 } },
+      { "name": "min_lead_min", "type": "number", "options": { "precision": 0 } }
+    ]},
+    { "name": "Services", "fields": [
+      { "name": "service_id", "type": "singleLineText" },
+      { "name": "name", "type": "singleLineText" },
+      { "name": "duration_min", "type": "number", "options": { "precision": 0 } },
+      { "name": "price", "type": "currency", "options": { "precision": 2, "symbol": "$" } },
+      { "name": "deposit_required", "type": "checkbox", "options": { "icon": "check", "color": "greenBright" } },
+      { "name": "active", "type": "checkbox", "options": { "icon": "check", "color": "greenBright" } }
+    ]},
+    { "name": "Clients", "fields": [
+      { "name": "client_id", "type": "singleLineText" },
+      { "name": "name", "type": "singleLineText" },
+      { "name": "phone", "type": "singleLineText" },
+      { "name": "telegram_chat_id", "type": "singleLineText" },
+      { "name": "email", "type": "email" },
+      { "name": "language", "type": "singleLineText" },
+      { "name": "first_seen", "type": "dateTime", "options": { "timeZone": "utc", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } },
+      { "name": "last_visit", "type": "date", "options": { "dateFormat": { "name": "iso" } } },
+      { "name": "status", "type": "singleSelect", "options": { "choices": [ { "name": "new" }, { "name": "active" }, { "name": "flagged" }, { "name": "escalated" } ] } },
+      { "name": "intake_completed", "type": "checkbox", "options": { "icon": "check", "color": "greenBright" } },
+      { "name": "notes", "type": "multilineText" },
+      { "name": "last_offer_json", "type": "multilineText" },
+      { "name": "last_offer_at", "type": "dateTime", "options": { "timeZone": "utc", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } }
+    ]},
+    { "name": "Appointments", "fields": [
+      { "name": "appt_id", "type": "singleLineText" },
+      { "name": "client_id", "type": "singleLineText" },
+      { "name": "service_id", "type": "singleLineText" },
+      { "name": "start_iso", "type": "singleLineText" },
+      { "name": "start_dt", "type": "dateTime", "options": { "timeZone": "utc", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } },
+      { "name": "status", "type": "singleSelect", "options": { "choices": [ { "name": "pending" }, { "name": "booked" }, { "name": "reminded" }, { "name": "confirmed" }, { "name": "cancelled" }, { "name": "late_cancel" }, { "name": "no_show" }, { "name": "done" } ] } },
+      { "name": "calendar_event_id", "type": "singleLineText" },
+      { "name": "created_via", "type": "singleSelect", "options": { "choices": [ { "name": "tg" }, { "name": "wa" }, { "name": "test" }, { "name": "owner" } ] } },
+      { "name": "pending_expires_at", "type": "dateTime", "options": { "timeZone": "utc", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } },
+      { "name": "summary_sent_at", "type": "dateTime", "options": { "timeZone": "utc", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } },
+      { "name": "reminder_sent_at", "type": "dateTime", "options": { "timeZone": "utc", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } },
+      { "name": "confirmed_at", "type": "dateTime", "options": { "timeZone": "utc", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } },
+      { "name": "revisit_invited_at", "type": "dateTime", "options": { "timeZone": "utc", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } },
+      { "name": "replaces_appt_id", "type": "singleLineText" },
+      { "name": "treatment_notes", "type": "multilineText" },
+      { "name": "next_visit_in", "type": "number", "options": { "precision": 0 } },
+      { "name": "practitioner", "type": "singleLineText" }
+    ]},
+    { "name": "Knowledge", "fields": [
+      { "name": "kb_id", "type": "singleLineText" },
+      { "name": "topic", "type": "singleLineText" },
+      { "name": "text", "type": "multilineText" },
+      { "name": "updated_at", "type": "lastModifiedTime", "options": { "referencedFieldIds": [] } }
+    ]}
+  ],
+  "links": [
+    { "table": "Appointments", "field": "client",  "to": "Clients" },
+    { "table": "Appointments", "field": "service", "to": "Services" }
+  ]
+}

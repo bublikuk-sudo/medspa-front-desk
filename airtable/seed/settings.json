@@ -1,0 +1,14 @@
+[{
+  "business_name": "Glow Aesthetics Med-Spa",
+  "timezone": "Europe/Berlin",
+  "working_hours": "{\"mon\":[\"10:00\",\"19:00\"],\"tue\":[\"10:00\",\"19:00\"],\"wed\":[\"10:00\",\"19:00\"],\"thu\":[\"10:00\",\"20:00\"],\"fri\":[\"10:00\",\"19:00\"],\"sat\":[\"10:00\",\"16:00\"],\"sun\":null}",
+  "calendar_id": "${GOOGLE_CALENDAR_ID}",
+  "owner_contact": "${OWNER_TELEGRAM_CHAT_ID}",
+  "whatsapp_number": "${WHATSAPP_FROM_DISPLAY}",
+  "intake_form_url": "https://example.com/intake-form-demo",
+  "cancellation_hours": 24,
+  "reminder_hours_before": 24,
+  "pending_ttl_min": 10,
+  "slot_step_min": 30,
+  "min_lead_min": 60
+}]

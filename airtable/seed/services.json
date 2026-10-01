@@ -1,0 +1,9 @@
+[
+  { "service_id": "botox",        "name": "Botox",                        "duration_min": 30, "price": 350, "deposit_required": false, "active": true },
+  { "service_id": "filler",       "name": "Dermal Filler",                "duration_min": 45, "price": 550, "deposit_required": true,  "active": true },
+  { "service_id": "hydrafacial",  "name": "HydraFacial",                  "duration_min": 60, "price": 200, "deposit_required": false, "active": true },
+  { "service_id": "laser_small",  "name": "Laser Hair Removal (small area)", "duration_min": 30, "price": 120, "deposit_required": false, "active": true },
+  { "service_id": "peel",         "name": "Chemical Peel",                "duration_min": 45, "price": 180, "deposit_required": false, "active": true },
+  { "service_id": "microneedling","name": "Microneedling",                "duration_min": 60, "price": 300, "deposit_required": false, "active": true },
+  { "service_id": "consult",      "name": "Consultation",                 "duration_min": 20, "price": 0,   "deposit_required": false, "active": true }
+]
