@@ -21,7 +21,10 @@ api_call() {
 [ -f deploy/credentials.map.json ]  || echo '{}' > deploy/credentials.map.json
 [ -f airtable/ids.json ]            || echo '{"base":"","tables":{}}' > airtable/ids.json
 f="$1"; name=$(jq -r .name "$f")
-body=$(jq --slurpfile ids deploy/workflow-ids.json --slurpfile creds deploy/credentials.map.json --slurpfile at airtable/ids.json '
+# WAPHONEID: a string value that is exactly WAPHONEID becomes WHATSAPP_PHONE_NUMBER_ID from secrets.env (an id, not a secret).
+# Stopgap until the n8n container has $env.WHATSAPP_PHONE_NUMBER_ID (Task 15 Step 1), after which workflows use the $env expression.
+body=$(jq --arg waid "${WHATSAPP_PHONE_NUMBER_ID:-}" --slurpfile ids deploy/workflow-ids.json --slurpfile creds deploy/credentials.map.json --slurpfile at airtable/ids.json '
+  def waphone(s): if s=="WAPHONEID" then (if ($waid|length)>0 then $waid else error("WHATSAPP_PHONE_NUMBER_ID is empty in secrets.env") end) else s end;
   def wf(s): if (s|type)=="string" and (s|startswith("WFID:")) then ($ids[0][s[5:]] // error("unknown workflow " + s)) else s end;
   def at(s): if s=="ATBASE" then (if ($at[0].base|type)=="string" and ($at[0].base|length)>0 then $at[0].base else error("unknown airtable base (airtable/ids.json not populated)") end)
              elif (s|type)=="string" and (s|startswith("ATTBL:")) then ($at[0].tables[s[6:]] // error("unknown table " + s))
@@ -31,7 +34,7 @@ body=$(jq --slurpfile ids deploy/workflow-ids.json --slurpfile creds deploy/cred
          then .credentials |= with_entries(.value.id = ($creds[0][.value.name] // error("unknown credential " + .value.name)))
          else . end)
   | walk(if type=="object" and .__rl==true then .value |= (wf(.) | at(.)) else . end)
-  | walk(if type=="string" then wf(.) else . end)' "$f")
+  | walk(if type=="string" then (wf(.) | waphone(.)) else . end)' "$f")
 id=$(api_call "$api/workflows?limit=250" | jq -r --arg n "$name" '.data[] | select(.name==$n) | .id' | head -1)
 if [ -z "$id" ]; then
   resp=$(api_call -X POST "$api/workflows" -d "$body")

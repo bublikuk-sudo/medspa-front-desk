@@ -1,0 +1,17 @@
+{
+  "NON_TEXT": "I can only read text messages for now. Please type your request.",
+  "RATE_LIMIT": "You have sent many messages in a short time. I will pause for a few minutes; a team member has been notified.",
+  "ESCALATED_HOLD": "A team member will contact you shortly. Automatic replies are paused for this conversation.",
+  "ERROR": "Something went wrong on our side — a team member will get back to you shortly.",
+  "PENDING_SUMMARY": "{service} ({duration} min) — {when}. Reply YES to confirm.",
+  "BOOKED": "You're booked: {service} ({duration} min) — {when}. We'll remind you {reminder_hours} hours before. To change or cancel, just message me here.",
+  "BOOKED_INTAKE": "Before your first visit, please complete our short intake and consent form (about 5 minutes): {intake_form_url}",
+  "SLOT_TAKEN": "Sorry — that time was just taken by another booking. Nearby options: {alternatives}. Which one works for you?",
+  "EXPIRED": "That offer has expired (we hold offers for {ttl} minutes). Tell me the service and day again and I'll check availability.",
+  "ALREADY_BOOKED": "You're already confirmed: {service} — {when}. Anything else I can help with?",
+  "REMINDER": "Reminder: {service} — {when} at {business_name}. Reply YES to confirm or NO to cancel.",
+  "REMINDER_CONFIRMED": "Thank you — your {service} on {when} is confirmed. See you soon!",
+  "REMINDER_CANCELLED": "Your {service} on {when} has been cancelled. Message me any time to book again.",
+  "REVISIT": "Hi {name}, it has been {days} days since your {service} at {business_name}. Would you like to book your next visit?",
+  "ESCALATED_REPLY": "I've passed this to our team — a team member will contact you shortly."
+}

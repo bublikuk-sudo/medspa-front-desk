@@ -1,0 +1,866 @@
+{
+  "name": "send_message",
+  "nodes": [
+    {
+      "id": "5e5d0001-0001-4c00-8000-000000000001",
+      "name": "Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        400
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "contact_id",
+              "type": "string"
+            },
+            {
+              "name": "text",
+              "type": "string"
+            },
+            {
+              "name": "template_key",
+              "type": "string"
+            },
+            {
+              "name": "appt_id",
+              "type": "string"
+            },
+            {
+              "name": "vars_json",
+              "type": "string"
+            },
+            {
+              "name": "outside_window",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "5e5d0001-0002-4c00-8000-000000000002",
+      "name": "Settings",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [
+        220,
+        400
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "CRED",
+          "name": "MedSpa Airtable"
+        }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "ATBASE",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "ATTBL:Settings",
+          "mode": "id"
+        },
+        "returnAll": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "5e5d0001-0003-4c00-8000-000000000003",
+      "name": "Client Formula",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        400
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Validate first: an empty or malformed contact_id must match NO client row (a comparison with '' would match every row whose column is blank).\nconst raw = String($('Trigger').first().json.contact_id || '').trim();\nconst ok = /^(tg:\\d+|wa:\\+\\d+)$/.test(raw);\nconst formula = ok\n  ? (raw.startsWith('tg:') ? \"{telegram_chat_id}='\" + raw.slice(3) + \"'\" : \"{phone}='\" + raw.slice(3) + \"'\")\n  : \"{client_id}='__no_such_client__'\";\nreturn [{ json: { formula } }];"
+      }
+    },
+    {
+      "id": "5e5d0001-0004-4c00-8000-000000000004",
+      "name": "Client",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        400
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "CRED",
+          "name": "MedSpa Airtable"
+        }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "ATBASE",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "ATTBL:Clients",
+          "mode": "id"
+        },
+        "filterByFormula": "={{ $json.formula }}",
+        "limit": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "5e5d0001-0005-4c00-8000-000000000005",
+      "name": "Appointment",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        400
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "CRED",
+          "name": "MedSpa Airtable"
+        }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "ATBASE",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "ATTBL:Appointments",
+          "mode": "id"
+        },
+        "filterByFormula": "={{ \"{appt_id}='\" + (String($('Trigger').first().json.appt_id || '').replace(/[^\\w-]/g, '') || '-') + \"'\" }}",
+        "limit": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "5e5d0001-0006-4c00-8000-000000000006",
+      "name": "Services",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        400
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "CRED",
+          "name": "MedSpa Airtable"
+        }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "ATBASE",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "ATTBL:Services",
+          "mode": "id"
+        },
+        "returnAll": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "5e5d0001-0007-4c00-8000-000000000007",
+      "name": "Render",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        400
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "/*TEMPLATES*/ const T = {\"NON_TEXT\":\"I can only read text messages for now. Please type your request.\",\"RATE_LIMIT\":\"You have sent many messages in a short time. I will pause for a few minutes; a team member has been notified.\",\"ESCALATED_HOLD\":\"A team member will contact you shortly. Automatic replies are paused for this conversation.\",\"ERROR\":\"Something went wrong on our side — a team member will get back to you shortly.\",\"PENDING_SUMMARY\":\"{service} ({duration} min) — {when}. Reply YES to confirm.\",\"BOOKED\":\"You're booked: {service} ({duration} min) — {when}. We'll remind you {reminder_hours} hours before. To change or cancel, just message me here.\",\"BOOKED_INTAKE\":\"Before your first visit, please complete our short intake and consent form (about 5 minutes): {intake_form_url}\",\"SLOT_TAKEN\":\"Sorry — that time was just taken by another booking. Nearby options: {alternatives}. Which one works for you?\",\"EXPIRED\":\"That offer has expired (we hold offers for {ttl} minutes). Tell me the service and day again and I'll check availability.\",\"ALREADY_BOOKED\":\"You're already confirmed: {service} — {when}. Anything else I can help with?\",\"REMINDER\":\"Reminder: {service} — {when} at {business_name}. Reply YES to confirm or NO to cancel.\",\"REMINDER_CONFIRMED\":\"Thank you — your {service} on {when} is confirmed. See you soon!\",\"REMINDER_CANCELLED\":\"Your {service} on {when} has been cancelled. Message me any time to book again.\",\"REVISIT\":\"Hi {name}, it has been {days} days since your {service} at {business_name}. Would you like to book your next visit?\",\"ESCALATED_REPLY\":\"I've passed this to our team — a team member will contact you shortly.\"}; /*END*/\nconst inp = $('Trigger').first().json;\nconst s = $('Settings').first().json.fields;\nconst client = ($('Client').first().json.fields || {});\nconst appt = ($('Appointment').first().json.fields || {});\nconst services = $('Services').all().map(i => i.json.fields || {});\nconst language = (client.language || 'en').toLowerCase();\nlet text = inp.text || '';\nlet vars = {};\nif (inp.template_key) {\n  const tpl = T[inp.template_key];\n  if (!tpl) throw new Error('Unknown template_key ' + inp.template_key);\n  const svc = services.find(x => x.service_id === appt.service_id) || {};\n  const when = appt.start_iso ? DateTime.fromISO(appt.start_iso).setZone(s.timezone).toFormat('ccc, LLL d, h:mm a') : '';\n  vars = Object.assign({\n    service: svc.name || '', duration: svc.duration_min || '', when,\n    business_name: s.business_name, reminder_hours: s.reminder_hours_before, ttl: s.pending_ttl_min,\n    intake_form_url: s.intake_form_url, name: client.name || '', days: appt.next_visit_in || '', alternatives: ''\n  }, inp.vars_json ? JSON.parse(inp.vars_json) : {});\n  text = tpl.replace(/\\{(\\w+)\\}/g, (_, k) => (vars[k] ?? '').toString());\n}\nreturn [{ json: { text, language, vars, needs_translation: !!inp.template_key && language !== 'en' } }];"
+      }
+    },
+    {
+      "id": "5e5d0001-0008-4c00-8000-000000000008",
+      "name": "Needs Translation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1540,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "5e5d0001-1001-4c00-8000-000000000001",
+              "leftValue": "={{ $json.needs_translation }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "5e5d0001-0009-4c00-8000-000000000009",
+      "name": "Translate",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        1760,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "promptType": "define",
+        "text": "=Translate the following customer-service message into the language with ISO 639-1 code \"{{ $json.language }}\". Keep names, dates, times, numbers, URLs and the words YES and NO exactly as written. Return only the translated text, nothing else.\n\n{{ $json.text }}",
+        "hasOutputParser": false
+      }
+    },
+    {
+      "id": "5e5d0001-0010-4c00-8000-000000000010",
+      "name": "Haiku",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.6,
+      "position": [
+        1760,
+        520
+      ],
+      "credentials": {
+        "anthropicApi": {
+          "id": "CRED",
+          "name": "MedSpa Anthropic"
+        }
+      },
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "claude-haiku-4-5",
+          "mode": "id"
+        },
+        "options": {
+          "maxTokensToSample": 1024
+        }
+      }
+    },
+    {
+      "id": "5e5d0001-0011-4c00-8000-000000000011",
+      "name": "Merge Text",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1980,
+        400
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5e5d0001-2001-4c00-8000-000000000001",
+              "name": "text",
+              "value": "={{ $json.text ?? $json.output ?? $('Render').first().json.text }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "5e5d0001-0012-4c00-8000-000000000012",
+      "name": "Format",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        400
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Approved WhatsApp templates (Task 15 Step 6 table). The names are PLACEHOLDERS until Meta approves the templates; params are in Meta's {{1}}, {{2}}... order.\nconst WA_TPL = {\n  REMINDER: { name: 'medspa_reminder', lang: 'en', params: ['service', 'when', 'business_name'] },\n  REVISIT: { name: 'medspa_revisit', lang: 'en', params: ['name', 'days', 'service', 'business_name'] }\n};\nconst inp = $('Trigger').first().json;\nconst client = ($('Client').first().json.fields || {});\nconst raw = String(inp.contact_id || '').trim();\nconst isTg = /^tg:\\d+$/.test(raw);\nconst isWa = /^wa:\\+\\d+$/.test(raw);\nif (!isTg && !isWa) throw new Error('send_message: contact_id must be tg:<digits> or wa:+<digits>, got \"' + raw + '\"');\nconst channel = isTg ? 'tg' : 'wa';\nlet text = ($json.text || '').toString().trim();\nif (!text) throw new Error('send_message: nothing to send (empty text)');\nconst outside = String(inp.outside_window || '').toLowerCase() === 'true';\nlet wa_template = '';\nlet wa_key = '';\nlet wa_params = [];\nif (channel === 'tg') {\n  // Trim the raw text first so the cut can never land inside a tag or an entity; then escape & < > BEFORE inserting tags.\n  text = text.slice(0, 4000).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\\*\\*(.+?)\\*\\*/g, '<b>$1</b>');\n} else {\n  text = text.replace(/\\*\\*(.+?)\\*\\*/g, '$1').slice(0, 1500);\n  if (outside) {\n    const spec = WA_TPL[inp.template_key];\n    if (!spec) throw new Error('send_message: outside_window=true needs template_key REMINDER or REVISIT, got \"' + (inp.template_key || '') + '\"');\n    const vars = $('Render').first().json.vars || {};\n    wa_template = spec.name + '|' + spec.lang;\n    wa_key = inp.template_key;\n    wa_params = spec.params.map(k => String(vars[k] ?? '').trim() || '-');\n  }\n}\nreturn [{ json: { text, channel, chat_id: channel === 'tg' ? raw.slice(3) : '', phone: channel === 'wa' ? (client.phone || raw.slice(3)) : '', outside_window: outside, wa_key, wa_template, wa_params } }];"
+      }
+    },
+    {
+      "id": "5e5d0001-0013-4c00-8000-000000000013",
+      "name": "Channel?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2420,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "5e5d0001-1002-4c00-8000-000000000002",
+              "leftValue": "={{ $json.channel === 'tg' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "5e5d0001-0014-4c00-8000-000000000014",
+      "name": "Send Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2640,
+        260
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "telegramApi": {
+          "id": "CRED",
+          "name": "MedSpa Telegram"
+        }
+      },
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false,
+          "disable_web_page_preview": true
+        }
+      }
+    },
+    {
+      "id": "5e5d0001-0015-4c00-8000-000000000015",
+      "name": "Template Send?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2640,
+        540
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "5e5d0001-1003-4c00-8000-000000000003",
+              "leftValue": "={{ String($('Trigger').first().json.outside_window || '').toLowerCase() === 'true' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "5e5d0001-0016-4c00-8000-000000000016",
+      "name": "Send WhatsApp Template REMINDER",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        3080,
+        340
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "whatsAppApi": {
+          "id": "CRED",
+          "name": "MedSpa WhatsApp"
+        }
+      },
+      "parameters": {
+        "resource": "message",
+        "operation": "sendTemplate",
+        "phoneNumberId": "WAPHONEID",
+        "recipientPhoneNumber": "={{ $json.phone }}",
+        "template": "={{ $json.wa_template }}",
+        "components": {
+          "component": [
+            {
+              "type": "body",
+              "bodyParameters": {
+                "parameter": [
+                  {
+                    "type": "text",
+                    "text": "={{ $json.wa_params[0] }}"
+                  },
+                  {
+                    "type": "text",
+                    "text": "={{ $json.wa_params[1] }}"
+                  },
+                  {
+                    "type": "text",
+                    "text": "={{ $json.wa_params[2] }}"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "5e5d0001-0019-4c00-8000-000000000019",
+      "name": "Template Key?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2860,
+        440
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "5e5d0001-1004-4c00-8000-000000000004",
+              "leftValue": "={{ $json.wa_key === 'REVISIT' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "5e5d0001-0020-4c00-8000-000000000020",
+      "name": "Send WhatsApp Template REVISIT",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        3080,
+        480
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "whatsAppApi": {
+          "id": "CRED",
+          "name": "MedSpa WhatsApp"
+        }
+      },
+      "parameters": {
+        "resource": "message",
+        "operation": "sendTemplate",
+        "phoneNumberId": "WAPHONEID",
+        "recipientPhoneNumber": "={{ $json.phone }}",
+        "template": "={{ $json.wa_template }}",
+        "components": {
+          "component": [
+            {
+              "type": "body",
+              "bodyParameters": {
+                "parameter": [
+                  {
+                    "type": "text",
+                    "text": "={{ $json.wa_params[0] }}"
+                  },
+                  {
+                    "type": "text",
+                    "text": "={{ $json.wa_params[1] }}"
+                  },
+                  {
+                    "type": "text",
+                    "text": "={{ $json.wa_params[2] }}"
+                  },
+                  {
+                    "type": "text",
+                    "text": "={{ $json.wa_params[3] }}"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "5e5d0001-0017-4c00-8000-000000000017",
+      "name": "Send WhatsApp",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        2860,
+        640
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "whatsAppApi": {
+          "id": "CRED",
+          "name": "MedSpa WhatsApp"
+        }
+      },
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "phoneNumberId": "WAPHONEID",
+        "recipientPhoneNumber": "={{ $json.phone }}",
+        "messageType": "text",
+        "textBody": "={{ $json.text }}"
+      }
+    },
+    {
+      "id": "5e5d0001-0018-4c00-8000-000000000018",
+      "name": "Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        3320,
+        400
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5e5d0001-2002-4c00-8000-000000000002",
+              "name": "verdict",
+              "value": "={{ 'SENT ' + $('Format').first().json.channel }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Client Formula",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Client Formula": {
+      "main": [
+        [
+          {
+            "node": "Client",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Client": {
+      "main": [
+        [
+          {
+            "node": "Appointment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Appointment": {
+      "main": [
+        [
+          {
+            "node": "Services",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Services": {
+      "main": [
+        [
+          {
+            "node": "Render",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render": {
+      "main": [
+        [
+          {
+            "node": "Needs Translation?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Translation?": {
+      "main": [
+        [
+          {
+            "node": "Translate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Translate": {
+      "main": [
+        [
+          {
+            "node": "Merge Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Haiku": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Translate",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Text": {
+      "main": [
+        [
+          {
+            "node": "Format",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format": {
+      "main": [
+        [
+          {
+            "node": "Channel?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Channel?": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Template Send?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Template Send?": {
+      "main": [
+        [
+          {
+            "node": "Template Key?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Telegram": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Template Key?": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Template REVISIT",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send WhatsApp Template REMINDER",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp Template REMINDER": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp Template REVISIT": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

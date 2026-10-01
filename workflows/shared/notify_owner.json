@@ -1,0 +1,93 @@
+{
+  "name": "notify_owner",
+  "nodes": [
+    {
+      "id": "a0b10006-0001-4c00-8000-000000000001",
+      "name": "Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            { "name": "text", "type": "string" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "a0b10006-0002-4c00-8000-000000000002",
+      "name": "Settings",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [220, 300],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Settings", "mode": "id" },
+        "returnAll": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "a0b10006-0003-4c00-8000-000000000003",
+      "name": "Send Owner",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [440, 300],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "telegramApi": { "id": "CRED", "name": "MedSpa Telegram" }
+      },
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.fields.owner_contact }}",
+        "text": "={{ String($('Trigger').first().json.text || '').slice(0, 4000).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }}",
+        "additionalFields": {
+          "parse_mode": "HTML",
+          "appendAttribution": false,
+          "disable_web_page_preview": true,
+          "disable_notification": false
+        }
+      }
+    },
+    {
+      "id": "a0b10006-0004-4c00-8000-000000000004",
+      "name": "Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [660, 300],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a0b10006-2001-4c00-8000-000000000001",
+              "name": "verdict",
+              "value": "SENT",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Trigger": { "main": [[{ "node": "Settings", "type": "main", "index": 0 }]] },
+    "Settings": { "main": [[{ "node": "Send Owner", "type": "main", "index": 0 }]] },
+    "Send Owner": { "main": [[{ "node": "Result", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}
