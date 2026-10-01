@@ -22,6 +22,7 @@
       "type": "n8n-nodes-base.airtable",
       "typeVersion": 2.2,
       "position": [220, 300],
+      "alwaysOutputData": true,
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
@@ -36,6 +37,18 @@
         "table": { "__rl": true, "value": "ATTBL:Settings", "mode": "id" },
         "returnAll": true,
         "options": {}
+      }
+    },
+    {
+      "id": "a0b10006-0005-4c00-8000-000000000005",
+      "name": "Check Settings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [330, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const f = $input.first().json.fields;\nif (!f || !String(f.owner_contact || '').trim()) throw new Error('notify_owner: Settings row missing or owner_contact empty');\nreturn $input.all();"
       }
     },
     {
@@ -86,7 +99,8 @@
   ],
   "connections": {
     "Trigger": { "main": [[{ "node": "Settings", "type": "main", "index": 0 }]] },
-    "Settings": { "main": [[{ "node": "Send Owner", "type": "main", "index": 0 }]] },
+    "Settings": { "main": [[{ "node": "Check Settings", "type": "main", "index": 0 }]] },
+    "Check Settings": { "main": [[{ "node": "Send Owner", "type": "main", "index": 0 }]] },
     "Send Owner": { "main": [[{ "node": "Result", "type": "main", "index": 0 }]] }
   },
   "settings": { "executionOrder": "v1" }
