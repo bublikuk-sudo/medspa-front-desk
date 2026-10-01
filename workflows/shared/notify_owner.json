@@ -104,5 +104,5 @@
     "Check Settings": { "main": [[{ "node": "Send Owner", "type": "main", "index": 0 }]] },
     "Send Owner": { "main": [[{ "node": "Result", "type": "main", "index": 0 }]] }
   },
-  "settings": { "executionOrder": "v1" }
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "errorWorkflow": "WFID:wf6-error-handler" }
 }

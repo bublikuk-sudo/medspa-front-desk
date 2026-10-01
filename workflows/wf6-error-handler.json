@@ -1,0 +1,55 @@
+{
+  "name": "wf6-error-handler",
+  "nodes": [
+    {
+      "id": "6e6a0001-0001-4c00-8000-000000000001",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [0, 300],
+      "parameters": {}
+    },
+    {
+      "id": "6e6a0001-0002-4c00-8000-000000000002",
+      "name": "Compose",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const e = $input.first().json; const ex = e.execution || {}; const err = ex.error || {}; const text = ['⚠️ ' + (e.workflow?.name || 'workflow') + ' failed at ' + (ex.lastNodeExecuted || err.node?.name || '?') + ': ' + String(err.message || '').slice(0, 500), ex.url ? 'execution: ' + ex.url : ''].filter(Boolean).join('\\n'); return [{ json: { text } }];"
+      }
+    },
+    {
+      "id": "6e6a0001-0003-4c00-8000-000000000003",
+      "name": "Notify",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [440, 300],
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:notify_owner", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "text": "={{ $json.text }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Error Trigger": { "main": [[{ "node": "Compose", "type": "main", "index": 0 }]] },
+    "Compose": { "main": [[{ "node": "Notify", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true }
+}

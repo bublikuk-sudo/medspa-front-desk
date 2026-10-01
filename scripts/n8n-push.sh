@@ -21,15 +21,25 @@ api_call() {
 [ -f deploy/credentials.map.json ]  || echo '{}' > deploy/credentials.map.json
 [ -f airtable/ids.json ]            || echo '{"base":"","tables":{}}' > airtable/ids.json
 f="$1"; name=$(jq -r .name "$f")
+# settings.errorWorkflow = WFID:<x> with <x> not yet in workflow-ids.json (the first push-all pass, before WF-6 exists)
+# would make every other WFID: resolution below fatal. Drop the setting instead, but LOUDLY: a workflow pushed
+# without its error handler is silently unmonitored. scripts/push-all.sh's second pass re-pushes with the id known.
+drop_ew=false
+ew=$(jq -r '.settings.errorWorkflow // empty' "$f")
+if [[ "$ew" == WFID:* ]] && ! jq -e --arg k "${ew#WFID:}" 'has($k)' deploy/workflow-ids.json > /dev/null; then
+  drop_ew=true
+  echo "WARNING: $name pushed WITHOUT settings.errorWorkflow ($ew is not deployed yet) - it has NO error handler until it is pushed again" >&2
+fi
 # WAPHONEID: a string value that is exactly WAPHONEID becomes WHATSAPP_PHONE_NUMBER_ID from secrets.env (an id, not a secret).
 # Stopgap until the n8n container has $env.WHATSAPP_PHONE_NUMBER_ID (Task 15 Step 1), after which workflows use the $env expression.
-body=$(jq --arg waid "${WHATSAPP_PHONE_NUMBER_ID:-}" --slurpfile ids deploy/workflow-ids.json --slurpfile creds deploy/credentials.map.json --slurpfile at airtable/ids.json '
+body=$(jq --argjson dropew "$drop_ew" --arg waid "${WHATSAPP_PHONE_NUMBER_ID:-}" --slurpfile ids deploy/workflow-ids.json --slurpfile creds deploy/credentials.map.json --slurpfile at airtable/ids.json '
   def waphone(s): if s=="WAPHONEID" then (if ($waid|length)>0 then $waid else error("WHATSAPP_PHONE_NUMBER_ID is empty in secrets.env") end) else s end;
   def wf(s): if (s|type)=="string" and (s|startswith("WFID:")) then ($ids[0][s[5:]] // error("unknown workflow " + s)) else s end;
   def at(s): if s=="ATBASE" then (if ($at[0].base|type)=="string" and ($at[0].base|length)>0 then $at[0].base else error("unknown airtable base (airtable/ids.json not populated)") end)
              elif (s|type)=="string" and (s|startswith("ATTBL:")) then ($at[0].tables[s[6:]] // error("unknown table " + s))
              else s end;
   {name, nodes, connections, settings: (.settings // {})}
+  | if $dropew then del(.settings.errorWorkflow) else . end
   | walk(if type=="object" and (.credentials|type)=="object"
          then .credentials |= with_entries(.value.id = ($creds[0][.value.name] // error("unknown credential " + .value.name)))
          else . end)

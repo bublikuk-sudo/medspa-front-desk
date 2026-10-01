@@ -32,6 +32,9 @@
     {
       "id": "e5ca1a7e-0004-4c00-8000-000000000004",
       "name": "Client",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
       "type": "n8n-nodes-base.airtable",
       "typeVersion": 2.2,
       "position": [440, 300],
@@ -76,6 +79,9 @@
     {
       "id": "e5ca1a7e-0006-4c00-8000-000000000006",
       "name": "Flag Escalated",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
       "type": "n8n-nodes-base.airtable",
       "typeVersion": 2.2,
       "position": [880, 200],
@@ -124,6 +130,9 @@
     {
       "id": "e5ca1a7e-0007-4c00-8000-000000000007",
       "name": "History",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.7,
       "position": [1100, 300],
@@ -215,5 +224,5 @@
     "Compose": { "main": [[{ "node": "Notify", "type": "main", "index": 0 }]] },
     "Notify": { "main": [[{ "node": "Result", "type": "main", "index": 0 }]] }
   },
-  "settings": { "executionOrder": "v1" }
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "errorWorkflow": "WFID:wf6-error-handler" }
 }

@@ -41,6 +41,9 @@
     {
       "id": "5ea4c016-0009-4c00-8000-000000000009",
       "name": "Index Size",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.7,
       "position": [400, 200],
@@ -119,6 +122,9 @@
     {
       "id": "5ea4c016-0003-4c00-8000-000000000003",
       "name": "Embeddings",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
       "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
       "typeVersion": 1.2,
       "position": [800, 320],
@@ -161,6 +167,9 @@
     {
       "id": "5ea4c016-0006-4c00-8000-000000000006",
       "name": "Haiku",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
       "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
       "typeVersion": 1.6,
       "position": [1200, 320],
@@ -277,5 +286,5 @@
     },
     "Gate Alert": { "main": [[{ "node": "Verdict", "type": "main", "index": 0 }]] }
   },
-  "settings": { "executionOrder": "v1" }
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "errorWorkflow": "WFID:wf6-error-handler" }
 }

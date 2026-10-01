@@ -19,6 +19,9 @@
     {
       "id": "f1c10001-0002-4c00-8000-000000000002",
       "name": "Settings",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
       "type": "n8n-nodes-base.airtable",
       "typeVersion": 2.2,
       "position": [220, 300],
@@ -50,6 +53,9 @@
     {
       "id": "f1c10001-0004-4c00-8000-000000000004",
       "name": "Client",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
       "type": "n8n-nodes-base.airtable",
       "typeVersion": 2.2,
       "position": [660, 300],
@@ -113,6 +119,9 @@
     {
       "id": "f1c10001-0007-4c00-8000-000000000007",
       "name": "Appointments",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
       "type": "n8n-nodes-base.airtable",
       "typeVersion": 2.2,
       "position": [1100, 160],
@@ -157,5 +166,5 @@
     },
     "Appointments": { "main": [[{ "node": "Card", "type": "main", "index": 0 }]] }
   },
-  "settings": { "executionOrder": "v1" }
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "errorWorkflow": "WFID:wf6-error-handler" }
 }
