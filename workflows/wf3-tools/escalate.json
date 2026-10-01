@@ -1,0 +1,219 @@
+{
+  "name": "escalate",
+  "nodes": [
+    {
+      "id": "e5ca1a7e-0001-4c00-8000-000000000001",
+      "name": "Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            { "name": "contact_id", "type": "string" },
+            { "name": "reason", "type": "string" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "e5ca1a7e-0003-4c00-8000-000000000003",
+      "name": "Client Formula",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Validate first: an empty or malformed contact_id must match NO client row (a comparison with '' would match every row whose column is blank).\nconst raw = String($('Trigger').first().json.contact_id || '').trim();\nconst ok = /^(tg:\\d+|wa:\\+\\d+)$/.test(raw);\nconst formula = ok\n  ? (raw.startsWith('tg:') ? \"{telegram_chat_id}='\" + raw.slice(3) + \"'\" : \"{phone}='\" + raw.slice(3) + \"'\")\n  : \"{client_id}='__no_such_client__'\";\nreturn [{ json: { formula } }];"
+      }
+    },
+    {
+      "id": "e5ca1a7e-0004-4c00-8000-000000000004",
+      "name": "Client",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [440, 300],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Clients", "mode": "id" },
+        "filterByFormula": "={{ $json.formula }}",
+        "limit": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "e5ca1a7e-0005-4c00-8000-000000000005",
+      "name": "Has Client?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [660, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e5ca1a7e-1001-4c00-8000-000000000001",
+              "leftValue": "={{ !!$json.id }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e5ca1a7e-0006-4c00-8000-000000000006",
+      "name": "Flag Escalated",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [880, 200],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "update",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Clients", "mode": "id" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $json.id }}",
+            "status": "escalated"
+          },
+          "matchingColumns": ["id"],
+          "schema": [
+            { "id": "id", "displayName": "id", "required": false, "defaultMatch": true, "display": true, "type": "string", "readOnly": true, "removed": false },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                { "name": "new", "value": "new" },
+                { "name": "active", "value": "active" },
+                { "name": "flagged", "value": "flagged" },
+                { "name": "escalated", "value": "escalated" }
+              ],
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e5ca1a7e-0007-4c00-8000-000000000007",
+      "name": "History",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [1100, 300],
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "postgres": { "id": "CRED", "name": "MedSpa Postgres" }
+      },
+      "parameters": {
+        "resource": "database",
+        "operation": "executeQuery",
+        "query": "SELECT message FROM n8n_chat_histories WHERE session_id = $1 ORDER BY id DESC LIMIT 20",
+        "options": {
+          "queryReplacement": "={{ [ /^(tg:\\d+|wa:\\+\\d+)$/.test(String($('Trigger').first().json.contact_id ?? '').trim()) ? String($('Trigger').first().json.contact_id).trim() : '' ] }}"
+        }
+      }
+    },
+    {
+      "id": "e5ca1a7e-0008-4c00-8000-000000000008",
+      "name": "Compose",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// The owner message. The contact, the reason and the history are client- or agent-controlled: each is cleaned before it is interpolated,\n// and the header (who, contact, reason, status) is built first so a long history can only use what is left of the budget.\nconst MAX = 3500; // Telegram allows 4096; notify_owner cuts at 4000 BEFORE escaping, so no < > & may reach it (they are replaced below)\nconst clean = (s, max) => {\n  const t = String(s ?? '').replace(/[\\u0000-\\u001f\\u007f-\\u009f\\u200b-\\u200f\\u2028-\\u202e\\u2066-\\u2069\\ufeff]/g, ' ')\n    .replace(/[<>&]/g, c => ({ '<': '\u2039', '>': '\u203a', '&': '\uff06' }[c])).replace(/\\s+/g, ' ').trim();\n  const a = Array.from(t);\n  return a.length > max ? a.slice(0, max - 1).join('') + '\u2026' : t;\n};\nconst inp = $('Trigger').first().json;\nconst contact = String(inp.contact_id ?? '').trim();\nconst contactOk = /^(tg:\\d+|wa:\\+\\d+)$/.test(contact);\nconst client = $('Client').first().json || {};\nlet state;\nif (client.error) state = 'client lookup FAILED - nothing was flagged';\nelse if (!client.id) state = 'contact not on file - nothing was flagged';\nelse {\n  let flagged = false;\n  try { const f = $('Flag Escalated').first().json; flagged = !!f.id && !f.error; } catch (e) { /* node did not run */ }\n  state = flagged ? 'client flagged escalated' : 'WARNING: could not set the client status to escalated - flag them by hand';\n}\nconst name = clean((client.fields || {}).name, 60) || (client.id ? 'unnamed client' : 'unknown contact');\nconst who = contactOk ? contact : (clean(contact, 80) || 'none') + ' - INVALID contact_id';\nconst head = `\ud83d\udea8 Escalation \u2014 ${name} (${who})\\nReason: ${clean(inp.reason, 500) || '(none given)'}\\nStatus: ${state}\\n---`;\n// History rows arrive newest first. A row that is not JSON, or has another shape, is skipped.\nconst items = $input.all().map(i => i.json || {});\nconst failed = items.some(r => r.error); // a failed query comes back as one item whose .message is the ERROR TEXT and which has .error: never treat it as history\nconst textOf = c => typeof c === 'string' ? c : Array.isArray(c) ? c.map(p => typeof p === 'string' ? p : (p && p.type === 'text' && typeof p.text === 'string' ? p.text : '')).join(' ') : '';\nconst lines = [];\nfor (const r of items) {\n  if (r.error) continue;\n  try {\n    let m = r.message;\n    if (typeof m === 'string') m = JSON.parse(m);\n    if (!m || typeof m !== 'object') continue;\n    const speaker = m.type === 'human' ? 'Client' : m.type === 'ai' ? 'Bot' : null;\n    if (!speaker) continue;\n    const body = clean(textOf(m.data && m.data.content !== undefined ? m.data.content : m.content), 300);\n    if (body) lines.push(`${speaker}: ${body}`);\n  } catch (e) { /* skip */ }\n}\nconst room = MAX - head.length - 1 - 45; // 45 = room for the \"earlier messages not shown\" line\nconst kept = [];\nlet used = 0;\nfor (const l of lines) { if (used + l.length + 1 > room) break; kept.push(l); used += l.length + 1; }\nconst omitted = lines.length - kept.length;\nconst body = kept.length\n  ? (omitted ? `(${omitted} earlier message${omitted > 1 ? 's' : ''} not shown)\\n` : '') + kept.reverse().join('\\n')\n  : (failed ? '(conversation history unavailable)' : '(no conversation history yet)');\nreturn [{ json: { text: head + '\\n' + body } }];"
+      }
+    },
+    {
+      "id": "e5ca1a7e-0009-4c00-8000-000000000009",
+      "name": "Notify",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [1540, 300],
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:notify_owner", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "text": "={{ $json.text }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e5ca1a7e-0010-4c00-8000-000000000010",
+      "name": "Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [1760, 300],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e5ca1a7e-2001-4c00-8000-000000000001",
+              "name": "verdict",
+              "value": "ESCALATED",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Trigger": { "main": [[{ "node": "Client Formula", "type": "main", "index": 0 }]] },
+    "Client Formula": { "main": [[{ "node": "Client", "type": "main", "index": 0 }]] },
+    "Client": { "main": [[{ "node": "Has Client?", "type": "main", "index": 0 }]] },
+    "Has Client?": {
+      "main": [
+        [{ "node": "Flag Escalated", "type": "main", "index": 0 }],
+        [{ "node": "History", "type": "main", "index": 0 }]
+      ]
+    },
+    "Flag Escalated": { "main": [[{ "node": "History", "type": "main", "index": 0 }]] },
+    "History": { "main": [[{ "node": "Compose", "type": "main", "index": 0 }]] },
+    "Compose": { "main": [[{ "node": "Notify", "type": "main", "index": 0 }]] },
+    "Notify": { "main": [[{ "node": "Result", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

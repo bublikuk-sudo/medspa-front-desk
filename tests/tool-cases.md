@@ -123,3 +123,55 @@ Not a tool, so no tsv case. It is run with the command above and checked by `sel
 `KB_INDEX_INCOMPLETE` (fewer rows than documents) so a failed run cannot leave the index silently empty. The owner
 message `📚 Knowledge base re-indexed: N paragraphs` is sent only for a manual run or when the content differs from
 what the index held before the run; an Airtable poll that finds no content change is silent.
+
+### escalate
+
+`escalate(contact_id, reason)` returns `ESCALATED`. Side effects: `Clients.status` becomes `escalated` (only that column is
+written) when the contact is a known client, and the owner gets one Telegram message through `notify_owner`:
+
+```
+🚨 Escalation — Test One (tg:900000001)
+Reason: client asked for a human
+Status: client flagged escalated
+---
+Client: ...
+Bot: ...
+```
+
+The tool never refuses: an unknown or malformed contact still reaches the owner (an unknown client is itself worth
+reporting), with `Status: contact not on file - nothing was flagged`. `Client Formula` is the validated Code node of
+`find_client` (`^(tg:\d+|wa:\+\d+)$`, otherwise a formula that matches nothing), so a bad `contact_id` can never flag or
+read someone else's row. `Client`, `Flag Escalated` and `History` continue on error, so a failing step still produces an
+owner message: a failed flag says `WARNING: could not set the client status to escalated - flag them by hand`, a failed
+lookup says `client lookup FAILED`.
+
+The message is built in `Compose` from client- and agent-controlled text (name, `reason`, contact, history). Each piece is
+stripped of control, zero-width and bidi characters, whitespace is collapsed to one line, `<`, `>` and `&` are replaced by
+look-alikes (`notify_owner` cuts at 4000 characters BEFORE it HTML-escapes, so raw `&` could push a message over
+Telegram's 4096), and the pieces are capped (name 60, contact 80, reason 500, one history line 300). The header (who,
+contact, reason, status) is composed first; the history gets what remains of a 3500-character budget, newest lines
+first, printed oldest first, with `(N earlier messages not shown)` on top. History rows that are not JSON or have another
+shape are skipped, as are `tool` rows.
+
+`History` reads the last 20 rows of `n8n_chat_histories` for `session_id = contact_id` (bound parameter; an invalid
+`contact_id` binds `''` and reads nothing). That table is created by the Postgres Chat Memory node (Task 12), so until it
+exists the query fails; the node is set to continue on error and then emits ONE item whose `message` is the error text
+(`relation "n8n_chat_histories" does not exist`) and which has an `error` object. `Compose` keys on `error`, never treats
+that item as history, and prints `(conversation history unavailable)`. With the table present but no rows for the contact
+it prints `(no conversation history yet)`.
+
+Every test escalation is a real Telegram message to the owner; the reasons start with `[TEST]`.
+
+| case | why |
+|---|---|
+| `escalate_ok` | a Telegram client goes from `active` to `escalated`; the teardown compares the whole row before and after and allows only `status` to differ |
+| `escalate_whatsapp_client` | a `wa:+...` contact is found by `phone` and flagged |
+| `escalate_unknown_contact` | an unknown contact still gives `ESCALATED`; the teardown checks that no `Clients` row was created for it and that a bystander client is still `active` |
+| `escalate_malformed_id`, `escalate_empty_id`, `escalate_bare_wa_prefix` | `xyz`, `""` and `wa:` escalate to the owner but flag nobody: the bystander client (blank `phone`, the row a `{phone}=''` formula would hit) stays `active` |
+| `escalate_hostile_reason` | a reason with tags, `&`, newlines, a forged `Status:` line and a NUL character is delivered (a raw `<b>` or `&` would make Telegram reject the message) and the forged line stays inside the `Reason:` line |
+
+The tsv checks the verdict, the Airtable side effects and that Telegram accepted the message; what the message says is
+checked by running `Compose` alone in the n8n container's node against fixed history rows (long rows, junk rows,
+hostile text, missing table, failed flag), and once end to end with a throwaway copy of the workflow whose `History`
+node returned 20 synthetic rows (3248-character message delivered, 6 oldest lines dropped, header intact). Execution
+data of the last runs is in the n8n execution list (`escalate`, `notify_owner` → `Send Owner`).
