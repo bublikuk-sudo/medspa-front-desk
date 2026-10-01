@@ -14,5 +14,8 @@ kb_hours	search_knowledge	{"question":"What are your opening hours on Saturday?"
 kb_botox_prep	search_knowledge	{"question":"How should I prepare for Botox?"}	^FOUND.\[Botox\]
 kb_paraphrase_shave	search_knowledge	{"question":"Do I need to shave before laser?"}	^FOUND.\[Laser hair removal\]
 kb_strips_topic_line	search_knowledge	{"question":"What are your opening hours on Saturday?"}	^FOUND.\[Opening hours\] We are open Monday to Wednesday
-# kb_out_of_base is DISABLED: no score threshold separates answerable from unanswerable questions (see tests/tool-cases.md, search_knowledge), so search_knowledge never returns NOT_FOUND for a non-empty index and this case would fail. Enable it only after THRESHOLD in the Rank node is set.
-# kb_out_of_base	search_knowledge	{"question":"What will the weather be like in Berlin tomorrow?"}	^NOT_FOUND$
+kb_out_of_base	search_knowledge	{"question":"What will the weather be like in Berlin tomorrow?"}	^NOT_FOUND$
+kb_not_found_medical	search_knowledge	{"question":"Can I have Botox while taking warfarin?"}	^NOT_FOUND$
+kb_not_found_service	search_knowledge	{"question":"Do you offer massage therapy?"}	^NOT_FOUND$
+kb_found_location	search_knowledge	{"question":"Where exactly are you located?"}	^FOUND.\[Location and parking\]
+kb_found_german	search_knowledge	{"question":"Wann habt ihr samstags geoeffnet?"}	^FOUND.\[Opening hours\]

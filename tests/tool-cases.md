@@ -85,15 +85,18 @@ so expressions read `$json.fields.<column>`, not `$json.<column>`.
 
 ### search_knowledge
 
-`search_knowledge(question)` embeds the question, takes the 3 nearest paragraphs of the `medspa_knowledge`
-PGVector table and returns `FOUND\n[topic] text\n\n[topic] text...` (the topic line that the ingest put in front
-of the embedded text is stripped again) or `NOT_FOUND`. The output also carries `scores`, the raw values.
+`search_knowledge(question)` embeds the question and takes the 3 nearest paragraphs of the `medspa_knowledge`
+PGVector table (vector search only RANKS), then a relevance gate decides: `Gate` is a Basic LLM Chain on
+`claude-haiku-4-5` (max 5 tokens, temperature 0) that receives the question and the 3 passages and answers YES or NO.
+The tool returns `FOUND\n[topic] text\n\n[topic] text...` (the topic line that the ingest put in front of the embedded
+text is stripped again) or `NOT_FOUND`; nothing else is in the output. Only a clear NO gives `NOT_FOUND`: if the gate
+node fails (after 2 tries, 5 s apart) or answers anything else, the verdict is `FOUND` (fail open). An empty index also
+gives `NOT_FOUND`.
 
-The `score` on this node is the pgvector cosine DISTANCE (0 = identical, 2 = opposite), so a LOWER value is better.
-`Rank` therefore has `HIGHER_IS_BETTER = false`. `THRESHOLD` is `null`: measured on 60 questions, no single cut-off
-separates answerable from unanswerable ones (in-base questions score 0.27-0.76, out-of-base 0.51-0.93), so with a
-non-empty index the tool always returns `FOUND` with 3 paragraphs and the agent has to judge relevance itself.
-Details and the sweep table: `raw/n8n/2026-10-01-pgvector-knowledge-base-report.md`.
+The vector score is the pgvector cosine DISTANCE (0 = identical, 2 = opposite), lower is better, and it cannot gate
+anything: measured on 60 questions, answerable ones score 0.27-0.76 and unanswerable ones 0.51-0.93, so no cut-off
+separates them. That is why the decision is made by the gate. Details, sweep table and gate results:
+`raw/n8n/2026-10-01-pgvector-knowledge-base-report.md`.
 
 Run the ingest by hand with `docker compose exec -T -e N8N_RUNNERS_BROKER_PORT=5690 n8n n8n execute --id <id of wf4-knowledge-ingest>`
 (from `/opt/medspa/deploy`; without the extra port the CLI fails with "Task Broker's port 5679 is already in use").
@@ -103,4 +106,20 @@ Run the ingest by hand with `docker compose exec -T -e N8N_RUNNERS_BROKER_PORT=5
 | `kb_hours`, `kb_botox_prep` | the best match is the right paragraph (`FOUND` then `[topic]` on the next line, so the top result is asserted, not just any of the 3) |
 | `kb_paraphrase_shave` | "Do I need to shave before laser?" shares no sentence with the laser paragraph and must still find it first |
 | `kb_strips_topic_line` | the verdict shows `[topic] text` once: the topic line added for embedding is cut off |
-| `kb_out_of_base` (DISABLED, commented out in the tsv) | the brief expects `NOT_FOUND` for a weather question, but the weather question scores 0.697, worse than in-base questions such as "Where exactly are you located?" (0.755). A threshold that blocks the weather question (0.56 was tried through the real node) turned 11 of 36 genuine in-base questions into `NOT_FOUND`. Enable the row only after `THRESHOLD` in the `Rank` node is set |
+| `kb_out_of_base` | a weather question is `NOT_FOUND` (its vector distance, 0.697, is worse than that of the in-base "Where exactly are you located?", 0.755, so only the gate can get both right) |
+| `kb_not_found_medical` | "Can I have Botox while taking warfarin?" is `NOT_FOUND`: `kb-contraindications` tells the client to disclose blood thinners but does not say whether this client may proceed. This is the case the NOT_FOUND-then-escalate defence exists for |
+| `kb_not_found_service` | "Do you offer massage therapy?": a service the clinic does not offer is `NOT_FOUND` although its distance (0.670) is in the range of real questions |
+| `kb_found_location` | "Where exactly are you located?" is `FOUND` with the location paragraph first (a distance threshold lost it) |
+| `kb_found_german` | a German question about Saturday opening hours is `FOUND` (the base is English) |
+
+The gate calls a real model, so these cases cost a fraction of a cent each and depend on the Anthropic API.
+To see the fail-open behaviour, push a copy of the workflow with a non-existent model name in `Haiku`: every question
+then returns `FOUND` after about 6 s (the retry wait).
+
+### wf4-knowledge-ingest
+
+Not a tool, so no tsv case. It is run with the command above and checked by `select count(*) from medspa_knowledge`
+(14 after every run, never more). After `Insert` a `Count` and `Verify` step throw `KB_INDEX_EMPTY` (0 rows) or
+`KB_INDEX_INCOMPLETE` (fewer rows than documents) so a failed run cannot leave the index silently empty. The owner
+message `📚 Knowledge base re-indexed: N paragraphs` is sent only for a manual run or when the content differs from
+what the index held before the run; an Airtable poll that finds no content change is silent.
