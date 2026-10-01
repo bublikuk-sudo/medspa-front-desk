@@ -57,6 +57,7 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [440, 300],
+      "notes": "Trim-then-escape on purpose: Telegram's 4096 limit counts parsed characters, not the escaped request text, and escaping first could cut inside an entity (&amp;). Do not reorder.",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
