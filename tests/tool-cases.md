@@ -85,13 +85,17 @@ so expressions read `$json.fields.<column>`, not `$json.<column>`.
 
 ### search_knowledge
 
-`search_knowledge(question)` embeds the question and takes the 3 nearest paragraphs of the `medspa_knowledge`
+`search_knowledge(question)` embeds the question and takes the 5 nearest paragraphs of the `medspa_knowledge`
 PGVector table (vector search only RANKS), then a relevance gate decides: `Gate` is a Basic LLM Chain on the pinned
-snapshot `claude-haiku-4-5-20251001` (max 16 tokens, temperature 0) that receives the question and the 3 passages and
-answers YES or NO. The rule is conjunctive: YES only if EVERY part of the question is answered by the passages; a
-compound question, a recommendation, a symptom, a dose or drug interaction, or anything about this client's own
-situation is NO unless a passage states the rule for exactly that situation, and "tell us / a practitioner will review"
-is not an answer. Reason: if the gate said YES for "How long does Botox last, and can I take ibuprofen?", the agent
+snapshot `claude-haiku-4-5-20251001` (max 16 tokens, temperature 0) that receives the question and all 5 numbered
+passages and answers YES (plus the numbers of the passages that hold the answer) or NO. The rule is conjunctive: YES
+only if EVERY part of the question is answered by the passages; a compound question, a recommendation, a symptom or
+complication, a dose or drug interaction, or whether THIS client may proceed given their own condition or medication is
+NO, and "tell us / a practitioner will review" is not an answer. The other half, added in the third round with seven
+worked examples: a general rule stated in a passage IS an answer even when the client asks about themselves (minimum
+age, no injectables in pregnancy, lateness policy, preparation steps, contact details); what is never an answer is a
+judgement about this client's own case that the passages do not state. At most 3 passages go to the agent: the ones the
+gate cited (so an answer ranked 4th or 5th is not lost), filled up with the best-ranked ones, in rank order. Reason: if the gate said YES for "How long does Botox last, and can I take ibuprofen?", the agent
 would hold a Botox passage, the WF-2 guardrail (which escalates drug names only when no passage is in context) would
 stay quiet, and the ibuprofen half would be answered from the model's head: a FOUND disarms the second defence.
 
@@ -114,7 +118,7 @@ Run the ingest by hand with `docker compose exec -T -e N8N_RUNNERS_BROKER_PORT=5
 
 | case | why |
 |---|---|
-| `kb_hours`, `kb_botox_prep` | the best match is the right paragraph (`FOUND` then `[topic]` on the next line, so the top result is asserted, not just any of the 3). **`kb_botox_prep` FAILS since the conjunctive rule**: "How should I prepare for Botox?" gets `NOT_FOUND` although the Botox paragraph lists preparation, because its second sentence defers medication questions to the practitioner. This is a measured false-NO (see the raw note), left failing on purpose rather than loosening the safety rule; the decision is the owner's |
+| `kb_hours`, `kb_botox_prep` | the best match is the right paragraph (`FOUND` then `[topic]` on the next line, so the top result is asserted, not just any of the 3). `kb_botox_prep` failed (NOT_FOUND) under the plain conjunctive rule because the Botox paragraph's second sentence defers medication questions to the practitioner; it passes since the third-round prompt, which has this very question as a worked example (so it is no longer an independent check) |
 | `kb_paraphrase_shave` | "Do I need to shave before laser?" shares no sentence with the laser paragraph and must still find it first |
 | `kb_strips_topic_line` | the verdict shows `[topic] text` once: the topic line added for embedding is cut off |
 | `kb_out_of_base` | a weather question is `NOT_FOUND` (its vector distance, 0.697, is worse than that of the in-base "Where exactly are you located?", 0.755, so only the gate can get both right) |
