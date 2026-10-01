@@ -86,12 +86,23 @@ so expressions read `$json.fields.<column>`, not `$json.<column>`.
 ### search_knowledge
 
 `search_knowledge(question)` embeds the question and takes the 3 nearest paragraphs of the `medspa_knowledge`
-PGVector table (vector search only RANKS), then a relevance gate decides: `Gate` is a Basic LLM Chain on
-`claude-haiku-4-5` (max 5 tokens, temperature 0) that receives the question and the 3 passages and answers YES or NO.
+PGVector table (vector search only RANKS), then a relevance gate decides: `Gate` is a Basic LLM Chain on the pinned
+snapshot `claude-haiku-4-5-20251001` (max 16 tokens, temperature 0) that receives the question and the 3 passages and
+answers YES or NO. The rule is conjunctive: YES only if EVERY part of the question is answered by the passages; a
+compound question, a recommendation, a symptom, a dose or drug interaction, or anything about this client's own
+situation is NO unless a passage states the rule for exactly that situation, and "tell us / a practitioner will review"
+is not an answer. Reason: if the gate said YES for "How long does Botox last, and can I take ibuprofen?", the agent
+would hold a Botox passage, the WF-2 guardrail (which escalates drug names only when no passage is in context) would
+stay quiet, and the ibuprofen half would be answered from the model's head: a FOUND disarms the second defence.
+
 The tool returns `FOUND\n[topic] text\n\n[topic] text...` (the topic line that the ingest put in front of the embedded
-text is stripped again) or `NOT_FOUND`; nothing else is in the output. Only a clear NO gives `NOT_FOUND`: if the gate
-node fails (after 2 tries, 5 s apart) or answers anything else, the verdict is `FOUND` (fail open). An empty index also
-gives `NOT_FOUND`.
+text is stripped again) or `NOT_FOUND`; the output item has exactly one key, `verdict`. An empty or blank question and
+an empty (or missing) index return `NOT_FOUND` at once, without an embedding or a gate call. The gate's answer is read
+tolerantly (leading quotes, markdown, "Answer:" are ignored). Only an item with NO text at all (the error shape: the
+gate node failed after 2 tries, 5 s apart) fails open to `FOUND`, and then `notify_owner` gets "⚠️ Knowledge-base
+relevance check unavailable — answers are unfiltered", at most once an hour (workflow static data). An answer that is
+present but is not a recognisable YES is `NOT_FOUND`. Angle brackets are removed from the question before it goes into
+the `<question>` tags.
 
 The vector score is the pgvector cosine DISTANCE (0 = identical, 2 = opposite), lower is better, and it cannot gate
 anything: measured on 60 questions, answerable ones score 0.27-0.76 and unanswerable ones 0.51-0.93, so no cut-off
@@ -103,7 +114,7 @@ Run the ingest by hand with `docker compose exec -T -e N8N_RUNNERS_BROKER_PORT=5
 
 | case | why |
 |---|---|
-| `kb_hours`, `kb_botox_prep` | the best match is the right paragraph (`FOUND` then `[topic]` on the next line, so the top result is asserted, not just any of the 3) |
+| `kb_hours`, `kb_botox_prep` | the best match is the right paragraph (`FOUND` then `[topic]` on the next line, so the top result is asserted, not just any of the 3). **`kb_botox_prep` FAILS since the conjunctive rule**: "How should I prepare for Botox?" gets `NOT_FOUND` although the Botox paragraph lists preparation, because its second sentence defers medication questions to the practitioner. This is a measured false-NO (see the raw note), left failing on purpose rather than loosening the safety rule; the decision is the owner's |
 | `kb_paraphrase_shave` | "Do I need to shave before laser?" shares no sentence with the laser paragraph and must still find it first |
 | `kb_strips_topic_line` | the verdict shows `[topic] text` once: the topic line added for embedding is cut off |
 | `kb_out_of_base` | a weather question is `NOT_FOUND` (its vector distance, 0.697, is worse than that of the in-base "Where exactly are you located?", 0.755, so only the gate can get both right) |
@@ -111,18 +122,27 @@ Run the ingest by hand with `docker compose exec -T -e N8N_RUNNERS_BROKER_PORT=5
 | `kb_not_found_service` | "Do you offer massage therapy?": a service the clinic does not offer is `NOT_FOUND` although its distance (0.670) is in the range of real questions |
 | `kb_found_location` | "Where exactly are you located?" is `FOUND` with the location paragraph first (a distance threshold lost it) |
 | `kb_found_german` | a German question about Saturday opening hours is `FOUND` (the base is English) |
+| `kb_not_found_compound` | "How long does Botox last, and can I take ibuprofen before it?": the duration half is in the base, the ibuprofen half is not, so the whole question is `NOT_FOUND` (a partial answer would disarm the guardrail) |
+| `kb_not_found_symptom` | a swollen lip with a fever after filler is `NOT_FOUND` |
+| `kb_not_found_aspirin` | "Can I have filler while taking aspirin?" is `NOT_FOUND` (same class as warfarin; the first, non-conjunctive prompt let it through) |
+| `kb_empty_question` | a blank question is `NOT_FOUND` without any model call |
+| `kb_output_only_verdict` | the setup asserts that the output item has exactly the key `verdict` (`jq -e 'keys == ["verdict"]'`), then the case checks a normal `FOUND` |
 
 The gate calls a real model, so these cases cost a fraction of a cent each and depend on the Anthropic API.
 To see the fail-open behaviour, push a copy of the workflow with a non-existent model name in `Haiku`: every question
-then returns `FOUND` after about 6 s (the retry wait).
+then returns `FOUND` after about 6 s (the retry wait) and the first one also sends the owner warning.
 
 ### wf4-knowledge-ingest
 
 Not a tool, so no tsv case. It is run with the command above and checked by `select count(*) from medspa_knowledge`
-(14 after every run, never more). After `Insert` a `Count` and `Verify` step throw `KB_INDEX_EMPTY` (0 rows) or
-`KB_INDEX_INCOMPLETE` (fewer rows than documents) so a failed run cannot leave the index silently empty. The owner
-message `📚 Knowledge base re-indexed: N paragraphs` is sent only for a manual run or when the content differs from
-what the index held before the run; an Airtable poll that finds no content change is silent.
+(14 after every run, never more). It has three triggers: Manual, an Airtable poll every 15 minutes, and an hourly
+schedule. `Plan` builds the documents and throws `KB_NO_DOCUMENTS` BEFORE anything is truncated when no Knowledge row
+has text. It also compares the (kb_id, text) pairs the index holds with the documents: when they are identical the run
+does nothing (no truncate, no embedding, no message), unless it is a manual run, which always rebuilds. So the hourly
+run costs nothing on a healthy index and repairs a broken one. After `Insert`, `Count` and `Verify` throw
+`KB_INDEX_EMPTY` (no rows, or the table is missing), `KB_INDEX_DUPLICATED` or `KB_INDEX_INCOMPLETE` (distinct kb_id
+count different from the documents) so a failed rebuild is never silent. The owner message
+`📚 Knowledge base re-indexed: N paragraphs` is sent only for a manual run or when a rebuild changed the content.
 
 ### escalate
 

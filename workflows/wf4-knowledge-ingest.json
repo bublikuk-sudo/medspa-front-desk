@@ -6,15 +6,29 @@
       "name": "Manual",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [0, 200],
+      "position": [0, 100],
       "parameters": {}
+    },
+    {
+      "id": "4b0e0016-0016-4c00-8000-000000000016",
+      "name": "Hourly",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [0, 300],
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "hours", "hoursInterval": 1 }
+          ]
+        }
+      }
     },
     {
       "id": "4b0e0016-0002-4c00-8000-000000000002",
       "name": "Knowledge Changed",
       "type": "n8n-nodes-base.airtableTrigger",
       "typeVersion": 1,
-      "position": [0, 400],
+      "position": [0, 500],
       "credentials": {
         "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
       },
@@ -39,6 +53,7 @@
       "typeVersion": 2.2,
       "position": [240, 300],
       "executeOnce": true,
+      "alwaysOutputData": true,
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
@@ -91,11 +106,45 @@
       }
     },
     {
+      "id": "4b0e0016-0017-4c00-8000-000000000017",
+      "name": "Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Build the documents, refuse to continue when there are none (BEFORE anything is truncated), and decide whether the index needs rebuilding.\n// One document per Knowledge row: the topic goes on the first line so the embedding sees it; search_knowledge strips that line again. Rows without text are skipped (an empty string cannot be embedded).\nconst documents = $('Knowledge').all()\n  .map(i => i.json.fields || {})\n  .filter(f => String(f.text ?? '').trim() !== '')\n  .map(f => ({ pageContent: f.topic + '\\n' + f.text, kb_id: f.kb_id, topic: f.topic }));\nif (!documents.length) throw new Error('KB_NO_DOCUMENTS: Airtable Knowledge returned no row with text; the index was NOT touched');\n// The index is up to date when it holds exactly the same (kb_id, text) pairs as the documents: nothing missing, nothing duplicated, nothing stale.\nconst key = (id, text) => String(id) + '\\u0000' + String(text);\nconst before = $('Old Index').all().map(i => i.json).filter(r => r.text != null).map(r => key(r.kb_id, r.text)).sort();\nconst after = documents.map(d => key(d.kb_id, d.pageContent)).sort();\nconst upToDate = before.length === after.length && before.every((v, k) => v === after[k]);\nconst manual = $('Manual').isExecuted;\nreturn [{ json: { documents, upToDate, manual, rebuild: manual || !upToDate } }];"
+      }
+    },
+    {
+      "id": "4b0e0016-0018-4c00-8000-000000000018",
+      "name": "Rebuild?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [1120, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "4b0e0016-1002-4c00-8000-000000000002",
+              "leftValue": "={{ $json.rebuild }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
       "id": "4b0e0016-0004-4c00-8000-000000000004",
       "name": "Clear Index",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.7,
-      "position": [900, 300],
+      "position": [1340, 240],
       "executeOnce": true,
       "alwaysOutputData": true,
       "credentials": {
@@ -113,11 +162,11 @@
       "name": "Documents",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1120, 300],
+      "position": [1560, 240],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// One document per Knowledge row: the topic goes on the first line of the text so the embedding sees it; Search strips that line again.\n// Rows without text are skipped (an empty string cannot be embedded).\nreturn $('Knowledge').all()\n  .filter(i => String(i.json.fields?.text ?? '').trim() !== '')\n  .map(i => ({ json: { pageContent: i.json.fields.topic + '\\n' + i.json.fields.text, kb_id: i.json.fields.kb_id, topic: i.json.fields.topic } }));"
+        "jsCode": "return $('Plan').first().json.documents.map(d => ({ json: d }));"
       }
     },
     {
@@ -125,7 +174,7 @@
       "name": "Insert",
       "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
       "typeVersion": 1.3,
-      "position": [1340, 300],
+      "position": [1780, 240],
       "onError": "continueRegularOutput",
       "credentials": {
         "postgres": { "id": "CRED", "name": "MedSpa Postgres" }
@@ -142,7 +191,7 @@
       "name": "Loader",
       "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
       "typeVersion": 1.1,
-      "position": [1280, 560],
+      "position": [1720, 500],
       "parameters": {
         "dataType": "json",
         "jsonMode": "expressionData",
@@ -163,7 +212,7 @@
       "name": "Splitter",
       "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
       "typeVersion": 1,
-      "position": [1280, 780],
+      "position": [1720, 720],
       "parameters": {
         "chunkSize": 800,
         "chunkOverlap": 80,
@@ -175,7 +224,7 @@
       "name": "Embeddings",
       "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
       "typeVersion": 1.2,
-      "position": [1440, 560],
+      "position": [1880, 500],
       "credentials": {
         "openAiApi": { "id": "CRED", "name": "MedSpa OpenAI" }
       },
@@ -189,16 +238,17 @@
       "name": "Count",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.7,
-      "position": [1560, 300],
+      "position": [2000, 240],
       "executeOnce": true,
       "alwaysOutputData": true,
+      "onError": "continueRegularOutput",
       "credentials": {
         "postgres": { "id": "CRED", "name": "MedSpa Postgres" }
       },
       "parameters": {
         "resource": "database",
         "operation": "executeQuery",
-        "query": "SELECT count(*)::int AS n FROM medspa_knowledge",
+        "query": "SELECT count(*)::int AS n, count(DISTINCT metadata->>'kb_id')::int AS kb, (count(*) - count(DISTINCT (metadata->>'kb_id', text)))::int AS dups FROM medspa_knowledge",
         "options": {}
       }
     },
@@ -207,11 +257,11 @@
       "name": "Verify",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1780, 300],
+      "position": [2220, 240],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// Safety net: Clear Index and Insert are not atomic, so a failed Insert leaves the index empty and search_knowledge answers NOT_FOUND to everything. Make that state loud.\nconst docs = $('Documents').all().map(i => i.json);\nconst n = Number($input.first().json.n);\nif (!Number.isFinite(n) || n < docs.length) {\n  const name = n === 0 ? 'KB_INDEX_EMPTY' : 'KB_INDEX_INCOMPLETE';\n  throw new Error(name + ': medspa_knowledge has ' + n + ' rows after the ingest but Airtable Knowledge gave ' + docs.length + ' documents' + (n === 0 ? '; the index is EMPTY and search_knowledge answers NOT_FOUND to every question until the next successful ingest' : '') + '. Insert is set to continue on error, so its own error message is in the execution data of the Insert node.');\n}\n// Did this run change anything? Compare what the index held before Clear Index with what was just inserted.\nconst key = r => String(r.kb_id) + '\\u0000' + String(r.text);\nconst before = $('Old Index').all().map(i => i.json).filter(r => r.text != null).map(key).sort();\nconst after = docs.map(d => key({ kb_id: d.kb_id, text: d.pageContent })).sort();\nconst changed = before.length !== after.length || before.some((v, k) => v !== after[k]);\nconst manual = $('Manual').isExecuted;\nconst text = '📚 Knowledge base re-indexed: ' + docs.length + ' paragraphs' + (changed ? '' : ' (no content changes; manual run)');\nreturn [{ json: { changed, manual, notify: changed || manual, text, rows: n } }];"
+        "jsCode": "// Safety net: Clear Index and Insert are not atomic, so a failed Insert leaves the index empty and search_knowledge answers NOT_FOUND to everything. Make every broken state loud with a named error.\n// Count is set to continue on error, so a missing table arrives here as an item without n and counts as empty.\nconst plan = $('Plan').first().json;\nconst c = $input.first().json;\nconst n = Number(c.n ?? 0), kb = Number(c.kb ?? 0), dups = Number(c.dups ?? 0);\nconst expected = new Set(plan.documents.map(d => d.kb_id)).size;\nconst hint = '. Insert is set to continue on error, so its own error message is in the execution data of the Insert node.';\nif (!(n > 0)) throw new Error('KB_INDEX_EMPTY: medspa_knowledge has no rows (or does not exist) after the ingest but Airtable Knowledge gave ' + plan.documents.length + ' documents; search_knowledge answers NOT_FOUND to every question until the next successful ingest' + hint);\nif (dups > 0) throw new Error('KB_INDEX_DUPLICATED: medspa_knowledge has ' + dups + ' duplicate rows (' + n + ' rows in total)' + hint);\nif (kb !== expected) throw new Error('KB_INDEX_INCOMPLETE: medspa_knowledge covers ' + kb + ' of ' + expected + ' paragraphs' + hint);\nconst changed = !plan.upToDate;\nconst text = '📚 Knowledge base re-indexed: ' + plan.documents.length + ' paragraphs' + (changed ? '' : ' (no content changes; manual run)');\nreturn [{ json: { changed, manual: plan.manual, notify: changed || plan.manual, text, rows: n } }];"
       }
     },
     {
@@ -219,7 +269,7 @@
       "name": "Notify?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [2000, 300],
+      "position": [2440, 240],
       "parameters": {
         "conditions": {
           "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
@@ -241,7 +291,7 @@
       "name": "Notify",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [2220, 240],
+      "position": [2660, 180],
       "parameters": {
         "source": "database",
         "workflowId": { "__rl": true, "value": "WFID:notify_owner", "mode": "id" },
@@ -264,10 +314,13 @@
   ],
   "connections": {
     "Manual": { "main": [[{ "node": "Knowledge", "type": "main", "index": 0 }]] },
+    "Hourly": { "main": [[{ "node": "Knowledge", "type": "main", "index": 0 }]] },
     "Knowledge Changed": { "main": [[{ "node": "Knowledge", "type": "main", "index": 0 }]] },
     "Knowledge": { "main": [[{ "node": "Index State", "type": "main", "index": 0 }]] },
     "Index State": { "main": [[{ "node": "Old Index", "type": "main", "index": 0 }]] },
-    "Old Index": { "main": [[{ "node": "Clear Index", "type": "main", "index": 0 }]] },
+    "Old Index": { "main": [[{ "node": "Plan", "type": "main", "index": 0 }]] },
+    "Plan": { "main": [[{ "node": "Rebuild?", "type": "main", "index": 0 }]] },
+    "Rebuild?": { "main": [[{ "node": "Clear Index", "type": "main", "index": 0 }], []] },
     "Clear Index": { "main": [[{ "node": "Documents", "type": "main", "index": 0 }]] },
     "Documents": { "main": [[{ "node": "Insert", "type": "main", "index": 0 }]] },
     "Insert": { "main": [[{ "node": "Count", "type": "main", "index": 0 }]] },
