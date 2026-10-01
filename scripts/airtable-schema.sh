@@ -14,16 +14,20 @@ meta=https://api.airtable.com/v0/meta/bases
 ids=airtable/ids.json
 [ -s "$ids" ] || echo '{"base":"","tables":{}}' > "$ids"
 
+need_id() { case "$1" in ""|null) echo "Airtable не вернул id (получено «${1:-пусто}») — ничего не записываю" >&2; exit 1;; esac; }
 set_secret() { # NAME VALUE: заменить строку на месте (допускается `export`), иначе дописать с новой строки
-  local f=deploy/secrets.env
+  local f=deploy/secrets.env esc
+  need_id "$2"
   if grep -Eq "^[[:space:]]*(export[[:space:]]+)?$1=" "$f"; then
-    sed -i -E "s|^([[:space:]]*(export[[:space:]]+)?)$1=.*|\1$1=$2|" "$f"
+    esc=$(printf '%s' "$2" | sed -e 's/[\\&|]/\\&/g')   # |, & и \ в значении иначе ломают замену
+    sed -i -E "s|^([[:space:]]*(export[[:space:]]+)?)$1=.*|\1$1=$esc|" "$f"
   else
     if [ -n "$(tail -c1 "$f")" ]; then echo >> "$f"; fi
     echo "$1=$2" >> "$f"
   fi
 }
 record_table() { # NAME ID: слить в ids.json
+  need_id "$2"
   jq --arg n "$1" --arg id "$2" '.tables[$n] = $id' "$ids" > "$ids.tmp" && mv "$ids.tmp" "$ids"
 }
 live_tables() { curl -fsS "${H[@]}" "$meta/$base/tables"; }
@@ -35,13 +39,19 @@ if [ -n "$base" ] && [ -n "${EXISTING_BASE:-}" ] && [ "$base" != "$EXISTING_BASE
   echo "airtable/ids.json уже указывает на $base, а не на $EXISTING_BASE. Запустите без EXISTING_BASE, чтобы достроить ту базу (Airtable API не умеет удалять базы — новую не создавайте)." >&2
   exit 1
 fi
+# порядок: EXISTING_BASE, ids.json, AIRTABLE_BASE_ID из secrets.env. Последнее — страховка: ids.json лежит только на VPS и не в git,
+# а Airtable не умеет удалять базы, так что потерянный ids.json не должен приводить к созданию второй базы.
 [ -n "$base" ] || base="${EXISTING_BASE:-}"
+if [ -z "$base" ] && [ -n "${AIRTABLE_BASE_ID:-}" ]; then
+  base="$AIRTABLE_BASE_ID"; echo "base $base взята из AIRTABLE_BASE_ID в secrets.env (в ids.json её не было); ids.json восстанавливается"
+fi
 
 if [ -z "$base" ]; then
   [ -n "${AIRTABLE_WORKSPACE_ID:-}" ] || { echo "AIRTABLE_WORKSPACE_ID пуст в deploy/secrets.env (или задайте EXISTING_BASE=app…)" >&2; exit 1; }
   payload=$(jq --arg ws "$AIRTABLE_WORKSPACE_ID" '{name, workspaceId: $ws, tables: (.tables | map(.fields |= map(select(.type != "lastModifiedTime"))))}' airtable/schema.json)
   resp=$(curl -fsS "${H[@]}" -X POST "$meta" -d "$payload")
-  base=$(jq -r .id <<< "$resp")
+  base=$(jq -r .id <<< "$resp"); need_id "$base"
+  set_secret AIRTABLE_BASE_ID "$base"   # сразу, до всего остального: потеря этого id = дубликат базы при следующем запуске
   echo "created base $base"
   jq --arg b "$base" '.base = $b' "$ids" > "$ids.tmp" && mv "$ids.tmp" "$ids"
   jq -r '.tables[] | "\(.name) \(.id)"' <<< "$resp" | while read -r n id; do record_table "$n" "$id"; done
