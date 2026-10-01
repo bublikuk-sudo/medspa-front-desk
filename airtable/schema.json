@@ -43,6 +43,7 @@
       { "name": "client_id", "type": "singleLineText" },
       { "name": "service_id", "type": "singleLineText" },
       { "name": "start_iso", "type": "singleLineText" },
+      { "name": "end_iso", "type": "singleLineText" },
       { "name": "start_dt", "type": "dateTime", "options": { "timeZone": "utc", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } },
       { "name": "status", "type": "singleSelect", "options": { "choices": [ { "name": "pending" }, { "name": "booked" }, { "name": "reminded" }, { "name": "confirmed" }, { "name": "cancelled" }, { "name": "late_cancel" }, { "name": "no_show" }, { "name": "done" } ] } },
       { "name": "calendar_event_id", "type": "singleLineText" },

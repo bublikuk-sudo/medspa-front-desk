@@ -1,40 +1,88 @@
 #!/usr/bin/env bash
-# Создаёт базу и таблицы из airtable/schema.json через Airtable Meta API, затем link-поля.
-# Записывает id в airtable/ids.json и AIRTABLE_BASE_ID в deploy/secrets.env. Повторный запуск при существующем ids.json — отказ.
+# Создаёт базу «MedSpa Front Desk» из airtable/schema.json через Airtable Meta API и доводит её до схемы.
+# Скрипт возобновляемый: каждый проход сначала читает текущие таблицы и поля базы и создаёт только то, чего не хватает,
+# поэтому повторный запуск на частично построенной базе её достраивает; на готовой базе ничего не меняет.
+# id пишутся в airtable/ids.json по мере создания, AIRTABLE_BASE_ID — в deploy/secrets.env сразу после появления базы.
 # Если Meta API не даёт создать базу (403) — владелец создаёт пустую базу вручную, затем: EXISTING_BASE=app… scripts/airtable-schema.sh
+# Airtable API не умеет удалять базы — не создавайте «запасную», а возобновляйте существующую.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source deploy/secrets.env
+[ -n "${AIRTABLE_PAT:-}" ] || { echo "AIRTABLE_PAT пуст в deploy/secrets.env" >&2; exit 1; }
 H=(-H "Authorization: Bearer $AIRTABLE_PAT" -H "Content-Type: application/json")
-if [ -s airtable/ids.json ] && jq -e '.base != ""' airtable/ids.json > /dev/null; then echo "airtable/ids.json уже заполнен — база создана; для пересоздания удалите файл" >&2; exit 1; fi
-if [ -n "${EXISTING_BASE:-}" ]; then
-  base="$EXISTING_BASE"
-  tables='{}'
-  for i in $(seq 0 $(( $(jq '.tables|length' airtable/schema.json) - 1 ))); do
-    resp=$(curl -fsS "${H[@]}" -X POST "https://api.airtable.com/v0/meta/bases/$base/tables" -d "$(jq -c ".tables[$i] | .fields |= map(select(.type != \"lastModifiedTime\"))" airtable/schema.json)")
-    tables=$(jq --arg n "$(jq -r .name <<< "$resp")" --arg id "$(jq -r .id <<< "$resp")" '. + {($n): $id}' <<< "$tables")
-  done
-  jq -n --arg b "$base" --argjson t "$tables" '{base: $b, tables: $t}' > airtable/ids.json
-else
-  # Airtable не создаёт lastModifiedTime-поля вместе с таблицей (422) — они добавляются вторым проходом
-  payload=$(jq --arg ws "$AIRTABLE_WORKSPACE_ID" '{name, workspaceId: $ws, tables: (.tables | map(.fields |= map(select(.type != "lastModifiedTime"))))}' airtable/schema.json)
-  resp=$(curl -fsS "${H[@]}" -X POST https://api.airtable.com/v0/meta/bases -d "$payload")
-  base=$(jq -r .id <<< "$resp")
-  jq -n --arg b "$base" --argjson t "$(jq '[.tables[] | {key: .name, value: .id}] | from_entries' <<< "$resp")" '{base: $b, tables: $t}' > airtable/ids.json
+meta=https://api.airtable.com/v0/meta/bases
+ids=airtable/ids.json
+[ -s "$ids" ] || echo '{"base":"","tables":{}}' > "$ids"
+
+set_secret() { # NAME VALUE: заменить строку на месте (допускается `export`), иначе дописать с новой строки
+  local f=deploy/secrets.env
+  if grep -Eq "^[[:space:]]*(export[[:space:]]+)?$1=" "$f"; then
+    sed -i -E "s|^([[:space:]]*(export[[:space:]]+)?)$1=.*|\1$1=$2|" "$f"
+  else
+    if [ -n "$(tail -c1 "$f")" ]; then echo >> "$f"; fi
+    echo "$1=$2" >> "$f"
+  fi
+}
+record_table() { # NAME ID: слить в ids.json
+  jq --arg n "$1" --arg id "$2" '.tables[$n] = $id' "$ids" > "$ids.tmp" && mv "$ids.tmp" "$ids"
+}
+live_tables() { curl -fsS "${H[@]}" "$meta/$base/tables"; }
+# lastModifiedTime Airtable не создаёт вместе с таблицей (422) — такие поля добавляются отдельным проходом
+strip_lm='.fields |= map(select(.type != "lastModifiedTime"))'
+
+base=$(jq -r '.base // ""' "$ids")
+if [ -n "$base" ] && [ -n "${EXISTING_BASE:-}" ] && [ "$base" != "$EXISTING_BASE" ]; then
+  echo "airtable/ids.json уже указывает на $base, а не на $EXISTING_BASE. Запустите без EXISTING_BASE, чтобы достроить ту базу (Airtable API не умеет удалять базы — новую не создавайте)." >&2
+  exit 1
 fi
-# lastModifiedTime-поля вторым проходом
-jq -c '.tables[] | . as $t | .fields[] | select(.type == "lastModifiedTime") | {table: $t.name, field: .}' airtable/schema.json | while read -r lm; do
-  tbl=$(jq -r --arg t "$(jq -r .table <<< "$lm")" '.tables[$t]' airtable/ids.json)
-  curl -fsS "${H[@]}" -X POST "https://api.airtable.com/v0/meta/bases/$base/tables/$tbl/fields" -d "$(jq -c .field <<< "$lm")" > /dev/null
-  echo "added $(jq -r .table <<< "$lm").$(jq -r .field.name <<< "$lm") (lastModifiedTime)"
+[ -n "$base" ] || base="${EXISTING_BASE:-}"
+
+if [ -z "$base" ]; then
+  [ -n "${AIRTABLE_WORKSPACE_ID:-}" ] || { echo "AIRTABLE_WORKSPACE_ID пуст в deploy/secrets.env (или задайте EXISTING_BASE=app…)" >&2; exit 1; }
+  payload=$(jq --arg ws "$AIRTABLE_WORKSPACE_ID" '{name, workspaceId: $ws, tables: (.tables | map(.fields |= map(select(.type != "lastModifiedTime"))))}' airtable/schema.json)
+  resp=$(curl -fsS "${H[@]}" -X POST "$meta" -d "$payload")
+  base=$(jq -r .id <<< "$resp")
+  echo "created base $base"
+  jq --arg b "$base" '.base = $b' "$ids" > "$ids.tmp" && mv "$ids.tmp" "$ids"
+  jq -r '.tables[] | "\(.name) \(.id)"' <<< "$resp" | while read -r n id; do record_table "$n" "$id"; done
+else
+  jq --arg b "$base" '.base = $b' "$ids" > "$ids.tmp" && mv "$ids.tmp" "$ids"
+fi
+set_secret AIRTABLE_BASE_ID "$base"
+
+# проход 1: недостающие таблицы
+live=$(live_tables)
+for name in $(jq -r '.tables[].name' airtable/schema.json); do
+  have=$(jq -r --arg n "$name" '[.tables[] | select(.name == $n) | .id][0] // ""' <<< "$live")
+  if [ -n "$have" ]; then
+    record_table "$name" "$have"; echo "table $name: exists"
+  else
+    resp=$(curl -fsS "${H[@]}" -X POST "$meta/$base/tables" -d "$(jq -c --arg n "$name" ".tables[] | select(.name == \$n) | $strip_lm" airtable/schema.json)")
+    record_table "$name" "$(jq -r .id <<< "$resp")"; echo "table $name: created"
+  fi
 done
-# link-поля вторым проходом: им нужны id целевых таблиц
+
+# проход 2: недостающие поля (в т.ч. lastModifiedTime)
+live=$(live_tables)
+jq -c --argjson live "$live" '.tables[] | . as $t | ($live.tables[] | select(.name == $t.name)) as $lt
+  | $t.fields[] | select(.name as $n | ($lt.fields | map(.name) | index($n)) | not) | {table: $t.name, field: .}' airtable/schema.json |
+while read -r item; do
+  tbl=$(jq -r --arg t "$(jq -r .table <<< "$item")" '.tables[$t]' "$ids")
+  curl -fsS "${H[@]}" -X POST "$meta/$base/tables/$tbl/fields" -d "$(jq -c .field <<< "$item")" > /dev/null
+  echo "field $(jq -r .table <<< "$item").$(jq -r .field.name <<< "$item"): added"
+done
+
+# проход 3: недостающие link-поля (нужны id целевых таблиц)
+live=$(live_tables)
 jq -c '.links[]' airtable/schema.json | while read -r link; do
-  tbl=$(jq -r --arg t "$(jq -r .table <<< "$link")" '.tables[$t]' airtable/ids.json)
-  to=$(jq -r --arg t "$(jq -r .to <<< "$link")" '.tables[$t]' airtable/ids.json)
-  curl -fsS "${H[@]}" -X POST "https://api.airtable.com/v0/meta/bases/$base/tables/$tbl/fields" \
-    -d "$(jq -n --arg n "$(jq -r .field <<< "$link")" --arg to "$to" '{name: $n, type: "multipleRecordLinks", options: {linkedTableId: $to}}')" > /dev/null
-  echo "linked $(jq -r .table <<< "$link").$(jq -r .field <<< "$link") -> $(jq -r .to <<< "$link")"
+  from=$(jq -r .table <<< "$link"); field=$(jq -r .field <<< "$link"); target=$(jq -r .to <<< "$link")
+  if jq -e --arg t "$from" --arg f "$field" '.tables[] | select(.name == $t) | .fields[] | select(.name == $f)' <<< "$live" > /dev/null; then
+    echo "link $from.$field: exists"; continue
+  fi
+  tbl=$(jq -r --arg t "$from" '.tables[$t]' "$ids"); to=$(jq -r --arg t "$target" '.tables[$t]' "$ids")
+  curl -fsS "${H[@]}" -X POST "$meta/$base/tables/$tbl/fields" \
+    -d "$(jq -n --arg n "$field" --arg to "$to" '{name: $n, type: "multipleRecordLinks", options: {linkedTableId: $to}}')" > /dev/null
+  echo "linked $from.$field -> $target"
 done
-grep -q '^AIRTABLE_BASE_ID=' deploy/secrets.env && sed -i "s/^AIRTABLE_BASE_ID=.*/AIRTABLE_BASE_ID=$base/" deploy/secrets.env || echo "AIRTABLE_BASE_ID=$base" >> deploy/secrets.env
-echo "base $base"; jq . airtable/ids.json
+
+echo "base $base"; jq . "$ids"
