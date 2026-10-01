@@ -87,8 +87,8 @@ so expressions read `$json.fields.<column>`, not `$json.<column>`.
 
 `search_knowledge(question)` embeds the question and takes the 5 nearest paragraphs of the `medspa_knowledge`
 PGVector table (vector search only RANKS), then a relevance gate decides: `Gate` is a Basic LLM Chain on the pinned
-snapshot `claude-haiku-4-5-20251001` (max 120 tokens, temperature 0) that receives the question and all 5 numbered
-passages, reasons first (one short line naming the passage that states the information, if any) and ends with a line
+snapshot `claude-haiku-4-5-20251001` (max 250 tokens, temperature 0) that receives the question and all 5 numbered
+passages, reasons first (one short sentence naming the passage that states the information, if any) and ends with a line
 `VERDICT: YES <numbers of the passages that hold the answer>` or `VERDICT: NO`. The rule is conjunctive: YES
 only if EVERY part of the question is answered by the passages; a compound question, a recommendation, a symptom or
 complication, a dose or drug interaction, or whether THIS client may proceed given their own condition or medication is
@@ -107,7 +107,8 @@ its LAST line of the form `VERDICT: YES|NO ...` (markdown and case are ignored).
 error shape: the gate node failed after 2 tries, 5 s apart) fails open to `FOUND`, and then `notify_owner` gets
 "⚠️ Knowledge-base relevance check unavailable — answers are unfiltered", at most once an hour (workflow static data).
 Anything else that is not a `VERDICT: YES`, including a missing VERDICT line (for example output cut off by the token
-cap), is `NOT_FOUND`: escalation is the safe direction, and the cost is a false NOT_FOUND on a long reasoning. Angle brackets are removed from the question before it goes into
+cap), is `NOT_FOUND`: escalation is the safe direction. That case is not silent: the `Gate Check` item of the execution
+carries `truncated: true` (gate answered, no VERDICT line), so the owner can count them. Angle brackets are removed from the question before it goes into
 the `<question>` tags.
 
 The vector score is the pgvector cosine DISTANCE (0 = identical, 2 = opposite), lower is better, and it cannot gate
