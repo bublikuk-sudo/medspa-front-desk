@@ -37,6 +37,10 @@ Tab-separated, one case per line. Lines starting with `#` and empty lines are sk
 | `setup` | optional bash command run before the call (`at_*` functions and `tests/run-case.sh` are available) |
 | `teardown` | optional bash command run after the call, whether it passed or not |
 
+A `setup` that exits non-zero (its last command decides) turns the case into a FAIL without calling the tool,
+and a `teardown` that exits non-zero turns a PASS into a FAIL, so both can carry assertions. A teardown that
+asserts and also cleans up must keep the status: `<assertion>; r=$?; tests/cleanup.sh; test $r -eq 0`.
+
 Empty `setup` or `teardown` columns are written as empty between tabs. Tab characters
 inside a column are not possible, so keep JSON on one line without literal tabs.
 
@@ -67,7 +71,11 @@ has been pushed.
 | case | why |
 |---|---|
 | `find_client_unknown` | a `contact_id` with no `Clients` row gives `NEW` (the Airtable Search emits one empty item, which the `Known?` check treats as no client) |
-| `find_client_no_name` | a row without `name` is also `NEW`: the agent has not asked for the name yet |
+| `find_client_no_name` | a row without `name` is also `NEW`: the agent has not asked for the name yet. The teardown asserts that the row really exists and has no name, so the case cannot pass just because the lookup found nothing |
+| `find_client_empty_id`, `find_client_malformed_id`, `find_client_bare_wa_prefix` | `contact_id` of `""`, `xyz` or `wa:` must give `NEW`, never another client's card: a formula like `{phone}=''` matches every row with a blank phone. A named Telegram-only client with notes exists during these cases, which is exactly the row that used to leak |
+| `find_client_whitespace_name` | a whitespace-only `name` counts as no name: `NEW` |
+| `find_client_no_next_visit` | a `done` appointment without `next_visit_in` gives `last_service=botox upcoming=[...]` with no empty `next_visit_in=` token (optional tokens appear only when the data exists) |
+| `find_client_name_quote` | a client-controlled name containing `"` cannot forge a field: quotes become `'`, so `owner_notes=` stays inside `name="..."` and there is no second token |
 | `find_client_known` | the full card: last visit from the latest `done` appointment, plus `upcoming=[appt_id service_id start_iso; ...]` with only future `booked`/`reminded`/`confirmed` rows; this is the only place `cancel_booking` gets an `appt_id` from. No `owner_notes` is expected here because `Clients.notes` is empty |
 | `find_client_no_appts` | a named client with no appointments gives `upcoming=[]` and no `last_visit` part, not an error |
 | `find_client_owner_notes` | non-empty `Clients.notes` is appended as `owner_notes="..."`, with double quotes turned into single quotes and whitespace collapsed |

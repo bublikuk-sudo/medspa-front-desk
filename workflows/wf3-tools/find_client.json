@@ -38,21 +38,13 @@
     {
       "id": "f1c10001-0003-4c00-8000-000000000003",
       "name": "Client Formula",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.5,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [440, 300],
       "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "f1c10001-2001-4c00-8000-000000000001",
-              "name": "formula",
-              "value": "={{ $('Trigger').first().json.contact_id.startsWith('tg:') ? \"{telegram_chat_id}='\" + $('Trigger').first().json.contact_id.slice(3) + \"'\" : \"{phone}='\" + $('Trigger').first().json.contact_id.slice(3) + \"'\" }}",
-              "type": "string"
-            }
-          ]
-        },
-        "options": {}
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Validate first: an empty or malformed contact_id must match NO client row (a comparison with '' would match every row whose column is blank).\nconst raw = String($('Trigger').first().json.contact_id || '').trim();\nconst ok = /^(tg:\\d+|wa:\\+\\d+)$/.test(raw);\nconst formula = ok\n  ? (raw.startsWith('tg:') ? \"{telegram_chat_id}='\" + raw.slice(3) + \"'\" : \"{phone}='\" + raw.slice(3) + \"'\")\n  : \"{client_id}='__no_such_client__'\";\nreturn [{ json: { formula } }];"
       }
     },
     {
@@ -88,7 +80,7 @@
           "conditions": [
             {
               "id": "f1c10001-1001-4c00-8000-000000000001",
-              "leftValue": "={{ !!$json.fields?.client_id && !!$json.fields?.name }}",
+              "leftValue": "={{ !!$json.fields?.client_id && !!String($json.fields?.name ?? '').trim() }}",
               "rightValue": "",
               "operator": { "type": "boolean", "operation": "true", "singleValue": true }
             }
@@ -148,7 +140,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// The Airtable node (2.2) nests the columns: every row is { id, createdTime, fields: {...} }.\nconst c = $('Client').first().json.fields;\nconst tz = $('Settings').first().json.fields.timezone;\nconst now = DateTime.now().setZone(tz);\nconst appts = $input.all().map(i => i.json.fields || {}).filter(a => a.appt_id);\nconst byStart = (a, b) => a.start_iso.localeCompare(b.start_iso);\nconst done = appts.filter(a => a.status === 'done').sort(byStart).reverse()[0];\nconst upcoming = appts.filter(a => ['booked', 'reminded', 'confirmed'].includes(a.status) && DateTime.fromISO(a.start_iso) > now).sort(byStart);\nlet v = `KNOWN name=\"${c.name}\" language=${c.language || 'en'} status=${c.status || 'active'}`;\nif (done) v += ` last_visit=${done.start_iso.slice(0, 10)} last_service=${done.service_id} next_visit_in=${done.next_visit_in ?? ''}`;\nv += ` upcoming=[${upcoming.map(a => `${a.appt_id} ${a.service_id} ${a.start_iso}`).join('; ')}]`;\nif (c.notes) v += ` owner_notes=\"${String(c.notes).replace(/\"/g, \"'\").replace(/\\s+/g, \" \").slice(0, 200)}\"`;\nreturn [{ json: { verdict: v, name: c.name, language: c.language || 'en', last_service: done ? done.service_id : '', upcoming } }];"
+        "jsCode": "// The Airtable node (2.2) nests the columns: every row is { id, createdTime, fields: {...} }.\n// Everything the client controls (name, notes, language) is cleaned before it goes into the verdict, so it cannot forge a token such as owner_notes=.\nconst c = $('Client').first().json.fields;\nconst tz = $('Settings').first().json.fields.timezone;\nconst now = DateTime.now().setZone(tz).toMillis();\nconst clean = (s, max) => String(s ?? '').replace(/\"/g, \"'\").replace(/\\s+/g, ' ').trim().slice(0, max);\nconst tok = s => String(s ?? '').replace(/[^\\w.:+-]/g, '');\nconst ms = a => DateTime.fromISO(a.start_iso).toMillis();\nconst byStart = (a, b) => ms(a) - ms(b);\nconst appts = $input.all().map(i => i.json.fields || {}).filter(a => a.appt_id && DateTime.fromISO(a.start_iso).isValid);\nconst done = appts.filter(a => a.status === 'done').sort(byStart).reverse()[0];\nconst upcoming = appts.filter(a => ['booked', 'reminded', 'confirmed'].includes(a.status) && ms(a) > now).sort(byStart);\nlet v = `KNOWN name=\"${clean(c.name, 60)}\" language=${tok(c.language).slice(0, 10) || 'en'} status=${tok(c.status) || 'active'}`;\nif (done) {\n  v += ` last_visit=${DateTime.fromISO(done.start_iso, { zone: tz }).toISODate()} last_service=${tok(done.service_id)}`;\n  const nv = done.next_visit_in;\n  if (nv != null && nv !== '' && Number.isFinite(Number(nv))) v += ` next_visit_in=${Number(nv)}`;\n}\nv += ` upcoming=[${upcoming.map(a => `${tok(a.appt_id)} ${tok(a.service_id)} ${tok(a.start_iso)}`).join('; ')}]`;\nconst notes = clean(c.notes, 200);\nif (notes) v += ` owner_notes=\"${notes}\"`;\nreturn [{ json: { verdict: v } }];"
       }
     }
   ],
