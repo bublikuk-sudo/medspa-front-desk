@@ -1,0 +1,928 @@
+{
+  "name": "wf2-agent",
+  "nodes": [
+    {
+      "id": "a9e20002-0001-4c00-8000-000000000001",
+      "name": "Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "contact_id",
+              "type": "string"
+            },
+            {
+              "name": "channel",
+              "type": "string"
+            },
+            {
+              "name": "text",
+              "type": "string"
+            },
+            {
+              "name": "language",
+              "type": "string"
+            },
+            {
+              "name": "client_name",
+              "type": "string"
+            },
+            {
+              "name": "client_status",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "a9e20002-0002-4c00-8000-000000000002",
+      "name": "Settings",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [
+        220,
+        300
+      ],
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "CRED",
+          "name": "MedSpa Airtable"
+        }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "ATBASE",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "ATTBL:Settings",
+          "mode": "id"
+        },
+        "returnAll": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "a9e20002-0003-4c00-8000-000000000003",
+      "name": "Services",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        300
+      ],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "CRED",
+          "name": "MedSpa Airtable"
+        }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": {
+          "__rl": true,
+          "value": "ATBASE",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "ATTBL:Services",
+          "mode": "id"
+        },
+        "filterByFormula": "{active}=1",
+        "returnAll": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "a9e20002-0004-4c00-8000-000000000004",
+      "name": "Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const s = $('Settings').first().json.fields, t = $('Trigger').first().json;\nconst services = $('Services').all().map(i => i.json.fields || {}).filter(x => x.service_id);\nconst now = DateTime.now().setZone(s.timezone);\nconst block = [\n  `business_name: ${s.business_name}`,\n  `timezone: ${s.timezone} | now: ${now.toISO({ suppressMilliseconds: true })} | today: ${now.toFormat('cccc, LLL d, yyyy')}`,\n  `contact_id: ${t.contact_id} | channel: ${t.channel} | client_language: ${t.language || 'en'} | client_name: ${t.client_name || '(unknown)'} | client_status: ${t.client_status || 'new'}`,\n  `cancellation policy: free until ${s.cancellation_hours} hours before the appointment`,\n  `services (service_id — name — duration — price):`,\n  ...services.map(x => `  ${x.service_id} — ${x.name} — ${x.duration_min} min — $${x.price}`)\n].join('\\n');\nreturn [{ json: { block } }];"
+      }
+    },
+    {
+      "id": "a9e20002-0005-4c00-8000-000000000005",
+      "name": "Agent",
+      "notes": "System Message is written by scripts/sync-assets.sh from prompts/agent-system-prompt.md - edit the prompt file, not this field. No retryOnFail: a re-run of the agent could repeat side-effecting tool calls (propose_booking, escalate).",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Trigger').first().json.text }}",
+        "hasOutputParser": false,
+        "options": {
+          "systemMessage": "=You are the virtual front desk of a medical aesthetics clinic. You help clients book, reschedule and cancel appointments, answer questions from the clinic's knowledge base, and hand the conversation to a human when needed. You are warm, brief and precise.\n\nLANGUAGE\nReply in the language given as client_language in the context, whatever language the knowledge base or tool results are in. Translate knowledge-base passages yourself. Dates, times and service identifiers that you pass to tools are never translated: dates are YYYY-MM-DD, timestamps are ISO 8601 exactly as a tool returned them, services are service_id values from the context.\n\nSCOPE\nYou only talk about this clinic: its services, prices, availability, appointments, policies, location and hours. For anything else, say politely that you can only help with the clinic and offer to book or to connect a team member. Never give medical advice, diagnoses, dosages or drug recommendations from your own knowledge. If a question is medical and search_knowledge returns NOT_FOUND, say the team will answer it and call escalate.\n\nTOOLS AND PROCEDURE\n1. At the start of a conversation call find_client. NEW means we do not know this person: ask for their first and last name before proposing a booking. KNOWN gives the name, the last service, next_visit_in, upcoming appointments with their appt_id and, when present, owner_notes written by the clinic about this client — follow them. Greet a known client by name; if they ask for \"the same as last time\", use last_service.\n2. To book: identify the service (only a service_id from the context; if unsure, list the services), then the day and part of day, then call check_availability. Offer at most 4 of the returned slots in the client's local time. FREE slots are the only times you may propose. NONE means offer the nearest alternatives the tool returned. UNKNOWN_SERVICE means ask the client to choose from the list in the tool result.\n3. When the client picks a slot, call propose_booking with the exact ISO timestamp from check_availability and the service_id (and the name, if the client is NEW). PENDING means the system will now send the client a summary and ask them to reply YES; your own text after PENDING is not shown, so reply with a single short sentence. You cannot confirm a booking yourself; only the client's YES does. SLOT_NOT_OFFERED means the time was not in the last availability check: run check_availability again. NO_CLIENT_ROW means the client is not registered yet: tell them a team member will finish the booking and call escalate.\n4. To cancel: only appointments listed in find_client's upcoming, by appt_id. Confirm which appointment the client means, then call cancel_booking. LATE_CANCEL means the cancellation is inside the clinic's cancellation window: tell the client it is recorded as a late cancellation and, if they ask about the policy, use search_knowledge. NOT_YOURS or NOT_FOUND: tell the client you cannot find that appointment under their contact.\n5. To reschedule: find the new slot as in step 2, then call propose_booking with replaces_appt_id set to the old appointment's appt_id. The old appointment is cancelled automatically once the client confirms the new one with YES.\n6. For questions about prices, durations, preparation, aftercare, contraindications, address, hours, parking, payment or policies: call search_knowledge and answer only from what it returns. If it returns NOT_FOUND, say so honestly and offer to pass the question to the team.\n7. Call escalate when the client asks for a human, complains, asks a medical question the knowledge base does not cover, asks you to compare or rank treatments (which is better, which lasts longer, which hurts less), or when you have not understood two consecutive messages. After ESCALATED, say a team member will contact them and stop offering actions.\n\nRULES\n- Never invent availability, prices, durations or policies. Everything comes from tools or the context.\n- Never ask for or record health information (allergies, medication, pregnancy, diagnoses). If the client volunteers it, thank them and say the practitioner will review it at the visit; do not repeat it back.\n- Never mention appt_id, service_id, contact_id or tool names to the client.\n- One question at a time. Keep replies to three sentences unless listing slots or services.\n\nFORMATTING\nPlain text only. Use **double asterisks** for emphasis and nothing else: no headings, no bullet symbols, no markdown links, no HTML. Show times as in \"Tue, Sep 22 at 2:00 PM\".\n\nCONTEXT\n{{ $('Context').first().json.block }}",
+          "maxIterations": 8,
+          "returnIntermediateSteps": true,
+          "enableStreaming": false
+        }
+      }
+    },
+    {
+      "id": "a9e20002-0006-4c00-8000-000000000006",
+      "name": "Claude",
+      "notes": "No retryOnFail here: on an AI sub-node it does not wrap the API call (Task 18). The LangChain client retries failed attempts itself.",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.6,
+      "position": [
+        700,
+        560
+      ],
+      "credentials": {
+        "anthropicApi": {
+          "id": "CRED",
+          "name": "MedSpa Anthropic"
+        }
+      },
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "claude-opus-5",
+          "mode": "id"
+        },
+        "options": {
+          "maxTokensToSample": 1024
+        }
+      }
+    },
+    {
+      "id": "a9e20002-0007-4c00-8000-000000000007",
+      "name": "Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
+      "typeVersion": 1.4,
+      "position": [
+        840,
+        560
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "CRED",
+          "name": "MedSpa Postgres"
+        }
+      },
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Trigger').first().json.contact_id }}",
+        "tableName": "n8n_chat_histories",
+        "contextWindowLength": 20
+      }
+    },
+    {
+      "id": "a9e20002-0008-4c00-8000-000000000008",
+      "name": "find_client",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        980,
+        560
+      ],
+      "parameters": {
+        "description": "Look up the current client. Call it first in every conversation. Returns NEW (ask for the client's name before booking) or KNOWN with name, language, last service, next_visit_in and upcoming appointments with their appt_id.",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "WFID:find_client",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Trigger').first().json.contact_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "contact_id",
+              "displayName": "contact_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      }
+    },
+    {
+      "id": "a9e20002-0009-4c00-8000-000000000009",
+      "name": "check_availability",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        560
+      ],
+      "parameters": {
+        "description": "Free slots for a service on a date. Returns FREE with ISO timestamps (the only times you may offer), NONE with the nearest alternatives, or UNKNOWN_SERVICE with the list of services.",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "WFID:check_availability",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Trigger').first().json.contact_id }}",
+            "service_id": "={{ $fromAI('service_id', 'service_id from the context list, lowercase', 'string') }}",
+            "date": "={{ $fromAI('date', 'YYYY-MM-DD in the clinic timezone', 'string') }}",
+            "part_of_day": "={{ $fromAI('part_of_day', 'morning, afternoon, evening, or empty string', 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "contact_id",
+              "displayName": "contact_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "service_id",
+              "displayName": "service_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "part_of_day",
+              "displayName": "part_of_day",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      }
+    },
+    {
+      "id": "a9e20002-0010-4c00-8000-000000000010",
+      "name": "propose_booking",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1260,
+        560
+      ],
+      "parameters": {
+        "description": "Create a pending booking for a slot from the latest FREE list. Returns PENDING (the client will be asked to reply YES), SLOT_NOT_OFFERED (re-run check_availability) or UNKNOWN_SERVICE. This does not confirm anything.",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "WFID:propose_booking",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Trigger').first().json.contact_id }}",
+            "channel": "={{ $('Trigger').first().json.channel }}",
+            "service_id": "={{ $fromAI('service_id', 'service_id from the context list, lowercase', 'string') }}",
+            "start_iso": "={{ $fromAI('start_iso', 'one ISO 8601 timestamp copied verbatim from the latest check_availability FREE list', 'string') }}",
+            "name": "={{ $fromAI('name', 'client full name if find_client returned NEW, else empty', 'string') }}",
+            "replaces_appt_id": "={{ $fromAI('replaces_appt_id', 'appt_id being rescheduled, else empty', 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "contact_id",
+              "displayName": "contact_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "service_id",
+              "displayName": "service_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "start_iso",
+              "displayName": "start_iso",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "channel",
+              "displayName": "channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "replaces_appt_id",
+              "displayName": "replaces_appt_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      }
+    },
+    {
+      "id": "a9e20002-0011-4c00-8000-000000000011",
+      "name": "cancel_booking",
+      "notes": "reason is deliberately NOT mapped (removed): the model must never be able to claim a reschedule; without reason cancel_booking applies the late-cancel policy. Reschedules reach cancel_booking only from confirm_booking.",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1400,
+        560
+      ],
+      "parameters": {
+        "description": "Cancel one of the client's own upcoming appointments by appt_id. Returns CANCELLED, LATE_CANCEL, NOT_YOURS or NOT_FOUND.",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "WFID:cancel_booking",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Trigger').first().json.contact_id }}",
+            "appt_id": "={{ $fromAI('appt_id', 'appt_id from find_client upcoming', 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "contact_id",
+              "displayName": "contact_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "appt_id",
+              "displayName": "appt_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "reason",
+              "displayName": "reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      }
+    },
+    {
+      "id": "a9e20002-0012-4c00-8000-000000000012",
+      "name": "search_knowledge",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        560
+      ],
+      "parameters": {
+        "description": "Search the clinic knowledge base: prices, durations, preparation, aftercare, contraindications, address, hours, parking, payment, policies. Returns FOUND with passages or NOT_FOUND. For any medical or safety question call this first; on NOT_FOUND do not answer from general knowledge.",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "WFID:search_knowledge",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "question": "={{ $fromAI('question', 'the client question, in English', 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "question",
+              "displayName": "question",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      }
+    },
+    {
+      "id": "a9e20002-0013-4c00-8000-000000000013",
+      "name": "escalate",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1680,
+        560
+      ],
+      "parameters": {
+        "description": "Hand the conversation to a human team member and pause the assistant. Use for \"talk to a human\", complaints, medical questions not in the knowledge base, requests to compare or rank treatments, or two consecutive misunderstandings.",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "WFID:escalate",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Trigger').first().json.contact_id }}",
+            "reason": "={{ $fromAI('reason', 'one sentence: why a human is needed', 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "contact_id",
+              "displayName": "contact_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "reason",
+              "displayName": "reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      }
+    },
+    {
+      "id": "a9e20002-0014-4c00-8000-000000000014",
+      "name": "Guardrail",
+      "notes": "escalated = the agent called escalate and it answered ESCALATED. Then the reply becomes the ESCALATED_REPLY template (Result) and Escalate Medical is skipped, so the owner is not alerted twice.",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const j = $input.first().json;\nconst out = (j.output || '').toString();\nconst steps = Array.isArray(j.intermediateSteps) ? j.intermediateSteps : [];\nconst tools_used = steps.map(s => s.action && s.action.tool).filter(Boolean);\nconst kbUsed = steps.some(s => s.action && s.action.tool === 'search_knowledge' && !String(s.observation || '').includes('NOT_FOUND'));\nconst escalated = steps.some(s => s.action && s.action.tool === 'escalate' && String(s.observation || '').includes('ESCALATED'));\nconst medical = /\\b\\d+\\s?(units?|mg|ml|iu|cc)\\b|\\b(botulinum|hyaluron\\w*|lidocaine|tretinoin|retin-a|hydroquinone|isotretinoin|accutane|semaglutide|ozempic|antibiotic\\w*|steroid\\w*|dosage|dose)\\b/i;\nconst violation = medical.test(out) && !kbUsed;\nreturn [{ json: { reply: out, violation, escalated, tools_used } }];"
+      }
+    },
+    {
+      "id": "a9e20002-0015-4c00-8000-000000000015",
+      "name": "Violation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1320,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "a9e20002-1001-4c00-8000-000000000001",
+              "leftValue": "={{ $json.violation === true && $json.escalated !== true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a9e20002-0016-4c00-8000-000000000016",
+      "name": "Escalate Medical",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [
+        1540,
+        200
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "WFID:escalate",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Trigger').first().json.contact_id }}",
+            "reason": "Reply contained medical or dosage content without a knowledge-base source"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "contact_id",
+              "displayName": "contact_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "reason",
+              "displayName": "reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "a9e20002-0017-4c00-8000-000000000017",
+      "name": "Result Escalated",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1760,
+        200
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a9e20002-2001-4c00-8000-000000000001",
+              "name": "reply",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "a9e20002-2002-4c00-8000-000000000002",
+              "name": "template_key",
+              "value": "ESCALATED_REPLY",
+              "type": "string"
+            },
+            {
+              "id": "a9e20002-2003-4c00-8000-000000000003",
+              "name": "tools_used",
+              "value": "={{ $('Guardrail').first().json.tools_used }}",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "a9e20002-0018-4c00-8000-000000000018",
+      "name": "Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1540,
+        400
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a9e20002-2004-4c00-8000-000000000004",
+              "name": "reply",
+              "value": "={{ $json.escalated ? '' : $json.reply }}",
+              "type": "string"
+            },
+            {
+              "id": "a9e20002-2005-4c00-8000-000000000005",
+              "name": "template_key",
+              "value": "={{ $json.escalated ? 'ESCALATED_REPLY' : '' }}",
+              "type": "string"
+            },
+            {
+              "id": "a9e20002-2006-4c00-8000-000000000006",
+              "name": "tools_used",
+              "value": "={{ $json.tools_used }}",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Services",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Services": {
+      "main": [
+        [
+          {
+            "node": "Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Context": {
+      "main": [
+        [
+          {
+            "node": "Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "find_client": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "check_availability": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "propose_booking": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "cancel_booking": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "search_knowledge": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "escalate": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent": {
+      "main": [
+        [
+          {
+            "node": "Guardrail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardrail": {
+      "main": [
+        [
+          {
+            "node": "Violation?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Violation?": {
+      "main": [
+        [
+          {
+            "node": "Escalate Medical",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escalate Medical": {
+      "main": [
+        [
+          {
+            "node": "Result Escalated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "errorWorkflow": "WFID:wf6-error-handler"
+  }
+}
