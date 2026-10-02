@@ -6,6 +6,9 @@ cd "$(dirname "$0")/.."
 source tests/lib/airtable.sh
 at_delete_where Appointments "REGEX_MATCH({client_id}, '^C-test')"
 at_delete_where Clients "REGEX_MATCH({client_id}, '^C-test')"
+# Chat-history rows seeded by the escalate history cases (session ids tg:9000000NN); skipped while the table does not exist.
+source tests/lib/pg.sh
+pg_sql 'DO $$ BEGIN IF to_regclass($q$public.n8n_chat_histories$q$) IS NOT NULL THEN DELETE FROM n8n_chat_histories WHERE session_id LIKE $q$tg:9000000%$q$; END IF; END $$' > /dev/null || echo "chat-history cleanup FAILED"
 # Чистка календаря не фатальна: до появления воркфлоу test-fixtures (нужен credential MedSpa Google Calendar)
 # или при его сбое Airtable-часть всё равно должна отработать. Отличие от брифа: вызов намеренно не фатален
 # (бриф вызывает его под set -e). Итог чистки календаря виден в строке "calendar cleanup" ниже; после загрузки

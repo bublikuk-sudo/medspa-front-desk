@@ -4,6 +4,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source tests/lib/airtable.sh
+source tests/lib/pg.sh
+source tests/lib/n8n.sh
 pass=0; fail=0; only="${1:-}"
 # bash `read` с IFS=$'\t' склеивает подряд идущие табуляции (tab — «пробельный» разделитель), и пустая колонка
 # setup сдвигает teardown влево. Поэтому перед каждым полем ставим маркер \x01 и снимаем его после read.

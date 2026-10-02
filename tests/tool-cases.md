@@ -153,39 +153,54 @@ count different from the documents) so a failed rebuild is never silent. The own
 
 ### escalate
 
-`escalate(contact_id, reason)` returns `ESCALATED`. Side effects: `Clients.status` becomes `escalated` (only that column is
-written) when the contact is a known client, and the owner gets one Telegram message through `notify_owner`:
+`escalate(contact_id, reason)` returns `ESCALATED`. The order of the steps is the point of the design:
+
+`Client` (lookup) -> `History` -> `Compose` -> `Notify` (the owner is told FIRST) -> `Has Client?` -> `Flag Escalated` -> `Flag Failed?` -> `Notify Flag Failure` (only when the flag failed) -> `Result`.
+
+The client is flagged only after the owner has been told. A flagged client nobody knows about is the unrecoverable state (WF-1 keeps
+answering them "a team member will contact you" while no team member knows), so the tool never produces it: if `Notify` fails
+(`notify_owner` retries its own Airtable and Telegram nodes, 2 tries 5 s apart; `Notify` itself has no retry, which would only multiply
+those) the execution fails BEFORE `Flag Escalated`, the client stays as it was, the tool call returns an error
+instead of `ESCALATED`, and WF-6 reports the failed execution to the owner (`⚠️ escalate failed at Notify: ...`). If the flag fails after the owner was told (2 tries, 5 s
+apart), a second best-effort message says `Escalation follow-up: <contact> (Clients row recXXX) was reported to you, but its status
+could NOT be set to escalated. Set Clients.status = escalated by hand`, and the verdict is still `ESCALATED` because the owner knows.
+Only `Clients.status` is written.
+
+Owner message:
 
 ```
-🚨 Escalation — Test One (tg:900000001)
+🚨 Escalation — tg:900000001
+Name: Test One
 Reason: client asked for a human
-Status: client flagged escalated
+Status: client on file - being set to escalated (you get a second message if that fails)
 ---
 Client: ...
 Bot: ...
 ```
 
-The tool never refuses: an unknown or malformed contact still reaches the owner (an unknown client is itself worth
-reporting), with `Status: contact not on file - nothing was flagged`. `Client Formula` is the validated Code node of
-`find_client` (`^(tg:\d+|wa:\+\d+)$`, otherwise a formula that matches nothing), so a bad `contact_id` can never flag or
-read someone else's row. `Client`, `Flag Escalated` and `History` continue on error, so a failing step still produces an
-owner message: a failed flag says `WARNING: could not set the client status to escalated - flag them by hand`, a failed
-lookup says `client lookup FAILED`.
+The contact is on the first line, before the client-controlled name. The tool never refuses: an unknown or malformed contact still reaches
+the owner (`Name: (not on file)`, `Status: contact not on file - nothing to flag`; an invalid id is shown as `<id> [INVALID contact_id]`). A failed
+client lookup says `client lookup FAILED - nothing was flagged; ... by hand`. The validated `Client Formula` Code node of `find_client` is used
+with the digits capped: `^(tg:\d{1,20}|wa:\+\d{1,20})$` (in `Client Formula`, `History` and `Compose`), otherwise a formula that matches nothing, so
+a bad `contact_id` never flags or reads someone else's row. (`find_client` still carries the uncapped regex.)
 
-The message is built in `Compose` from client- and agent-controlled text (name, `reason`, contact, history). Each piece is
-stripped of control, zero-width and bidi characters, whitespace is collapsed to one line, `<`, `>` and `&` are replaced by
-look-alikes (`notify_owner` cuts at 4000 characters BEFORE it HTML-escapes, so raw `&` could push a message over
-Telegram's 4096), and the pieces are capped (name 60, contact 80, reason 500, one history line 300). The header (who,
-contact, reason, status) is composed first; the history gets what remains of a 3500-character budget, newest lines
-first, printed oldest first, with `(N earlier messages not shown)` on top. History rows that are not JSON or have another
-shape are skipped, as are `tool` rows.
+`Compose` cleans everything client- or agent-controlled (name, reason, contact, history): the input is cut BEFORE it is expanded, then control,
+zero-width and bidi characters (including U+061C) are stripped, whitespace is collapsed, `<`, `>` and `&` become look-alikes (`notify_owner`
+cuts at 4000 characters BEFORE it HTML-escapes, so raw `&` could push a message over Telegram's 4096), and the pieces are capped (name 60,
+contact 40 when invalid, reason 500, one history line 300). The header is composed first; the history gets what remains of a 3500-character
+budget, newest lines first, printed oldest first, with `(N earlier messages not shown)` on top. Rows that are not JSON, have another shape or
+are `tool` rows are skipped.
 
-`History` reads the last 20 rows of `n8n_chat_histories` for `session_id = contact_id` (bound parameter; an invalid
-`contact_id` binds `''` and reads nothing). That table is created by the Postgres Chat Memory node (Task 12), so until it
-exists the query fails; the node is set to continue on error and then emits ONE item whose `message` is the error text
-(`relation "n8n_chat_histories" does not exist`) and which has an `error` object. `Compose` keys on `error`, never treats
-that item as history, and prints `(conversation history unavailable)`. With the table present but no rows for the contact
-it prints `(no conversation history yet)`.
+`History` reads the last 20 rows of `n8n_chat_histories` for `session_id = contact_id` (bound parameter; the query carries `AND $1 <> ''`, and an invalid
+id binds `''`, so Postgres evaluates a constant-false filter instead of scanning an unindexed table). Three distinct empty states, because the
+reader must be able to tell a quiet conversation from a broken lookup:
+
+| state | what the owner reads |
+|---|---|
+| the query failed (table missing, database down) | `(conversation history unavailable)`. The Postgres node, set to continue on error, emits ONE item whose `message` is the error text (`relation "n8n_chat_histories" does not exist`) and which has an `error` object; `Compose` keys on `error` and never treats it as a row |
+| the query worked and returned no rows | `(no conversation history yet)` |
+| rows came back but none could be read (unparseable, wrong shape, only `tool` rows, which is how a wrong session-id convention or message format would show up) | `(history rows present but unreadable: N)` |
+| the contact id is invalid, so no lookup was made | `(history not looked up: invalid contact_id)` |
 
 Every test escalation is a real Telegram message to the owner; the reasons start with `[TEST]`.
 
@@ -193,12 +208,26 @@ Every test escalation is a real Telegram message to the owner; the reasons start
 |---|---|
 | `escalate_ok` | a Telegram client goes from `active` to `escalated`; the teardown compares the whole row before and after and allows only `status` to differ |
 | `escalate_whatsapp_client` | a `wa:+...` contact is found by `phone` and flagged |
-| `escalate_unknown_contact` | an unknown contact still gives `ESCALATED`; the teardown checks that no `Clients` row was created for it and that a bystander client is still `active` |
-| `escalate_malformed_id`, `escalate_empty_id`, `escalate_bare_wa_prefix` | `xyz`, `""` and `wa:` escalate to the owner but flag nobody: the bystander client (blank `phone`, the row a `{phone}=''` formula would hit) stays `active` |
-| `escalate_hostile_reason` | a reason with tags, `&`, newlines, a forged `Status:` line and a NUL character is delivered (a raw `<b>` or `&` would make Telegram reject the message) and the forged line stays inside the `Reason:` line |
+| `escalate_unknown_contact` | an unknown contact still gives `ESCALATED`; no `Clients` row is created for it and a bystander client stays `active` |
+| `escalate_malformed_id`, `escalate_empty_id`, `escalate_bare_wa_prefix` | `xyz`, `""` and `wa:` escalate to the owner but flag nobody: the bystander (blank `phone`, the row a `{phone}=''` formula would hit) stays `active` |
+| `escalate_tg_no_digits` | `tg:` flags nobody: the bystander is a WhatsApp-only client with a blank `telegram_chat_id`, the row an unvalidated `{telegram_chat_id}=''` would hit; the header says `[INVALID contact_id]` |
+| `escalate_quote_id` | `tg:1'--` is rejected by the validation and flags nobody |
+| `escalate_long_digits` | `tg:` plus 21 digits is invalid: the bystander's `telegram_chat_id` IS that number, so an uncapped regex would flag it |
+| `escalate_hostile_reason` | a reason with tags, `&`, newlines, a forged `Status:` line and a NUL is delivered (a raw `<b>` or `&` would make Telegram reject the message) and the forged line stays inside the `Reason:` line |
+| `escalate_history_present` | the history path with a real table: seeded rows (human, junk string, tool row, ai, plus a row of ANOTHER session) give `Client: ...` then `Bot: ...` in conversation order, with no junk, no tool noise and nothing from the other session |
+| `escalate_history_none` | table present, no rows for the contact (a row of another session exists): `(no conversation history yet)` |
+| `escalate_history_unreadable` | 3 rows present but none readable: `(history rows present but unreadable: 3)` |
 
-The tsv checks the verdict, the Airtable side effects and that Telegram accepted the message; what the message says is
-checked by running `Compose` alone in the n8n container's node against fixed history rows (long rows, junk rows,
-hostile text, missing table, failed flag), and once end to end with a throwaway copy of the workflow whose `History`
-node returned 20 synthetic rows (3248-character message delivered, 6 oldest lines dropped, header intact). Execution
-data of the last runs is in the n8n execution list (`escalate`, `notify_owner` → `Send Owner`).
+The history cases need the table, which the Postgres Chat Memory node (Task 12) normally creates. `tests/lib/pg.sh` creates it with the node's own DDL
+(`CREATE TABLE IF NOT EXISTS n8n_chat_histories (id SERIAL PRIMARY KEY, session_id VARCHAR(255) NOT NULL, message JSONB NOT NULL)`), seeds rows under
+session ids `tg:9000000NN`, and `chat_table_release` in the teardown deletes exactly those rows and drops the table again only if the case created it and it is
+empty. Because it is the same DDL with `IF NOT EXISTS`, it cannot conflict with the Chat Memory node; the only residual risk is the node creating the table in the
+instant between a case's create and its drop, and the drop is skipped unless the table is empty. `tests/cleanup.sh` also removes any leftover `tg:9000000%` rows.
+`tests/lib/n8n.sh` (`last_compose`) reads the owner message the newest `escalate` execution composed from the n8n API, so cases can assert on the text.
+
+Not in the tsv: the failure paths need a workflow that fails on purpose. Verified by hand with throwaway copies of `escalate.json` (deleted afterwards), each
+differing in one node: `escalate_ft_notify`, whose `Notify` calls a workflow that throws, gave HTTP 500 from the harness, stopped at `Notify` (no `Flag Escalated`
+in its run data), left the client `active`, and WF-6 sent `⚠️ escalate_ft_notify failed at Notify: ...`; `escalate_ft_flag`, whose `Flag Escalated` targets a
+record id that does not exist, returned `ESCALATED`, sent the owner message and then the follow-up message, and left the client `active`. (n8n refuses to
+activate a workflow whose Execute Workflow node points at an id that does not exist, so the notify failure needs a real throwing workflow.) The text
+branches (query failed, junk rows, huge rows, hostile text) were checked by running `Compose` alone in the n8n container's node.
