@@ -263,3 +263,24 @@ in its run data), left the client `active`, and WF-6 sent `⚠️ escalate_ft_no
 record id that does not exist, returned `ESCALATED`, sent the owner message and then the follow-up message, and left the client `active`. (n8n refuses to
 activate a workflow whose Execute Workflow node points at an id that does not exist, so the notify failure needs a real throwing workflow.) The text
 branches (query failed, junk rows, huge rows, hostile text) were checked by running `Compose` alone in the n8n container's node.
+
+### check_availability
+
+`check_availability(contact_id, service_id, date, part_of_day?)` is the first calendar-backed tool. It returns `FREE <iso>, ...` (up to 6 slots of the
+requested day), `NONE nearest: <iso>, <iso>, <iso>` (the first slot of each of the next days that has one, within 7 days), `NONE no slots in the next 7 days`
+or `UNKNOWN_SERVICE <id> (<name>, <min> min); ...`, and writes the slots it offered to `Clients.last_offer_json` / `last_offer_at`, which is the only thing
+`propose_booking` will accept. The dates are in the future on purpose: 2030-01-07 is a Monday (10:00-19:00 in the live `working_hours`), 2030-01-13 a Sunday
+(closed). 2030-01-06, the date the fixtures cases use, is a Sunday, so these cases do not use it.
+
+| case | why |
+|---|---|
+| `avail_unknown_service` | `tattoo` gives `UNKNOWN_SERVICE` followed by the active services with their durations (the regex only requires `botox (Botox, 30 min)` somewhere in the list, because the order is the Airtable record order) |
+| `avail_busy_excluded` | the setup deletes old `[TEST]` events and creates a busy block 14:00-15:00 on the Monday; for an afternoon Botox the answer is exactly `12:00, 12:30, 13:00, 13:30, 15:00, 15:30`: 13:30 stays (it ends at 14:00), 14:00 and 14:30 are gone, 15:00 is back. The teardown deletes the `[TEST]` events |
+| `avail_morning_only` | HydraFacial (60 min), morning: exactly `10:00, 10:30, 11:00`. A morning visit must END by 12:00, so 11:30 is not offered |
+| `avail_closed_day` | a Sunday gives `NONE nearest:` with 10:00 on the following Monday, Tuesday and Wednesday |
+| `avail_saves_offer` | with a client row `C-test-1` on file, the teardown reads the row back: `last_offer_json` is a JSON list of 6 slots of that day and `last_offer_at` is set (prints `offer_saved`); then `tests/cleanup.sh --no-calendar` removes the row, and a failure on either side fails the case |
+
+Google Calendar Availability, output format Booked Slots (n8n 2.41.5, node 1.3): one item per busy interval, `{"start":"2030-01-07T13:00:00Z","end":"2030-01-07T14:00:00Z"}`
+(UTC, `Z`). With no busy interval there is no item, and `alwaysOutputData` makes it one empty `{}` item, which `Compute` filters out (it keeps only items that have both
+`start` and `end`). The node must run once (`executeOnce`), or the seven Services items in front of it would call Google seven times.
+
