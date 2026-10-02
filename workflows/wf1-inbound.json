@@ -1,0 +1,1650 @@
+{
+  "name": "wf1-inbound",
+  "nodes": [
+    {
+      "id": "e1a10013-0001-4c00-8000-000000000001",
+      "name": "Telegram Trigger",
+      "notes": "Activation calls setWebhook for @medspa_frontdesk_bot with this node's URL (/webhook/<webhookId>/webhook). A bot has exactly one webhook: never activate a second workflow with a Telegram Trigger on the MedSpa Telegram credential.",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.5,
+      "position": [0, 400],
+      "webhookId": "6f1e5b13-0d1a-4c13-9a13-0000000f0013",
+      "credentials": {
+        "telegramApi": { "id": "CRED", "name": "MedSpa Telegram" }
+      },
+      "parameters": {
+        "updates": ["message"],
+        "additionalFields": {}
+      }
+    },
+    {
+      "id": "e1a10013-0002-4c00-8000-000000000002",
+      "name": "Normalize",
+      "notes": "Returns [] (the run ends) for anything that is not a private Telegram chat or a WhatsApp message: groups, WhatsApp status callbacks, unknown bodies. Never emits an empty contact_id.",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 400],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const j = $input.first().json;\nif (j.message) {  // Telegram update\n  const m = j.message;\n  // Private chats only: in a group chat.id is the group, not a client, and the bot must not answer there.\n  if (!m.chat || m.chat.type !== 'private') return [];\n  return [{ json: { channel: 'tg', contact_id: 'tg:' + m.chat.id, text: (m.text || '').trim(), raw_name: [m.from?.first_name, m.from?.last_name].filter(Boolean).join(' ') } }];\n}\n// Meta WhatsApp Cloud API (Task 15): the webhook body is entry[0].changes[0].value; the node may hand it over in $json or in $json.body\nconst meta = (j.entry ? j : (j.body && j.body.entry ? j.body : null));\nif (meta) {\n  const v = meta.entry?.[0]?.changes?.[0]?.value || {};\n  const m = v.messages?.[0];\n  if (!m) return [];  // status callback (statuses: sent/delivered/read): start nothing\n  return [{ json: { channel: 'wa', contact_id: 'wa:+' + m.from, text: (m.text?.body || '').trim(), raw_name: v.contacts?.[0]?.profile?.name || '' } }];\n}\n// Unknown channel: end the run; an item with an empty contact_id must never go on.\nreturn [];"
+      }
+    },
+    {
+      "id": "e1a10013-0003-4c00-8000-000000000003",
+      "name": "Has Text?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [440, 400],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e1a10013-1001-4c00-8000-000000000001",
+              "leftValue": "={{ !!$json.text }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0004-4c00-8000-000000000004",
+      "name": "Send Non-Text",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [660, 160],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:send_message", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Normalize').first().json.contact_id }}",
+            "text": "",
+            "template_key": "NON_TEXT",
+            "appt_id": "",
+            "vars_json": "",
+            "outside_window": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "template_key", "displayName": "template_key", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "vars_json", "displayName": "vars_json", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0005-4c00-8000-000000000005",
+      "name": "Rate Limit",
+      "notes": "10-minute window, 20 messages per contact, kept in this workflow's static data (saved only by production runs of the active workflow). notify is true exactly once, on message 21.",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 400],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const sd = $getWorkflowStaticData('global');\nsd.rl = sd.rl || {};\nconst j = $input.first().json;\nconst id = j.contact_id, now = Date.now(), WINDOW = 600000, LIMIT = 20;\nconst hits = (sd.rl[id] || []).filter(t => now - t < WINDOW);\nhits.push(now); sd.rl[id] = hits;\nif (Object.keys(sd.rl).length > 500) for (const k of Object.keys(sd.rl)) if (!sd.rl[k].some(t => now - t < WINDOW)) delete sd.rl[k];\nreturn [{ json: { ...j, allowed: hits.length <= LIMIT, notify: hits.length === LIMIT + 1 } }];"
+      }
+    },
+    {
+      "id": "e1a10013-0006-4c00-8000-000000000006",
+      "name": "Allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [880, 400],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e1a10013-1002-4c00-8000-000000000002",
+              "leftValue": "={{ $json.allowed === true }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0007-4c00-8000-000000000007",
+      "name": "Notify Spam?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [1100, 160],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e1a10013-1003-4c00-8000-000000000003",
+              "leftValue": "={{ $json.notify === true }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0008-4c00-8000-000000000008",
+      "name": "Notify Spam",
+      "notes": "Both outputs go to Send Rate Limit: the client is told about the pause even if the owner alert failed.",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [1320, 80],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:notify_owner", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "text": "={{ '⛔ Rate limit: ' + $json.contact_id + ' sent 21 messages in 10 minutes; paused' }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0009-4c00-8000-000000000009",
+      "name": "Send Rate Limit",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [1540, 80],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:send_message", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Normalize').first().json.contact_id }}",
+            "text": "",
+            "template_key": "RATE_LIMIT",
+            "appt_id": "",
+            "vars_json": "",
+            "outside_window": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "template_key", "displayName": "template_key", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "vars_json", "displayName": "vars_json", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0010-4c00-8000-000000000010",
+      "name": "Settings",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [1100, 400],
+      "alwaysOutputData": true,
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Settings", "mode": "id" },
+        "returnAll": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0011-4c00-8000-000000000011",
+      "name": "Client Formula",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 400],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Validate first: an empty or malformed contact_id must match NO client row (a comparison with '' would match every row whose column is blank).\nconst raw = String($('Normalize').first().json.contact_id || '').trim();\nconst ok = /^(tg:\\d{1,20}|wa:\\+\\d{1,20})$/.test(raw);\nconst formula = ok\n  ? (raw.startsWith('tg:') ? \"{telegram_chat_id}='\" + raw.slice(3) + \"'\" : \"{phone}='\" + raw.slice(3) + \"'\")\n  : \"{client_id}='__no_such_client__'\";\nreturn [{ json: { formula } }];"
+      }
+    },
+    {
+      "id": "e1a10013-0012-4c00-8000-000000000012",
+      "name": "Client",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [1540, 400],
+      "alwaysOutputData": true,
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Clients", "mode": "id" },
+        "filterByFormula": "={{ $json.formula }}",
+        "limit": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0013-4c00-8000-000000000013",
+      "name": "New Client?",
+      "notes": "A new contact gets its Clients row here, on the first message, so every tool (propose_booking included) finds a client row.",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [1760, 400],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e1a10013-1004-4c00-8000-000000000004",
+              "leftValue": "={{ !$json.id }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0014-4c00-8000-000000000014",
+      "name": "Detect Language",
+      "notes": "Continue on error: a failed detection gives an item without text, and Create Client then stores language en.",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [1980, 280],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "promptType": "define",
+        "text": "=Identify the language of the message below. Reply with only its ISO 639-1 code, for example en, de, es, ru. If unsure, reply en.\n\nMessage: {{ $('Normalize').first().json.text }}",
+        "hasOutputParser": false
+      }
+    },
+    {
+      "id": "e1a10013-0015-4c00-8000-000000000015",
+      "name": "Haiku",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.6,
+      "position": [1980, 500],
+      "credentials": {
+        "anthropicApi": { "id": "CRED", "name": "MedSpa Anthropic" }
+      },
+      "parameters": {
+        "model": { "__rl": true, "value": "claude-haiku-4-5", "mode": "id" },
+        "options": {
+          "maxTokensToSample": 5,
+          "temperature": 0
+        }
+      }
+    },
+    {
+      "id": "e1a10013-0016-4c00-8000-000000000016",
+      "name": "Create Client",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [2200, 280],
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "create",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Clients", "mode": "id" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "client_id": "={{ 'C-' + Date.now().toString(36).toUpperCase() }}",
+            "telegram_chat_id": "={{ $('Normalize').first().json.channel === 'tg' ? $('Normalize').first().json.contact_id.slice(3) : '' }}",
+            "phone": "={{ $('Normalize').first().json.channel === 'wa' ? $('Normalize').first().json.contact_id.slice(3) : '' }}",
+            "language": "={{ (['en','de','es','fr','it','pt','ru','uk','pl','tr','nl','ar','he','zh','ja'].includes(($json.text || $json.output || 'en').trim().toLowerCase().slice(0,2))) ? ($json.text || $json.output || 'en').trim().toLowerCase().slice(0,2) : 'en' }}",
+            "first_seen": "={{ $now.toUTC().toISO() }}",
+            "status": "new"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "client_id", "displayName": "client_id", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "string", "removed": false },
+            { "id": "telegram_chat_id", "displayName": "telegram_chat_id", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "string", "removed": false },
+            { "id": "phone", "displayName": "phone", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "string", "removed": false },
+            { "id": "language", "displayName": "language", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "string", "removed": false },
+            { "id": "first_seen", "displayName": "first_seen", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "dateTime", "removed": false },
+            {
+              "id": "status", "displayName": "status", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "options",
+              "options": [
+                { "name": "new", "value": "new" }, { "name": "active", "value": "active" },
+                { "name": "flagged", "value": "flagged" }, { "name": "escalated", "value": "escalated" }
+              ],
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0017-4c00-8000-000000000017",
+      "name": "Client Data",
+      "notes": "Reached from New Client? false (the found Clients record) or from Create Client (the new record); both are {id, fields}.",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [2420, 400],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "e1a10013-2001-4c00-8000-000000000001", "name": "client_rec", "value": "={{ $json.id }}", "type": "string" },
+            { "id": "e1a10013-2002-4c00-8000-000000000002", "name": "client_id", "value": "={{ $json.fields?.client_id }}", "type": "string" },
+            { "id": "e1a10013-2003-4c00-8000-000000000003", "name": "client_name", "value": "={{ $json.fields?.name || '' }}", "type": "string" },
+            { "id": "e1a10013-2004-4c00-8000-000000000004", "name": "language", "value": "={{ $json.fields?.language || 'en' }}", "type": "string" },
+            { "id": "e1a10013-2005-4c00-8000-000000000005", "name": "client_status", "value": "={{ $json.fields?.status || 'new' }}", "type": "string" },
+            { "id": "e1a10013-2006-4c00-8000-000000000006", "name": "contact_id", "value": "={{ $('Normalize').first().json.contact_id }}", "type": "string" },
+            { "id": "e1a10013-2007-4c00-8000-000000000007", "name": "channel", "value": "={{ $('Normalize').first().json.channel }}", "type": "string" },
+            { "id": "e1a10013-2008-4c00-8000-000000000008", "name": "text", "value": "={{ $('Normalize').first().json.text }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0018-4c00-8000-000000000018",
+      "name": "Escalated?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [2640, 400],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e1a10013-1005-4c00-8000-000000000005",
+              "leftValue": "={{ $json.client_status === 'escalated' }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0019-4c00-8000-000000000019",
+      "name": "Send Hold",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [2860, 200],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:send_message", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Normalize').first().json.contact_id }}",
+            "text": "",
+            "template_key": "ESCALATED_HOLD",
+            "appt_id": "",
+            "vars_json": "",
+            "outside_window": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "template_key", "displayName": "template_key", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "vars_json", "displayName": "vars_json", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0020-4c00-8000-000000000020",
+      "name": "Classify",
+      "notes": "Deterministic: kind is yes or no only when the WHOLE short message (up to 3 words, please removed) is a known yes/no word.",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2860, 400],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const YES = ['yes','yeah','yep','yup','ok','okay','sure','confirm','confirmed','correct','right','да','ага','подтверждаю','ок','давай','хорошо','верно','ja','jawohl','genau','passt','bestätige','bestätigen','sí','si','vale','claro','confirmo','correcto','oui','d\\'accord','je confirme','exact','va bene','confermo','sim','так','добре','підтверджую','evet','tamam','onaylıyorum','tak','potwierdzam','oké','prima','نعم','تمام','כן','是','好','确认','はい'];\nconst NO = ['no','nope','cancel','not now','нет','отмена','не надо','отмени','nein','nee','abbrechen','stornieren','cancelar','cancela','non','annuler','annulla','não','nao','ні','скасувати','hayır','iptal','nie','anuluj','annuleren','لا','לא','不','取消','いいえ'];\nconst j = $input.first().json;\nconst raw = (j.text || '').toLowerCase();\nconst norm = raw.replace(/[^\\p{L}\\p{N}\\s']/gu, ' ').replace(/\\s+/g, ' ').trim().replace(/\\b(please|пожалуйста|bitte|por favor|s'il vous plaît)\\b/g, '').replace(/\\s+/g, ' ').trim();\nconst words = norm ? norm.split(' ') : [];\nconst is_short = words.length > 0 && words.length <= 3;\nlet kind = 'other';\nif (is_short && YES.includes(norm)) kind = 'yes';\nelse if (is_short && NO.includes(norm)) kind = 'no';\nreturn [{ json: { ...j, kind, is_short } }];"
+      }
+    },
+    {
+      "id": "e1a10013-0021-4c00-8000-000000000021",
+      "name": "Pending",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [3080, 400],
+      "alwaysOutputData": true,
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
+        "filterByFormula": "={{ \"AND({client_id}='\" + (/^[A-Za-z0-9_-]{1,64}$/.test(String($json.client_id || '')) ? $json.client_id : '__no_such_client__') + \"',{status}='pending')\" }}",
+        "limit": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0022-4c00-8000-000000000022",
+      "name": "Gate",
+      "notes": "confirm: a bare YES with a pending proposal. llm: a short non-yes/no message with a pending proposal (Haiku decides). reminder: everything else goes through Reminder Check first, so a YES/NO to a reminder reaches reminder_reply; a bare YES with no reminder then goes to Confirm (ALREADY_BOOKED or NO_PENDING -> Agent).",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3300, 400],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const c = $('Classify').first().json;\nconst pending = ($('Pending').first().json.fields || {});\nlet route = 'reminder';\n// A bare YES confirms a waiting proposal. Without one it goes through Reminder Check first: a YES to a reminder must reach\n// reminder_reply (CONFIRMED); confirm_booking would answer ALREADY_BOOKED for the reminded visit. Bare Yes? sends it to Confirm afterwards.\nif (c.kind === 'yes' && pending.appt_id) route = 'confirm';\nelse if (pending.appt_id && c.kind === 'other' && c.is_short) route = 'llm';\nreturn [{ json: { route } }];"
+      }
+    },
+    {
+      "id": "e1a10013-0023-4c00-8000-000000000023",
+      "name": "Route",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [3520, 400],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [
+                  {
+                    "id": "e1a10013-1006-4c00-8000-000000000006",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "confirm",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "confirm"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [
+                  {
+                    "id": "e1a10013-1007-4c00-8000-000000000007",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "llm",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "llm"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [
+                  {
+                    "id": "e1a10013-1008-4c00-8000-000000000008",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "reminder",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "reminder"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0024-4c00-8000-000000000024",
+      "name": "LLM Affirmative",
+      "notes": "Continue on error: a failed call gives an item without text, Affirmative? is false and the message goes on to Reminder Check and the agent.",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [3740, 500],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "parameters": {
+        "promptType": "define",
+        "text": "=The assistant asked the user to reply YES to confirm a booking. Does the following user message mean agreement or confirmation? Reply with exactly YES or NO.\n\nMessage: {{ $('Client Data').first().json.text }}",
+        "hasOutputParser": false
+      }
+    },
+    {
+      "id": "e1a10013-0025-4c00-8000-000000000025",
+      "name": "Haiku YES",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.6,
+      "position": [3740, 720],
+      "credentials": {
+        "anthropicApi": { "id": "CRED", "name": "MedSpa Anthropic" }
+      },
+      "parameters": {
+        "model": { "__rl": true, "value": "claude-haiku-4-5", "mode": "id" },
+        "options": {
+          "maxTokensToSample": 3,
+          "temperature": 0
+        }
+      }
+    },
+    {
+      "id": "e1a10013-0026-4c00-8000-000000000026",
+      "name": "Affirmative?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [3960, 500],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e1a10013-1009-4c00-8000-000000000009",
+              "leftValue": "={{ String($json.text || $json.output || '').trim().toUpperCase().startsWith('YES') }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0027-4c00-8000-000000000027",
+      "name": "Confirm",
+      "notes": "confirm_booking writes the calendar. Error output (it throws on a real calendar failure) -> Notify Failure -> Send Error.",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [4400, 200],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:confirm_booking", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Client Data').first().json.contact_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0028-4c00-8000-000000000028",
+      "name": "Confirm Route",
+      "notes": "Fallback (NO_PENDING or anything unexpected) -> Agent.",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [4620, 200],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [
+                  {
+                    "id": "e1a10013-1010-4c00-8000-000000000010",
+                    "leftValue": "={{ String($json.verdict || '').split(' ')[0] }}",
+                    "rightValue": "BOOKED",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "BOOKED"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [
+                  {
+                    "id": "e1a10013-1011-4c00-8000-000000000011",
+                    "leftValue": "={{ String($json.verdict || '').split(' ')[0] }}",
+                    "rightValue": "SLOT_TAKEN",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "SLOT_TAKEN"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [
+                  {
+                    "id": "e1a10013-1012-4c00-8000-000000000012",
+                    "leftValue": "={{ String($json.verdict || '').split(' ')[0] }}",
+                    "rightValue": "EXPIRED",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "EXPIRED"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [
+                  {
+                    "id": "e1a10013-1013-4c00-8000-000000000013",
+                    "leftValue": "={{ String($json.verdict || '').split(' ')[0] }}",
+                    "rightValue": "ALREADY_BOOKED",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "ALREADY_BOOKED"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      }
+    },
+    {
+      "id": "e1a10013-0029-4c00-8000-000000000029",
+      "name": "Send Booked",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [4840, -40],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:send_message", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Normalize').first().json.contact_id }}",
+            "text": "",
+            "template_key": "BOOKED",
+            "appt_id": "={{ $json.appt_id }}",
+            "vars_json": "",
+            "outside_window": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "template_key", "displayName": "template_key", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "vars_json", "displayName": "vars_json", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0030-4c00-8000-000000000030",
+      "name": "First Visit?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [5060, -120],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e1a10013-1014-4c00-8000-000000000014",
+              "leftValue": "={{ $('Confirm').first().json.first_visit === true }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0031-4c00-8000-000000000031",
+      "name": "Send Intake",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [5280, -200],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:send_message", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Normalize').first().json.contact_id }}",
+            "text": "",
+            "template_key": "BOOKED_INTAKE",
+            "appt_id": "",
+            "vars_json": "",
+            "outside_window": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "template_key", "displayName": "template_key", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "vars_json", "displayName": "vars_json", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0032-4c00-8000-000000000032",
+      "name": "Send Slot Taken",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [4840, 120],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:send_message", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Normalize').first().json.contact_id }}",
+            "text": "",
+            "template_key": "SLOT_TAKEN",
+            "appt_id": "",
+            "vars_json": "={{ JSON.stringify({ alternatives: $json.alternatives || 'none in the next days' }) }}",
+            "outside_window": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "template_key", "displayName": "template_key", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "vars_json", "displayName": "vars_json", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0033-4c00-8000-000000000033",
+      "name": "Send Expired",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [4840, 280],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:send_message", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Normalize').first().json.contact_id }}",
+            "text": "",
+            "template_key": "EXPIRED",
+            "appt_id": "={{ $json.appt_id || '' }}",
+            "vars_json": "",
+            "outside_window": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "template_key", "displayName": "template_key", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "vars_json", "displayName": "vars_json", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0034-4c00-8000-000000000034",
+      "name": "Send Already Booked",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [4840, 440],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:send_message", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Normalize').first().json.contact_id }}",
+            "text": "",
+            "template_key": "ALREADY_BOOKED",
+            "appt_id": "={{ $json.appt_id }}",
+            "vars_json": "",
+            "outside_window": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "template_key", "displayName": "template_key", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "vars_json", "displayName": "vars_json", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0035-4c00-8000-000000000035",
+      "name": "Reminder Check",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [4180, 760],
+      "alwaysOutputData": true,
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
+        "filterByFormula": "={{ \"AND({client_id}='\" + (/^[A-Za-z0-9_-]{1,64}$/.test(String($('Client Data').first().json.client_id || '')) ? $('Client Data').first().json.client_id : '__no_such_client__') + \"',{status}='reminded')\" }}",
+        "limit": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0036-4c00-8000-000000000036",
+      "name": "Reminder Answer?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [4400, 760],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e1a10013-1015-4c00-8000-000000000015",
+              "leftValue": "={{ !!$json.fields?.appt_id && ['yes','no'].includes($('Classify').first().json.kind) }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0037-4c00-8000-000000000037",
+      "name": "Reminder Reply",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [4620, 660],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:reminder_reply", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Client Data').first().json.contact_id }}",
+            "answer": "={{ $('Classify').first().json.kind }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "answer", "displayName": "answer", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0038-4c00-8000-000000000038",
+      "name": "No Reminded?",
+      "notes": "NO_REMINDED has no visit, so the template would have nothing to fill and send_message would throw: the message is an ordinary one for the agent.",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [4840, 660],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e1a10013-1016-4c00-8000-000000000016",
+              "leftValue": "={{ $json.verdict === 'NO_REMINDED' }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0039-4c00-8000-000000000039",
+      "name": "Send Reminder Result",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [5060, 600],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:send_message", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Normalize').first().json.contact_id }}",
+            "text": "",
+            "template_key": "={{ $json.verdict === 'CONFIRMED' ? 'REMINDER_CONFIRMED' : 'REMINDER_CANCELLED' }}",
+            "appt_id": "={{ $json.appt_id }}",
+            "vars_json": "",
+            "outside_window": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "template_key", "displayName": "template_key", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "vars_json", "displayName": "vars_json", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0040-4c00-8000-000000000040",
+      "name": "Bare Yes?",
+      "notes": "A bare YES with no pending proposal and no reminder to answer: confirm_booking decides (ALREADY_BOOKED for a booked visit, NO_PENDING -> Agent).",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [4620, 880],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e1a10013-1017-4c00-8000-000000000017",
+              "leftValue": "={{ $('Classify').first().json.kind === 'yes' }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0041-4c00-8000-000000000041",
+      "name": "Agent",
+      "notes": "Error output -> Notify Failure -> Send Error: the client always gets an answer.",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [5280, 880],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:wf2-agent", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Client Data').first().json.contact_id }}",
+            "channel": "={{ $('Client Data').first().json.channel }}",
+            "text": "={{ $('Client Data').first().json.text }}",
+            "language": "={{ $('Client Data').first().json.language }}",
+            "client_name": "={{ $('Client Data').first().json.client_name }}",
+            "client_status": "={{ $('Client Data').first().json.client_status }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "channel", "displayName": "channel", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "language", "displayName": "language", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "client_name", "displayName": "client_name", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "client_status", "displayName": "client_status", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0042-4c00-8000-000000000042",
+      "name": "Notify Failure",
+      "notes": "Reached from the error output of Confirm, Reminder Reply or Agent. Both outputs go to Send Error: the client is answered even if the owner alert failed.",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [5500, 1160],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:notify_owner", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "text": "={{ '❌ Reply failed for ' + $('Client Data').first().json.contact_id + ': ' + String(($json.error && ($json.error.message || $json.error)) || 'see WF-6').slice(0, 300) + ' (step: ' + $prevNode.name + '; the client got the ERROR message)' }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0043-4c00-8000-000000000043",
+      "name": "Send Error",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [5720, 1160],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:send_message", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Normalize').first().json.contact_id }}",
+            "text": "",
+            "template_key": "ERROR",
+            "appt_id": "",
+            "vars_json": "",
+            "outside_window": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "template_key", "displayName": "template_key", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "vars_json", "displayName": "vars_json", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0044-4c00-8000-000000000044",
+      "name": "Fresh Pending",
+      "notes": "A pending row whose summary was not sent yet = the agent just proposed a booking. Continue on error: a failed read sends the agent's own reply instead of nothing.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [5500, 880],
+      "alwaysOutputData": true,
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
+        "filterByFormula": "={{ \"AND({client_id}='\" + (/^[A-Za-z0-9_-]{1,64}$/.test(String($('Client Data').first().json.client_id || '')) ? $('Client Data').first().json.client_id : '__no_such_client__') + \"',{status}='pending',{summary_sent_at}=BLANK())\" }}",
+        "limit": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0045-4c00-8000-000000000045",
+      "name": "Summary?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [5720, 880],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e1a10013-1018-4c00-8000-000000000018",
+              "leftValue": "={{ !!$json.fields?.appt_id }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0046-4c00-8000-000000000046",
+      "name": "Send Summary",
+      "notes": "The summary is built from the Appointments row (service, duration, time), not from the agent's text.",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [5940, 760],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:send_message", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Normalize').first().json.contact_id }}",
+            "text": "",
+            "template_key": "PENDING_SUMMARY",
+            "appt_id": "={{ $json.fields.appt_id }}",
+            "vars_json": "",
+            "outside_window": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "template_key", "displayName": "template_key", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "vars_json", "displayName": "vars_json", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0047-4c00-8000-000000000047",
+      "name": "Mark Summary Sent",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [6160, 760],
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "update",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $('Fresh Pending').first().json.id }}",
+            "summary_sent_at": "={{ $now.toUTC().toISO() }}"
+          },
+          "matchingColumns": ["id"],
+          "schema": [
+            { "id": "id", "displayName": "id", "required": false, "defaultMatch": true, "display": true, "type": "string", "readOnly": true, "removed": false },
+            { "id": "summary_sent_at", "displayName": "summary_sent_at", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "dateTime", "removed": false }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0048-4c00-8000-000000000048",
+      "name": "Template?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [5940, 1000],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e1a10013-1019-4c00-8000-000000000019",
+              "leftValue": "={{ !!$('Agent').first().json.template_key }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0049-4c00-8000-000000000049",
+      "name": "Send Template",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [6160, 940],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:send_message", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Normalize').first().json.contact_id }}",
+            "text": "",
+            "template_key": "={{ $('Agent').first().json.template_key }}",
+            "appt_id": "",
+            "vars_json": "",
+            "outside_window": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "template_key", "displayName": "template_key", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "vars_json", "displayName": "vars_json", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0050-4c00-8000-000000000050",
+      "name": "Send Reply",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [6160, 1080],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:send_message", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Normalize').first().json.contact_id }}",
+            "text": "={{ $('Agent').first().json.reply }}",
+            "template_key": "",
+            "appt_id": "",
+            "vars_json": "",
+            "outside_window": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "template_key", "displayName": "template_key", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "vars_json", "displayName": "vars_json", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0051-4c00-8000-000000000051",
+      "name": "Notify Send Failure",
+      "notes": "A send itself failed: only the owner can be told. Error output deliberately unconnected (nothing else left to try).",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [6400, 1360],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:notify_owner", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "text": "={{ '❌ Could not send a message to ' + $('Normalize').first().json.contact_id + ' (step: ' + $prevNode.name + '): ' + String(($json.error && ($json.error.message || $json.error)) || 'see WF-6').slice(0, 300) + '. Their message: ' + String($('Normalize').first().json.text || '(not text)').slice(0, 200) }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": { "main": [[{ "node": "Normalize", "type": "main", "index": 0 }]] },
+    "Normalize": { "main": [[{ "node": "Has Text?", "type": "main", "index": 0 }]] },
+    "Has Text?": {
+      "main": [
+        [{ "node": "Rate Limit", "type": "main", "index": 0 }],
+        [{ "node": "Send Non-Text", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Non-Text": {
+      "main": [
+        [],
+        [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Rate Limit": { "main": [[{ "node": "Allowed?", "type": "main", "index": 0 }]] },
+    "Allowed?": {
+      "main": [
+        [{ "node": "Settings", "type": "main", "index": 0 }],
+        [{ "node": "Notify Spam?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Notify Spam?": {
+      "main": [
+        [{ "node": "Notify Spam", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Notify Spam": {
+      "main": [
+        [{ "node": "Send Rate Limit", "type": "main", "index": 0 }],
+        [{ "node": "Send Rate Limit", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Rate Limit": {
+      "main": [
+        [],
+        [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Settings": { "main": [[{ "node": "Client Formula", "type": "main", "index": 0 }]] },
+    "Client Formula": { "main": [[{ "node": "Client", "type": "main", "index": 0 }]] },
+    "Client": { "main": [[{ "node": "New Client?", "type": "main", "index": 0 }]] },
+    "New Client?": {
+      "main": [
+        [{ "node": "Detect Language", "type": "main", "index": 0 }],
+        [{ "node": "Client Data", "type": "main", "index": 0 }]
+      ]
+    },
+    "Haiku": { "ai_languageModel": [[{ "node": "Detect Language", "type": "ai_languageModel", "index": 0 }]] },
+    "Detect Language": { "main": [[{ "node": "Create Client", "type": "main", "index": 0 }]] },
+    "Create Client": { "main": [[{ "node": "Client Data", "type": "main", "index": 0 }]] },
+    "Client Data": { "main": [[{ "node": "Escalated?", "type": "main", "index": 0 }]] },
+    "Escalated?": {
+      "main": [
+        [{ "node": "Send Hold", "type": "main", "index": 0 }],
+        [{ "node": "Classify", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Hold": {
+      "main": [
+        [],
+        [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Classify": { "main": [[{ "node": "Pending", "type": "main", "index": 0 }]] },
+    "Pending": { "main": [[{ "node": "Gate", "type": "main", "index": 0 }]] },
+    "Gate": { "main": [[{ "node": "Route", "type": "main", "index": 0 }]] },
+    "Route": {
+      "main": [
+        [{ "node": "Confirm", "type": "main", "index": 0 }],
+        [{ "node": "LLM Affirmative", "type": "main", "index": 0 }],
+        [{ "node": "Reminder Check", "type": "main", "index": 0 }]
+      ]
+    },
+    "Haiku YES": { "ai_languageModel": [[{ "node": "LLM Affirmative", "type": "ai_languageModel", "index": 0 }]] },
+    "LLM Affirmative": { "main": [[{ "node": "Affirmative?", "type": "main", "index": 0 }]] },
+    "Affirmative?": {
+      "main": [
+        [{ "node": "Confirm", "type": "main", "index": 0 }],
+        [{ "node": "Reminder Check", "type": "main", "index": 0 }]
+      ]
+    },
+    "Confirm": {
+      "main": [
+        [{ "node": "Confirm Route", "type": "main", "index": 0 }],
+        [{ "node": "Notify Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Confirm Route": {
+      "main": [
+        [{ "node": "Send Booked", "type": "main", "index": 0 }],
+        [{ "node": "Send Slot Taken", "type": "main", "index": 0 }],
+        [{ "node": "Send Expired", "type": "main", "index": 0 }],
+        [{ "node": "Send Already Booked", "type": "main", "index": 0 }],
+        [{ "node": "Agent", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Booked": {
+      "main": [
+        [{ "node": "First Visit?", "type": "main", "index": 0 }],
+        [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "First Visit?": {
+      "main": [
+        [{ "node": "Send Intake", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Send Intake": {
+      "main": [
+        [],
+        [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Slot Taken": {
+      "main": [
+        [],
+        [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Expired": {
+      "main": [
+        [],
+        [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Already Booked": {
+      "main": [
+        [],
+        [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Reminder Check": { "main": [[{ "node": "Reminder Answer?", "type": "main", "index": 0 }]] },
+    "Reminder Answer?": {
+      "main": [
+        [{ "node": "Reminder Reply", "type": "main", "index": 0 }],
+        [{ "node": "Bare Yes?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Reminder Reply": {
+      "main": [
+        [{ "node": "No Reminded?", "type": "main", "index": 0 }],
+        [{ "node": "Notify Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "No Reminded?": {
+      "main": [
+        [{ "node": "Agent", "type": "main", "index": 0 }],
+        [{ "node": "Send Reminder Result", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Reminder Result": {
+      "main": [
+        [],
+        [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Bare Yes?": {
+      "main": [
+        [{ "node": "Confirm", "type": "main", "index": 0 }],
+        [{ "node": "Agent", "type": "main", "index": 0 }]
+      ]
+    },
+    "Agent": {
+      "main": [
+        [{ "node": "Fresh Pending", "type": "main", "index": 0 }],
+        [{ "node": "Notify Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Notify Failure": {
+      "main": [
+        [{ "node": "Send Error", "type": "main", "index": 0 }],
+        [{ "node": "Send Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Error": {
+      "main": [
+        [],
+        [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fresh Pending": { "main": [[{ "node": "Summary?", "type": "main", "index": 0 }]] },
+    "Summary?": {
+      "main": [
+        [{ "node": "Send Summary", "type": "main", "index": 0 }],
+        [{ "node": "Template?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Summary": {
+      "main": [
+        [{ "node": "Mark Summary Sent", "type": "main", "index": 0 }],
+        [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Template?": {
+      "main": [
+        [{ "node": "Send Template", "type": "main", "index": 0 }],
+        [{ "node": "Send Reply", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Template": {
+      "main": [
+        [],
+        [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Reply": {
+      "main": [
+        [],
+        [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "errorWorkflow": "WFID:wf6-error-handler" }
+}
