@@ -39,7 +39,13 @@ Tab-separated, one case per line. Lines starting with `#` and empty lines are sk
 
 A `setup` that exits non-zero (its last command decides) turns the case into a FAIL without calling the tool,
 and a `teardown` that exits non-zero turns a PASS into a FAIL, so both can carry assertions. A teardown that
-asserts and also cleans up must keep the status: `<assertion>; r=$?; tests/cleanup.sh; test $r -eq 0`.
+asserts and also cleans up must keep both statuses: `<assertion>; r=$?; tests/cleanup.sh --no-calendar && test $r -eq 0`
+(a failing cleanup fails the case, and the cleanup still runs when the assertion failed).
+
+`tests/cleanup.sh --no-calendar` skips only the calendar step. Cases that never touch the calendar (find_client_*,
+escalate_*, kb_*) use it, so they do not depend on Google being up; the plain `tests/cleanup.sh` also deletes the
+`[TEST]` events and is for the fixtures cases and for hand use. Cleanup runs every step even when one fails and exits 1
+at the end if any did.
 
 Empty `setup` or `teardown` columns are written as empty between tabs. Tab characters
 inside a column are not possible, so keep JSON on one line without literal tabs.
@@ -86,7 +92,9 @@ test dates (the cases use 2030): the brief's -30/+60 days missed them. With noth
 | `fixtures_delete_removes_all` | two events are deleted (`DELETED 2`) and the day is empty afterwards |
 | `fixtures_delete_none` | the zero-events case: `DELETED 0`, no error |
 
-`tests/cleanup.sh` calls `delete_test_events` last and exits 1 if that call fails.
+`tests/cleanup.sh` calls `delete_test_events` last and exits 1 if that call fails (`--no-calendar` skips it).
+`Settings`, `List Test Events`, `List Events` and `Delete Each` retry once (2 tries, 5 s apart); `Create Busy` deliberately
+does not: a retry after a timed-out success would create a duplicate busy block (its `notes` field says so).
 
 ### find_client
 

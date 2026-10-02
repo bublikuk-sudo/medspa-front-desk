@@ -71,6 +71,9 @@ for f in "${order[@]}"; do
   fi
   pushable+=("$f")
 done
+# Names of what was actually pushed: the activate loop below must not touch anything else (a file skipped for a
+# missing credential would make n8n-push.sh abort with "unknown credential" before the verification step).
+pushable_files=" ${pushable[*]} "
 
 # Re-run safety: if WF-6 exists but is inactive (for example after a manual deactivate), every push that
 # carries errorWorkflow would fail with the 400 above. Activating is idempotent.
@@ -86,6 +89,7 @@ for f in "${pushable[@]}"; do scripts/n8n-push.sh "$f" $(wf6_flag "$f"); done
 
 for w in "${activate[@]}"; do
   [ -f "workflows/$w.json" ] || { echo "missing (not built yet): workflows/$w.json (not activated)"; continue; }
+  [[ "$pushable_files" == *" workflows/$w.json "* ]] || { echo "skipped (not pushed, see 'skipped' above): workflows/$w.json (not activated)"; continue; }
   scripts/n8n-push.sh "workflows/$w.json" --activate | tail -1
 done
 
