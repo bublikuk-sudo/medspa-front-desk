@@ -5,8 +5,9 @@
 # The list below is the FULL project order. Workflows that are not built yet (wf1-inbound, wf2-agent,
 # wf5-reminders, the rest of the wf3 tools) are SKIPPED when the file is absent from disk:
 #   missing (not built yet): <path>
-# A file whose credentials do not exist on the instance yet (test-fixtures needs a Google Calendar
-# credential) is skipped the same way, loudly, instead of aborting the whole run.
+# A file whose credentials do not exist on the instance yet (for example a workflow that needs the
+# Google Calendar or WhatsApp credential before it has been created) is skipped the same way, loudly,
+# instead of aborting the whole run.
 #
 # Two passes: on the first, wf6-error-handler does not exist yet, so n8n-push.sh drops
 # settings.errorWorkflow with a WARNING; the second pass re-pushes everything with the id known.
@@ -38,9 +39,10 @@ order=(
   workflows/test-fixtures.json
   workflows/test-harness.json
 )
-# Not activated here: sub-workflows (called by id) and test-fixtures (needs a Google Calendar credential);
+# Not activated here: the tool sub-workflows (called by id) - but test-fixtures IS activated, because the harness
+# refuses to run an inactive sub-workflow from a webhook ("Workflow is not active and cannot be executed.").
 # WF-6 is activated separately (wf6_flag below) because other workflows cannot reference it until it is.
-activate=(wf1-inbound wf4-knowledge-ingest wf5-reminders test-harness)
+activate=(wf1-inbound wf4-knowledge-ingest wf5-reminders test-fixtures test-harness)
 # No errorWorkflow expected on these:
 #  - wf6-error-handler: it would handle its own failure;
 #  - notify_owner: it IS the alert channel. With errorWorkflow set, a failing notify_owner fires WF-6, whose

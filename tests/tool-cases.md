@@ -60,9 +60,33 @@ Shell helpers sourced by the scripts: `at_list TABLE FORMULA`, `at_create TABLE 
 ## Cases
 
 Cases are appended to the tsv together with the tools they test (tasks 7-12).
-The calendar fixtures cases (`fixtures_list_empty`, `fixtures_create_and_delete`)
-are added once the `MedSpa Google Calendar` credential exists and `test-fixtures`
-has been pushed.
+
+### test-fixtures
+
+`test-fixtures(action, start_iso, end_iso)` works on the Google Calendar named `MedSpa` (the id is
+`Settings.calendar_id`; Airtable hands records over as `{id, createdTime, fields}`, so the workflow reads
+`.fields.calendar_id`). `action` is routed by a Switch:
+
+| action | does | verdict |
+|---|---|---|
+| `create_busy` | creates `[TEST] busy` (description `test-fixture`) from `start_iso` to `end_iso` | `BUSY_CREATED <event id>` |
+| `list_events` | lists every event between `start_iso` and `end_iso`; also returns `events` (id, summary, description, start, end) | `EVENTS <n>` |
+| `delete_test_events` | deletes every event whose title starts with `[TEST]`, from a year ago to ten years ahead | `DELETED <n>` |
+
+`delete_test_events` searches with the query `[TEST]` and then keeps only items whose summary really starts with
+`[TEST]`, so a real client booking is never deleted even if the search matches loosely. The window must cover far-future
+test dates (the cases use 2030): the brief's -30/+60 days missed them. With nothing to delete it still answers
+`DELETED 0` (the list node has Always Output Data and an If routes the empty case straight to the result).
+
+| case | why |
+|---|---|
+| `fixtures_list_empty` | a day in 2030 with no events is `EVENTS 0` (the setup clears leftovers first) |
+| `fixtures_create_and_delete` | create answers `BUSY_CREATED ...`; the teardown deletes it |
+| `fixtures_created_event_is_listed` | a created event shows up in `list_events` (`EVENTS 1`) |
+| `fixtures_delete_removes_all` | two events are deleted (`DELETED 2`) and the day is empty afterwards |
+| `fixtures_delete_none` | the zero-events case: `DELETED 0`, no error |
+
+`tests/cleanup.sh` calls `delete_test_events` last and exits 1 if that call fails.
 
 ### find_client
 
