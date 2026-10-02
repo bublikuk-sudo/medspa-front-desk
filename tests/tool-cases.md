@@ -279,6 +279,12 @@ or `UNKNOWN_SERVICE <id> (<name>, <min> min); ...`, and writes the slots it offe
 | `avail_morning_only` | HydraFacial (60 min), morning: exactly `10:00, 10:30, 11:00`. A morning visit must END by 12:00, so 11:30 is not offered |
 | `avail_closed_day` | a Sunday gives `NONE nearest:` with 10:00 on the following Monday, Tuesday and Wednesday |
 | `avail_saves_offer` | with a client row `C-test-1` on file, the teardown reads the row back: `last_offer_json` is a JSON list of 6 slots of that day and `last_offer_at` is set (prints `offer_saved`); then `tests/cleanup.sh --no-calendar` removes the row, and a failure on either side fails the case |
+| `avail_pod_anytime` | `part_of_day` `" Anytime "` (the model passes things like this) is trimmed and treated as "no filter": the first 6 slots of the day, 10:00 to 12:30 |
+| `avail_pod_invalid` | `part_of_day` `brunch` gives `NONE invalid part_of_day, expected morning\|afternoon\|evening` instead of a false "no slots", and (like the other invalid-input verdicts) saves `[]`: the setup puts a real offer on the client row, the teardown asserts `last_offer_json` is now `[]` (prints `offer_cleared`) |
+
+No filter: empty, `any`, `anytime`, `null`, `none` (after trim and lower-casing).
+
+Failure behaviour, not covered by a tsv case because it needs a broken calendar or Settings table (verified live with throwaway workflow copies and with the node code run against stubs, see the Task 8 report, fix round 1): an unknown or inaccessible calendar id makes `FreeBusy` throw (`notFound`), so the tool fails and WF-6 reports it instead of answering `FREE`; `Check Settings` throws on a missing Settings row, a non-positive `slot_step_min`, a non-numeric `min_lead_min`, a missing or invalid `timezone` or `calendar_id`, and a `working_hours` entry that is not `null` or `["HH:MM","HH:MM"]`; `Compute` throws on a non-numeric `duration_min` and on a busy interval that does not parse.
 
 Google Calendar Availability, output format Booked Slots (n8n 2.41.5, node 1.3): one item per busy interval, `{"start":"2030-01-07T13:00:00Z","end":"2030-01-07T14:00:00Z"}`
 (UTC, `Z`). With no busy interval there is no item, and `alwaysOutputData` makes it one empty `{}` item, which `Compute` filters out (it keeps only items that have both
