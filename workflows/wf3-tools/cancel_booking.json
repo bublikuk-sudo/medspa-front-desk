@@ -4,7 +4,7 @@
     {
       "id": "9d0a0001-0001-4c00-8000-000000000001",
       "name": "Trigger",
-      "notes": "Agent tool: contact_id and appt_id (from find_client's upcoming). reason is not given by the agent (= cancel, the late-cancel policy applies); confirm_booking's Cancel Replaced passes reason=reschedule, which always cancels without the late-cancel flag.",
+      "notes": "Agent tool: contact_id and appt_id (from find_client's upcoming). reason is not given by the agent (= cancel, the late-cancel policy applies); confirm_booking's Cancel Replaced passes reason=reschedule, which cancels without the late-cancel flag, but only when a live visit of the same client carries replaces_appt_id = this appt_id (else it is a normal cancel).",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.2,
       "position": [0, 300],
@@ -106,6 +106,32 @@
       }
     },
     {
+      "id": "9d0a0001-0017-4c00-8000-000000000017",
+      "name": "Replacement",
+      "notes": "The client's live visits whose replaces_appt_id is this appt_id: the proof that reason=reschedule is a real reschedule (confirm_booking books the new visit before it cancels the old one). client_id and appt_id go into the formula only if they are plain ids.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [990, 480],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
+        "filterByFormula": "={{ (() => { const cid = String($('Client').first().json.fields?.client_id || ''); const ap = String($('Trigger').first().json.appt_id || '').trim(); const ok = /^[A-Za-z0-9_-]{1,64}$/.test(cid) && /^A-[0-9A-Z-]{1,40}$/.test(ap); return ok ? \"AND({client_id}='\" + cid + \"',{replaces_appt_id}='\" + ap + \"',OR({status}='booked',{status}='reminded',{status}='confirmed'))\" : \"{appt_id}='__no_such_appt__'\"; })() }}",
+        "returnAll": true,
+        "options": {}
+      }
+    },
+    {
       "id": "9d0a0001-0006-4c00-8000-000000000006",
       "name": "Decide",
       "type": "n8n-nodes-base.code",
@@ -114,7 +140,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// The decision is made here, not by the model: only a live visit of THIS client can be cancelled, and the late-cancel policy\n// (Settings.cancellation_hours) is applied here. A reschedule (reason=reschedule, from confirm_booking) is never a late cancel:\n// the client keeps the clinic booked.\nconst s = ($('Settings').first().json || {}).fields;\nif (!s) throw new Error('cancel_booking: the Settings table has no row');\nif (typeof s.calendar_id !== 'string' || !s.calendar_id.trim()) throw new Error('cancel_booking: Settings.calendar_id is missing');\nif (typeof s.timezone !== 'string' || !s.timezone.trim() || !DateTime.now().setZone(s.timezone).isValid) throw new Error('cancel_booking: Settings.timezone is missing or not a valid IANA zone, got ' + JSON.stringify(s.timezone));\nconst hrs = (s.cancellation_hours === null || s.cancellation_hours === undefined || String(s.cancellation_hours).trim() === '') ? NaN : Number(s.cancellation_hours);\nif (!Number.isFinite(hrs) || hrs < 0) throw new Error('cancel_booking: Settings.cancellation_hours must be a number >= 0, got ' + JSON.stringify(s.cancellation_hours));\nconst inp = $('Trigger').first().json;\nconst reason = String(inp.reason || '').trim().toLowerCase() === 'reschedule' ? 'reschedule' : 'cancel';\nconst want = String(inp.appt_id || '').trim();\nconst valid = /^A-[0-9A-Z-]{1,40}$/.test(want);\nconst reject = (verdict) => [{ json: { action: 'reject', verdict, appt_id: valid ? want : '' } }];\nif (!valid) return reject('NOT_FOUND');\nconst ar = $('Appointment').first().json || {};   // the whole record: ar.id is the Appointments record id, the columns are in ar.fields\nconst a = ar.fields || {};\nif (!ar.id || a.appt_id !== want) return reject('NOT_FOUND');\nconst c = $('Client').first().json || {};\nconst cid = (c.fields || {}).client_id;\nif (!c.id || !cid || a.client_id !== cid) return reject('NOT_YOURS');\nif (!['pending', 'booked', 'reminded', 'confirmed'].includes(a.status)) return reject('NOT_FOUND');\nconst start = DateTime.fromISO(String(a.start_iso || ''));\nif (!start.isValid) throw new Error('cancel_booking: appointment ' + want + ' has an unreadable start_iso ' + JSON.stringify(a.start_iso));\n// The event id goes into the Delete Event URL path unencoded: only a plain Google event id is accepted.\nconst ev = String(a.calendar_event_id || '').trim();\nif (ev && !/^[A-Za-z0-9_-]{1,1024}$/.test(ev)) throw new Error('cancel_booking: unexpected calendar_event_id ' + JSON.stringify(ev.slice(0, 80)) + ' on appointment ' + want);\nconst hoursLeft = start.diff(DateTime.utc(), 'hours').hours;\nconst late = reason === 'cancel' && a.status !== 'pending' && hoursLeft < hrs;\nreturn [{ json: { action: 'cancel', rec_id: ar.id, appt_id: want, calendar_event_id: ev, new_status: late ? 'late_cancel' : 'cancelled', reason,\n  service_id: a.service_id || '', start_iso: a.start_iso, when: start.setZone(s.timezone).toFormat('ccc, LLL d, h:mm a') } }];"
+        "jsCode": "// The decision is made here, not by the model: only a live visit of THIS client can be cancelled, and the late-cancel policy\n// (Settings.cancellation_hours) is applied here. A reschedule (reason=reschedule, from confirm_booking) is never a late cancel:\n// the client keeps the clinic booked.\nconst s = ($('Settings').first().json || {}).fields;\nif (!s) throw new Error('cancel_booking: the Settings table has no row');\nif (typeof s.calendar_id !== 'string' || !s.calendar_id.trim()) throw new Error('cancel_booking: Settings.calendar_id is missing');\nif (typeof s.timezone !== 'string' || !s.timezone.trim() || !DateTime.now().setZone(s.timezone).isValid) throw new Error('cancel_booking: Settings.timezone is missing or not a valid IANA zone, got ' + JSON.stringify(s.timezone));\nconst hrs = (s.cancellation_hours === null || s.cancellation_hours === undefined || String(s.cancellation_hours).trim() === '') ? NaN : Number(s.cancellation_hours);\nif (!Number.isFinite(hrs) || hrs < 0) throw new Error('cancel_booking: Settings.cancellation_hours must be a number >= 0, got ' + JSON.stringify(s.cancellation_hours));\nconst inp = $('Trigger').first().json;\nconst want = String(inp.appt_id || '').trim();\nconst valid = /^A-[0-9A-Z-]{1,40}$/.test(want);\nconst reject = (verdict) => [{ json: { action: 'reject', verdict, appt_id: valid ? want : '' } }];\nif (!valid) return reject('NOT_FOUND');\nconst ar = $('Appointment').first().json || {};   // the whole record: ar.id is the Appointments record id, the columns are in ar.fields\nconst a = ar.fields || {};\nif (!ar.id || a.appt_id !== want) return reject('NOT_FOUND');\nconst c = $('Client').first().json || {};\nconst cid = (c.fields || {}).client_id;\nif (!c.id || !cid || a.client_id !== cid) return reject('NOT_YOURS');\nif (!['pending', 'booked', 'reminded', 'confirmed'].includes(a.status)) return reject('NOT_FOUND');\nconst start = DateTime.fromISO(String(a.start_iso || ''));\nif (!start.isValid) throw new Error('cancel_booking: appointment ' + want + ' has an unreadable start_iso ' + JSON.stringify(a.start_iso));\n// A visit that has already started is history (done or a no-show), not something to cancel: nothing is touched.\nif (start <= DateTime.utc()) return reject('NOT_FOUND');\n// reason=reschedule is honoured only when a live visit of THIS client really replaces this one (Replacement: its\n// replaces_appt_id is this appt_id); a bare claim is a normal cancel, so the late-cancel rule cannot be dodged.\nconst replaced = String(inp.reason || '').trim().toLowerCase() === 'reschedule' && $('Replacement').all().map(i => (i.json || {}).fields || {})\n  .some(r => r.appt_id && r.client_id === cid && r.replaces_appt_id === want && ['booked', 'reminded', 'confirmed'].includes(r.status));\nconst reason = replaced ? 'reschedule' : 'cancel';\n// The event id goes into the Delete Event URL path unencoded: only a plain Google event id is accepted.\nconst ev = String(a.calendar_event_id || '').trim();\nif (ev && !/^[A-Za-z0-9_-]{1,1024}$/.test(ev)) throw new Error('cancel_booking: unexpected calendar_event_id ' + JSON.stringify(ev.slice(0, 80)) + ' on appointment ' + want);\nconst hoursLeft = start.diff(DateTime.utc(), 'hours').hours;\nconst in_window = a.status !== 'pending' && hoursLeft < hrs;\nconst late = reason === 'cancel' && in_window;\nreturn [{ json: { action: 'cancel', rec_id: ar.id, appt_id: want, calendar_event_id: ev, new_status: late ? 'late_cancel' : 'cancelled', reason, in_window, cancellation_hours: hrs,\n  service_id: a.service_id || '', start_iso: a.start_iso, when: start.setZone(s.timezone).toFormat('ccc, LLL d, h:mm a') } }];"
       }
     },
     {
@@ -378,7 +404,7 @@
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
-            "text": "={{ (() => { const d = $('Decide').first().json; const base = (String($('Client').first().json.fields.name || '').replace(/\\s+/g, ' ').trim().slice(0, 80) || '(no name)') + ' (' + $('Trigger').first().json.contact_id + ') — ' + d.service_id + ' — ' + d.when + ' — ' + d.appt_id; if (d.reason === 'reschedule') return '🔁 Rescheduled, old visit cancelled: ' + base; if (d.new_status !== 'late_cancel') return 'ℹ️ Cancelled: ' + base; const flagged = !!(($('Flag Client').first() || {}).json || {}).id; return '⚠️ LATE cancellation: ' + base + (flagged ? ' — client flagged' : ' — the client could NOT be flagged automatically, flag them by hand'); })() }}"
+            "text": "={{ (() => { const d = $('Decide').first().json; const base = (String($('Client').first().json.fields.name || '').replace(/\\s+/g, ' ').trim().slice(0, 80) || '(no name)') + ' (' + $('Trigger').first().json.contact_id + ') — ' + d.service_id + ' — ' + d.when + ' — ' + d.appt_id; const gone = $('Gone Check').isExecuted && ($('Gone Check').first().json || {}).event === 'already_gone' ? ' — the calendar event was already gone, check the calendar by hand' : ''; if (d.reason === 'reschedule') return '🔁 Rescheduled, old visit cancelled: ' + base + (d.in_window ? ' — moved inside the ' + d.cancellation_hours + ' h cancellation window' : '') + gone; if (d.new_status !== 'late_cancel') return 'ℹ️ Cancelled: ' + base + gone; const fc = ($('Flag Client').first() || {}).json || {}; const flag = !fc.id ? ' — the client could NOT be flagged automatically, flag them by hand' : ((fc.fields || {}).status === 'escalated' ? ' — client is escalated, left escalated (not flagged)' : ' — client flagged'); return '⚠️ LATE cancellation: ' + base + flag + gone; })() }}"
           },
           "matchingColumns": [],
           "schema": [
@@ -423,7 +449,8 @@
     "Settings": { "main": [[{ "node": "Client Formula", "type": "main", "index": 0 }]] },
     "Client Formula": { "main": [[{ "node": "Client", "type": "main", "index": 0 }]] },
     "Client": { "main": [[{ "node": "Appointment", "type": "main", "index": 0 }]] },
-    "Appointment": { "main": [[{ "node": "Decide", "type": "main", "index": 0 }]] },
+    "Appointment": { "main": [[{ "node": "Replacement", "type": "main", "index": 0 }]] },
+    "Replacement": { "main": [[{ "node": "Decide", "type": "main", "index": 0 }]] },
     "Decide": { "main": [[{ "node": "Route", "type": "main", "index": 0 }]] },
     "Route": {
       "main": [

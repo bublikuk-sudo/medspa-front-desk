@@ -18,7 +18,8 @@ while IFS=$'\t' read -r name tool input expected setup teardown || [ -n "${name:
   # (for example "the Clients row really exists"); the teardown still runs so test data is cleaned up.
   # A setup may set CASE_INPUT to replace the input column, for an input that only exists after the setup
   # (an appt_id that propose_booking generated). The input column then shows the shape with a placeholder.
-  unset CASE_INPUT
+  # The variables setups and teardowns assign are cleared too, so a case can never read a value a previous case left.
+  unset CASE_INPUT ap old new t0 s e x ev a bg bgf bgp before h t
   setup_ok=1; raw=""; [ -z "$setup" ] || eval "$setup" > /dev/null || setup_ok=0
   [ -z "${CASE_INPUT:-}" ] || input=$CASE_INPUT
   if [ "$setup_ok" -eq 1 ]; then
