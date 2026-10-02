@@ -14,4 +14,9 @@ at_test_client_with_offer() {
   at_delete_where Clients "{client_id}='C-test-$1'"
   at_create Clients "$(jq -n --arg c "C-test-$1" --arg t "90000000$1" --arg o "$(jq -nc --arg s "${3:-botox}" --arg slot "$2" '{service_id:$s, slots:[$slot]}')" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{client_id:$c, name:("Test "+$c), telegram_chat_id:$t, language:"en", status:"new", last_offer_json:$o, last_offer_at:$at}')"
 }
+# at_offer <n> <slot iso> [service_id]: gives the EXISTING test client C-test-<n> a new offer made just now (same format), keeping
+# the row (its status and its earlier bookings), for a second proposal in the same case (a reschedule).
+at_offer() {
+  at_update Clients "$(at_rec_id Clients "{client_id}='C-test-$1'")" "$(jq -n --arg o "$(jq -nc --arg s "${3:-botox}" --arg slot "$2" '{service_id:$s, slots:[$slot]}')" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{last_offer_json:$o, last_offer_at:$at}')"
+}
 at_rec_id() { at_list "$1" "$2" | jq -er '.records[0].id'; }                                                     # table formula → id of the first match

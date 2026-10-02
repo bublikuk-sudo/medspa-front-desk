@@ -46,6 +46,11 @@ The teardown can read two variables of the runner: `$out`, the verdict the regex
 whole JSON the tool returned (empty when the call failed). `$raw` is how a case asserts on fields other than the
 verdict, for example `printf '%s' "$raw" | jq -e '.first_visit == true'` for `confirm_booking`.
 
+A setup can set `CASE_INPUT` to a JSON object that replaces the `input_json` column, for an input that only exists after
+the setup (an `appt_id` that propose_booking generated: `ap=$(bk_appt_id 1) && CASE_INPUT=$(jq -nc --arg a "$ap" '{contact_id:"tg:900000001", appt_id:$a}')`).
+The column then shows the shape with a placeholder such as `"<the booked appt_id, set by the setup>"`. The runner unsets
+`CASE_INPUT` before every setup. Variables a setup assigns (`ap`, `old`, `t0`) are visible to the teardown.
+
 `tests/cleanup.sh --no-calendar` skips only the `[TEST]` sweep of the calendar. Cases that never touch the calendar
 (find_client_*, escalate_*, kb_*, propose_*) use it, so they do not depend on Google being up; the plain
 `tests/cleanup.sh` also deletes the `[TEST]` events and is for the fixtures, check_availability and confirm_* cases and
@@ -80,21 +85,33 @@ Shell helpers sourced by the scripts: `at_list TABLE FORMULA`, `at_create TABLE 
 `at_rec_id TABLE FORMULA` (record id of the first match, fails when there is none) and
 `at_test_client_with_offer N SLOT_ISO [SERVICE_ID]` (recreates client `C-test-N`, Telegram chat `90000000N`, name
 `Test C-test-N`, status `new`, whose last offer, made just now, is exactly that slot for that service, default `botox`,
-in check_availability's format `{"service_id":"botox","slots":["<iso>"]}`).
+in check_availability's format `{"service_id":"botox","slots":["<iso>"]}`) and `at_offer N SLOT_ISO [SERVICE_ID]` (the
+same offer written on the EXISTING client `C-test-N`, keeping its row, status and bookings: a second proposal in one
+case, as a reschedule needs).
 
 ## `tests/lib/n8n.sh`
 
 `last_compose WORKFLOW` (the owner message the newest execution composed), and the booking helpers: `cal_on DATE`
 (test-fixtures `list_events` for that whole day as JSON; the offset is `+01:00`, so winter dates only),
-`bk_propose N SLOT_ISO` (propose_booking botox at that slot for `tg:90000000N`, must answer `PENDING A-...`) and
-`bk_confirm N` (confirm_booking for `tg:90000000N`, must answer `BOOKED A-...`). Each fails unless the tool gave that
-verdict, so a setup chained with `&&` stops at the first step that did not work.
+`bk_propose N SLOT_ISO [REPLACES_APPT_ID]` (propose_booking botox at that slot for `tg:90000000N`, optionally as a
+reschedule of that visit, must answer `PENDING A-...`) and `bk_confirm N` (confirm_booking for `tg:90000000N`, must
+answer `BOOKED A-...`). Each fails unless the tool gave that verdict, so a setup chained with `&&` stops at the first
+step that did not work. `bk_appt_id N` prints the appt_id of client N's booked row and fails unless there is exactly one.
 
 Also: `appt_event_id APPT_ID` (the Google event id confirm_booking gives that booking: `appt` + the hex of the appt_id
 bytes), `execs_since WORKFLOW ISO` (how many executions of that workflow started at or after that instant, newest 50;
-the cases count owner notifications with `execs_since notify_owner "$t0"`) and `cal_sweep_day DATE` (deletes that
-day's events whose description is an appt_id, through `delete_events_by_id`; the safety net of `confirm_repair` and
-`confirm_concurrent`, which can leave an event that no row points at when they FAIL).
+the cases count owner notifications with `execs_since notify_owner "$t0"`), `last_node_json WORKFLOW NODE` (the first
+item that node output in the newest execution of that workflow; `last_node_json notify_owner Trigger | jq -r .text` is
+the last owner message, and it fails when the node did not run) and `cal_sweep_day DATE`.
+
+`cal_sweep_day DATE` is the safety net of the cases that can leave a booking event that no row points at when they FAIL
+(`confirm_repair`, `confirm_concurrent`, `confirm_repair_replaces`: the event was created but `calendar_event_id` never
+written). It runs BEFORE `tests/cleanup.sh`, because it needs the rows: it takes the `C-test` Appointments rows whose
+`calendar_event_id` is EMPTY, derives `appt_event_id` of each, and deletes only that day's events with one of those ids
+(through `delete_events_by_id`, which also checks the description is an appt_id). A real booking's appt_id is never a
+`C-test` row's, so it cannot be reached; events whose id IS stored on a row are left to the cleanup, which deletes them
+by id (deleting them here first would make the cleanup's `DELETED n of m` fall short). Until Task 10 it picked every
+event of the day whose description looked like an appt_id, which could have reached a real booking on that date.
 
 ## Cases
 
@@ -411,8 +428,19 @@ exactly that slot and `Any Busy` checks for a real overlap:
   second owner message); not there -> the create really failed and `Own Check` fails the tool (-> WF-6) with the create
   error in the message. On success `Mark Booked` sets `status = booked` and `calendar_event_id`,
   `Activate Client` sets the client to `active` (a `flagged` or `escalated` client keeps that status), `Replaces?`
-  (its true branch goes to `cancel_booking` in Task 10; until then both branches go on), `Notify` sends the owner
-  `✅ New booking: <name> (<contact>) — <service> — Mon, Jan 7, 12:00 PM — <appt_id>`, and `Result Booked` answers.
+  sends a reschedule to `Cancel Replaced` (below), `Notify` sends the owner
+  `✅ New booking: <name> (<contact>) — <service> — Mon, Jan 7, 12:00 PM — <appt_id>` (plus ` — replaces <old appt_id>`
+  for a reschedule), and `Result Booked` answers.
+
+Reschedule (the pending row carries `replaces_appt_id`, which propose_booking only keeps for the client's own future
+live visit): `Cancel Replaced` calls `cancel_booking(contact_id, replaces_appt_id, reason = reschedule)`, which frees the
+old visit (event deleted, row `cancelled`, never `late_cancel`, the client is not flagged) and tells the owner
+`🔁 Rescheduled, old visit cancelled: ...`. The repair path runs it too (`Replaces Repair?`), because a run that died
+after `Create Event` never reached it; if that run did cancel the old visit, cancel_booking answers `NOT_FOUND`, so the
+call is idempotent. `Cancel Replaced` continues on error: the new booking already exists. `Replace Failed?` treats any
+verdict other than `CANCELLED` / `NOT_FOUND` (an error item, `NOT_YOURS`) as a failure and `Notify Replace Failed` tells
+the owner `⚠️ Reschedule incomplete: ... the old visit <id> could not be cancelled automatically (<why>). Cancel it by
+hand ...`. `Repaired?` then returns to the path it came from: `Result Already` (no new-booking message) or `Notify`.
 
 `first_visit` is true when the client has no `booked`, `reminded`, `confirmed` or `done` row. Because the event id is
 deterministic, `Create Event` now retries like every other Airtable and Google node (2 tries, 5 s): a retry after a create
@@ -437,7 +465,8 @@ and answer YES within the same few seconds) this is rare; `confirm_slot_taken` c
 
 Every `BOOKED` sends the owner a real Telegram message (`confirm_ok`, and the setups of `confirm_again`,
 `confirm_slot_taken`, `confirm_returning_client`, `confirm_stray_pending`, `confirm_repair`, plus the one booking of
-`confirm_concurrent`: seven per full run). Each confirm case builds its own state through the real tools
+`confirm_concurrent`: seven per full run; the Task 10 cases add 19 more, bookings in their setups plus the cancel,
+reschedule and reminder messages, so a full run sends the owner about 26). Each confirm case builds its own state through the real tools
 (`at_test_client_with_offer`, `bk_propose`, `bk_confirm`), so it can run alone; the cases that book start by asserting
 that Monday 2030-01-07 has no events, and every confirm case ends with the full `tests/cleanup.sh`, which deletes the
 booking events by id.
@@ -454,10 +483,82 @@ booking events by id.
 | `confirm_stray_pending` | client 1 is booked at 12:00 and a stray pending row `A-TEST-STRAY` starts at 12:00 too: `ALREADY_BOOKED` with the BOOKED visit's appt_id (not `SLOT_TAKEN`), the stray is `cancelled`, still one event |
 | `confirm_repair` | the "event created, row not marked" state: after a real booking the row is reset to `pending` with no `calendar_event_id`; confirm answers `ALREADY_BOOKED <appt_id>`, the row is `booked` again with the event's id (`appt_event_id`), the day still has one event, and no `notify_owner` run started since the reset (`execs_since`). It goes through `FreeBusy` (busy) -> `Own Event` -> repair |
 | `confirm_concurrent` | the setup starts one `confirm_booking` in the background and the case fires a second at once, for the same pending row: the two verdicts are exactly `BOOKED X` and `ALREADY_BOOKED X`, one booked row whose `calendar_event_id` is `appt_event_id X`, one event, and exactly one `notify_owner` run since the setup. Which run wins varies, so the case's own regex accepts both |
+| `confirm_replaces_old` | a real reschedule: client 1 is booked at 12:00 (real event), gets a new offer for 15:00 (`at_offer`) and proposes it with `replaces_appt_id` = the 12:00 visit; confirm answers `BOOKED`, the old row is `cancelled` with an empty `calendar_event_id`, the new one `booked`, the day has exactly one event (15:00, the new booking's id), the client is `active`, and exactly two owner messages since the proposal (`🔁 Rescheduled` and `✅ New booking`) |
+| `confirm_reschedule_late` | the old visit starts in 3 hours (inside `cancellation_hours`): the reschedule still makes it `cancelled`, NOT `late_cancel`, and the client stays `active`, not `flagged` |
+| `confirm_repair_replaces` | a reschedule whose first confirm "died after Create Event": after a real reschedule the new row is reset to `pending` with no event id and the old row back to `booked`; confirm answers `ALREADY_BOOKED` (repair path) and the old visit is `cancelled` now. Red before Task 10: the repair path skipped `Replaces?` and the old visit stayed booked |
+| `confirm_replace_failed` | the old visit is moved to client 2 after the proposal, so `Cancel Replaced` gets `NOT_YOURS`: the client still gets `BOOKED`, the old row is untouched, `Notify Replace Failed` ran and the owner got two messages (the warning and the new booking) |
 
-`confirm_repair` and `confirm_concurrent` end with `cal_sweep_day 2030-01-07` after the cleanup: when they fail (as they
-did against the pre-fix workflow, which double-booked), an event can be left that no row points at, and the cleanup by id
-cannot find it.
+`confirm_repair`, `confirm_concurrent` and `confirm_repair_replaces` run `cal_sweep_day 2030-01-07` before the cleanup:
+when they fail (as they did against the pre-fix workflow, which double-booked), an event can be left that no row points
+at, and the cleanup by id cannot find it.
+
+### cancel_booking
+
+`cancel_booking(contact_id, appt_id, reason?)` is the agent's cancel tool (the agent passes `contact_id` and an `appt_id`
+from find_client's `upcoming`; `reason` is only passed by confirm_booking's `Cancel Replaced`). Verdicts: `CANCELLED`,
+`LATE_CANCEL`, `NOT_YOURS`, `NOT_FOUND`, each with `appt_id` (`""` when the input was not a plain appt_id).
+
+- `appt_id` must match `^A-[0-9A-Z-]{1,40}$` (after trimming) before it goes into the `Appointment` formula; anything else
+  searches for a row that cannot exist and is `NOT_FOUND`. (The brief stripped quotes instead, so `A-TEST-C1'` became
+  `A-TEST-C1` and cancelled that visit.)
+- No row -> `NOT_FOUND`; the row is not this client's (or the contact has no client row) -> `NOT_YOURS`; the row is not
+  `pending`/`booked`/`reminded`/`confirmed` (already cancelled, done, ...) -> `NOT_FOUND`, which is what makes a repeated
+  cancel idempotent.
+- Late: `reason` is `cancel` (anything but `reschedule`), the row is not `pending` and it starts in fewer than
+  `Settings.cancellation_hours` hours (24) -> `late_cancel`, `Flag Client` sets the client `flagged` (an `escalated`
+  client stays `escalated`; continue on error, and the owner message then says the flag must be set by hand). A
+  reschedule is never late: the client keeps the clinic booked.
+- `Delete Event` is an HTTP Request (`DELETE .../calendars/<Settings.calendar_id>/events/<calendar_event_id>` with the
+  `MedSpa Google Calendar` credential, `neverError` + `fullResponse`) and `Gone Check` reads the exact status: 2xx
+  deleted, 404/410 already gone (the owner deleted it, or an earlier run did) -> go on; anything else fails the tool
+  (-> WF-6) BEFORE the row is marked, so a cancelled row never leaves a live event blocking the slot. The Google Calendar
+  node could not do this: with continue-on-fail it keeps only a generic message, the same for 410 and other errors.
+  Network errors and timeouts (30 s) throw and are retried once.
+- `Mark` sets the status and clears `calendar_event_id` (the event is gone; the cleanup deletes by the ids still on rows,
+  so a stale id would make its `DELETED n of m` fall short).
+- `Notify` (continue on error) sends `ℹ️ Cancelled: <name> (<contact>) — <service_id> — Mon, Jan 7, 12:00 PM — <appt_id>`,
+  `⚠️ LATE cancellation: ... — client flagged`, or `🔁 Rescheduled, old visit cancelled: ...`, the time in
+  `Settings.timezone`.
+- `Decide` throws on a missing Settings row, `calendar_id`, timezone or a `cancellation_hours` that is not a number >= 0,
+  on a row whose `start_iso` does not parse and on a `calendar_event_id` that is not a plain id (it goes into the URL).
+
+Checked live: `cancel_ok` deleted with HTTP 204, `cancel_already_gone` got 410 and went on. Any unknown event id is 404 in
+Google (an id `BAD_ID` and a 1000-character id both gave 404, so both "cancel"), which means a wrong
+`Settings.calendar_id` would also look like "already gone"; every other booking tool would fail loudly on it first.
+A non-404/410 error could not be produced without touching the shared Settings or credential, so the throw branch of
+`Gone Check` is unproven live.
+
+| case | why |
+|---|---|
+| `cancel_not_found` | `A-NOPE` does not exist: `NOT_FOUND` |
+| `cancel_invalid_id` | `A-TEST-C1'` (a quote appended to the client's own visit id) is not a plain appt_id: `NOT_FOUND`, the row stays `booked` |
+| `cancel_not_yours` | client 2 passes client 1's real booked appt_id: `NOT_YOURS`, the row stays `booked` with its event id, the event is still there |
+| `cancel_ok` | client 1 cancels its real booking at 12:00: `CANCELLED` with that `appt_id`, the row is `cancelled` with an empty `calendar_event_id`, the day has no event, the client stays `active`, and the owner got exactly `ℹ️ Cancelled: Test C-test-1 (tg:900000001) — botox — Mon, Jan 7, 12:00 PM — <appt_id>` |
+| `cancel_already_gone` | the booking's event is deleted in the setup (`DELETED 1 of 1`), then cancelled: still `CANCELLED` (Google 410), row `cancelled`, id cleared |
+| `cancel_late` | a `confirmed` visit 3 hours ahead (no event): `LATE_CANCEL`, row `late_cancel`, client `flagged`, owner message `⚠️ LATE cancellation: ... — A-TEST-LATE — client flagged` |
+| `cancel_reschedule_reason` | the same visit with `reason` = `reschedule`: `CANCELLED`, row `cancelled`, client stays `new`, owner message `🔁 Rescheduled, old visit cancelled: ...` |
+
+`cancel_ok`, `cancel_not_yours` and `cancel_already_gone` book for real in the setup (owner messages) and end with the
+full cleanup and `EVENTS 0`; `cancel_already_gone` deletes its row before the cleanup, because its event is known to be
+gone and a leftover id would make the cleanup's `DELETED n of m` fail.
+
+### reminder_reply
+
+`reminder_reply(contact_id, answer)` is called by WF-1 (Task 13) when a client with a `reminded` visit answers;
+`answer` must be `yes` or `no` (case-insensitive), anything else fails the tool. It works on the client's NEXT reminded
+visit (earliest `start_iso` still ahead; other clients' rows and later reminded visits are untouched):
+
+- none -> `NO_REMINDED` (`appt_id` `""`);
+- yes -> `Mark Confirmed` (`status = confirmed`, `confirmed_at` = now UTC) -> `CONFIRMED` + `appt_id`, no owner message;
+- no -> the same `Delete Event` / `Gone Check` as cancel_booking, `Mark Cancelled` (`cancelled`, `calendar_event_id`
+  cleared; a NO to the clinic's reminder is a plain cancellation, never `late_cancel`), `Notify` (continue on error)
+  `ℹ️ Cancelled via reminder: <name> (<contact>) — <service_id> — Mon, Jan 7, 1:00 PM — <appt_id>` -> `CANCELLED` + `appt_id`.
+
+| case | why |
+|---|---|
+| `reminder_none` | client 2 has only a `booked` visit: `NO_REMINDED`, `appt_id` `""`, the row untouched |
+| `reminder_yes` | client 2 has reminded visits on Jan 7 13:00 (`A-TEST-R1`) and Jan 8 (`A-TEST-R2`), client 1 one on Jan 7 10:00 (`A-TEST-R0`): `CONFIRMED` `A-TEST-R1`, only that row is `confirmed` with a `confirmed_at` |
+| `reminder_no` | client 2's real booking at 13:00, set to `reminded`: `CANCELLED` with its appt_id, row `cancelled` with no event id, the event deleted, owner message exact |
 
 ### Why confirm_booking is not an agent tool
 

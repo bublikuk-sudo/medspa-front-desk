@@ -16,7 +16,11 @@ while IFS=$'\t' read -r name tool input expected setup teardown || [ -n "${name:
   [[ -n "$only" && "$name" != "$only" ]] && continue
   # A setup or teardown that exits non-zero fails the case, so setup/teardown can carry assertions
   # (for example "the Clients row really exists"); the teardown still runs so test data is cleaned up.
+  # A setup may set CASE_INPUT to replace the input column, for an input that only exists after the setup
+  # (an appt_id that propose_booking generated). The input column then shows the shape with a placeholder.
+  unset CASE_INPUT
   setup_ok=1; raw=""; [ -z "$setup" ] || eval "$setup" > /dev/null || setup_ok=0
+  [ -z "${CASE_INPUT:-}" ] || input=$CASE_INPUT
   if [ "$setup_ok" -eq 1 ]; then
     # $raw keeps the whole JSON the tool returned, so a teardown can assert on fields other than the verdict
     # (for example confirm_booking's first_visit). $out is the verdict that the regex is matched against.

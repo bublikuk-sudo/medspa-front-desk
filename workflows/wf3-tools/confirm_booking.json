@@ -521,7 +521,7 @@
       "name": "Result Already",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.5,
-      "position": [3520, 320],
+      "position": [4400, 320],
       "parameters": {
         "assignments": {
           "assignments": [
@@ -833,7 +833,7 @@
     {
       "id": "9c0f0001-0021-4c00-8000-000000000021",
       "name": "Replaces?",
-      "notes": "Task 10 connects the true branch to cancel_booking (cancel replaces_appt_id). Until then both branches go to Notify. The repair path (Own? -> Repair Booked -> Result Already) does not pass here: Task 10 must decide whether a repaired booking (an earlier run died after Create Event) still cancels replaces_appt_id.",
+      "notes": "A reschedule (the pending row carries replaces_appt_id, validated by propose_booking): true -> Cancel Replaced. The repair path has its own Replaces Repair? into the same Cancel Replaced.",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [3080, 620],
@@ -859,7 +859,7 @@
       "notes": "Continue on error: the booking already exists (event in the owner's calendar, row booked), so the client must get BOOKED even if the owner message fails. notify_owner retries its own nodes and has an Airtable-free fallback.",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [3300, 620],
+      "position": [4180, 620],
       "onError": "continueRegularOutput",
       "parameters": {
         "source": "database",
@@ -867,7 +867,7 @@
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
-            "text": "={{ '✅ New booking: ' + (String($('Client').first().json.fields.name || '').replace(/\\s+/g, ' ').trim().slice(0, 80) || '(no name)') + ' (' + $('Trigger').first().json.contact_id + ') — ' + $('Decide').first().json.service_name + ' — ' + DateTime.fromISO($('Decide').first().json.start_iso).setZone($('Settings').first().json.fields.timezone).toFormat('ccc, LLL d, h:mm a') + ' — ' + $('Decide').first().json.appt_id }}"
+            "text": "={{ '✅ New booking: ' + (String($('Client').first().json.fields.name || '').replace(/\\s+/g, ' ').trim().slice(0, 80) || '(no name)') + ' (' + $('Trigger').first().json.contact_id + ') — ' + $('Decide').first().json.service_name + ' — ' + DateTime.fromISO($('Decide').first().json.start_iso).setZone($('Settings').first().json.fields.timezone).toFormat('ccc, LLL d, h:mm a') + ' — ' + $('Decide').first().json.appt_id + ($('Decide').first().json.replaces_appt_id ? ' — replaces ' + $('Decide').first().json.replaces_appt_id : '') }}"
           },
           "matchingColumns": [],
           "schema": [
@@ -881,11 +881,138 @@
       }
     },
     {
+      "id": "9c0f0001-0032-4c00-8000-000000000032",
+      "name": "Replaces Repair?",
+      "notes": "The repair path (this booking's event already existed) must still free the visit it replaces: an earlier run that died after Create Event never got to Cancel Replaced. If that run did cancel it, cancel_booking answers NOT_FOUND (idempotent).",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [3520, 320],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "9c0f0001-1008-4c00-8000-000000000008",
+              "leftValue": "={{ !!$('Decide').first().json.replaces_appt_id }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0033-4c00-8000-000000000033",
+      "name": "Cancel Replaced",
+      "notes": "Reschedule: cancel_booking with reason=reschedule (always cancelled, never a late cancel, owner told 'Rescheduled'). Continue on error: the new booking already exists, so the client must get BOOKED / ALREADY_BOOKED; Replace Failed? tells the owner to cancel the old visit by hand.",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [3300, 820],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:cancel_booking", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Trigger').first().json.contact_id }}",
+            "appt_id": "={{ $('Decide').first().json.replaces_appt_id }}",
+            "reason": "reschedule"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "reason", "displayName": "reason", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0034-4c00-8000-000000000034",
+      "name": "Replace Failed?",
+      "notes": "CANCELLED = the old visit is freed; NOT_FOUND = it was already cancelled (by an earlier run of this booking, or by hand). Anything else (an error item, NOT_YOURS) means the old visit may still be booked.",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [3520, 820],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "9c0f0001-1009-4c00-8000-000000000009",
+              "leftValue": "={{ !['CANCELLED', 'NOT_FOUND'].includes(String($json.verdict || '')) }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0035-4c00-8000-000000000035",
+      "name": "Notify Replace Failed",
+      "notes": "Continue on error: nothing else can be done here; cancel_booking's own failure also reached WF-6 from its own execution.",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [3740, 740],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:notify_owner", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "text": "={{ '⚠️ Reschedule incomplete: ' + (String($('Client').first().json.fields.name || '').replace(/\\s+/g, ' ').trim().slice(0, 80) || '(no name)') + ' (' + $('Trigger').first().json.contact_id + ') is booked for ' + $('Decide').first().json.appt_id + ' (' + $('Decide').first().json.service_name + ' — ' + DateTime.fromISO($('Decide').first().json.start_iso).setZone($('Settings').first().json.fields.timezone).toFormat('ccc, LLL d, h:mm a') + '), but the old visit ' + $('Decide').first().json.replaces_appt_id + ' could not be cancelled automatically (' + String($json.verdict || ($json.error && ($json.error.message || JSON.stringify($json.error))) || 'no answer').slice(0, 200) + '). Cancel it by hand: delete its calendar event and set its Appointments row to cancelled.' }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0036-4c00-8000-000000000036",
+      "name": "Repaired?",
+      "notes": "Back to the path Cancel Replaced was called from: the repair path answers ALREADY_BOOKED without a new-booking message, the normal path goes on to Notify.",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [3960, 820],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "9c0f0001-1010-4c00-8000-000000000010",
+              "leftValue": "={{ $('Repair Booked').isExecuted === true }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
       "id": "9c0f0001-0023-4c00-8000-000000000023",
       "name": "Result Booked",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.5,
-      "position": [3520, 620],
+      "position": [4400, 620],
       "parameters": {
         "assignments": {
           "assignments": [
@@ -948,7 +1075,27 @@
       ]
     },
     "Repair Booked": { "main": [[{ "node": "Repair Client", "type": "main", "index": 0 }]] },
-    "Repair Client": { "main": [[{ "node": "Result Already", "type": "main", "index": 0 }]] },
+    "Repair Client": { "main": [[{ "node": "Replaces Repair?", "type": "main", "index": 0 }]] },
+    "Replaces Repair?": {
+      "main": [
+        [{ "node": "Cancel Replaced", "type": "main", "index": 0 }],
+        [{ "node": "Result Already", "type": "main", "index": 0 }]
+      ]
+    },
+    "Cancel Replaced": { "main": [[{ "node": "Replace Failed?", "type": "main", "index": 0 }]] },
+    "Replace Failed?": {
+      "main": [
+        [{ "node": "Notify Replace Failed", "type": "main", "index": 0 }],
+        [{ "node": "Repaired?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Notify Replace Failed": { "main": [[{ "node": "Repaired?", "type": "main", "index": 0 }]] },
+    "Repaired?": {
+      "main": [
+        [{ "node": "Result Already", "type": "main", "index": 0 }],
+        [{ "node": "Notify", "type": "main", "index": 0 }]
+      ]
+    },
     "Mark Taken": { "main": [[{ "node": "Alternatives", "type": "main", "index": 0 }]] },
     "Alternatives": { "main": [[{ "node": "Result Taken", "type": "main", "index": 0 }]] },
     "Create Event": {
@@ -961,7 +1108,7 @@
     "Activate Client": { "main": [[{ "node": "Replaces?", "type": "main", "index": 0 }]] },
     "Replaces?": {
       "main": [
-        [{ "node": "Notify", "type": "main", "index": 0 }],
+        [{ "node": "Cancel Replaced", "type": "main", "index": 0 }],
         [{ "node": "Notify", "type": "main", "index": 0 }]
       ]
     },
