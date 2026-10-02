@@ -136,7 +136,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// Settings are checked before anything is written: the event goes into Settings.calendar_id.\nconst s = ($('Settings').first().json || {}).fields;\nif (!s) throw new Error('confirm_booking: the Settings table has no row');\nif (typeof s.calendar_id !== 'string' || !s.calendar_id.trim()) throw new Error('confirm_booking: Settings.calendar_id is missing');\nif (typeof s.timezone !== 'string' || !s.timezone.trim() || !DateTime.now().setZone(s.timezone).isValid) throw new Error('confirm_booking: Settings.timezone is missing or not a valid IANA zone, got ' + JSON.stringify(s.timezone));\nconst c = $('Client').first().json || {};   // the whole record: c.id is the Clients record id\nconst cid = (c.fields || {}).client_id;\nif (!c.id || !cid) return [{ json: { action: 'reject', verdict: 'NO_PENDING', appt_id: '' } }];\n// rec_id is the Appointments record id (for the updates), the rest are the columns\nconst appts = $('Appointments').all().map(i => ({ ...((i.json || {}).fields || {}), rec_id: (i.json || {}).id })).filter(a => a.appt_id && a.client_id === cid);\nconst services = $('Services').all().map(i => (i.json || {}).fields || {});\nconst now = DateTime.utc();\nconst ms = (iso) => DateTime.fromISO(String(iso || '')).toMillis();\nconst pending = appts.filter(a => a.status === 'pending').sort((a, b) => String(b.pending_expires_at || '').localeCompare(String(a.pending_expires_at || '')))[0];\nif (!pending) {\n  // No proposal waiting: a repeated YES for a visit that is already booked is ALREADY_BOOKED with that visit's id.\n  const future = appts.filter(a => ['booked', 'reminded', 'confirmed'].includes(a.status) && ms(a.start_iso) > now.toMillis()).sort((a, b) => ms(a.start_iso) - ms(b.start_iso))[0];\n  return [{ json: { action: 'reject', verdict: future ? 'ALREADY_BOOKED ' + future.appt_id : 'NO_PENDING', appt_id: future ? future.appt_id : '' } }];\n}\nconst exp = DateTime.fromISO(String(pending.pending_expires_at || ''));\nif (!exp.isValid || exp < now) return [{ json: { action: 'expire', rec_id: pending.rec_id, appt_id: pending.appt_id } }];\nconst start = DateTime.fromISO(String(pending.start_iso || '')), end = DateTime.fromISO(String(pending.end_iso || ''));\nif (!start.isValid || !end.isValid || end <= start) throw new Error('confirm_booking: pending appointment ' + pending.appt_id + ' has an unreadable start_iso/end_iso');\nconst svc = services.find(x => x.service_id === pending.service_id) || {};\nconst hadVisits = appts.some(a => ['booked', 'reminded', 'confirmed', 'done'].includes(a.status));\nreturn [{ json: { action: 'check', rec_id: pending.rec_id, appt_id: pending.appt_id, start_iso: pending.start_iso, end_iso: pending.end_iso,\n  service_id: pending.service_id, service_name: svc.name || pending.service_id, replaces_appt_id: pending.replaces_appt_id || '', first_visit: !hadVisits } }];"
+        "jsCode": "// Settings are checked before anything is written: the event goes into Settings.calendar_id.\nconst s = ($('Settings').first().json || {}).fields;\nif (!s) throw new Error('confirm_booking: the Settings table has no row');\nif (typeof s.calendar_id !== 'string' || !s.calendar_id.trim()) throw new Error('confirm_booking: Settings.calendar_id is missing');\nif (typeof s.timezone !== 'string' || !s.timezone.trim() || !DateTime.now().setZone(s.timezone).isValid) throw new Error('confirm_booking: Settings.timezone is missing or not a valid IANA zone, got ' + JSON.stringify(s.timezone));\nconst c = $('Client').first().json || {};   // the whole record: c.id is the Clients record id\nconst cid = (c.fields || {}).client_id;\nif (!c.id || !cid) return [{ json: { action: 'reject', verdict: 'NO_PENDING', appt_id: '' } }];\n// rec_id is the Appointments record id (for the updates), the rest are the columns\nconst appts = $('Appointments').all().map(i => ({ ...((i.json || {}).fields || {}), rec_id: (i.json || {}).id })).filter(a => a.appt_id && a.client_id === cid);\nconst services = $('Services').all().map(i => (i.json || {}).fields || {});\nconst now = DateTime.utc();\nconst ms = (iso) => DateTime.fromISO(String(iso || '')).toMillis();\nconst live = (a) => ['booked', 'reminded', 'confirmed'].includes(a.status);\nconst pending = appts.filter(a => a.status === 'pending').sort((a, b) => String(b.pending_expires_at || '').localeCompare(String(a.pending_expires_at || '')))[0];\nif (!pending) {\n  // No proposal waiting: a repeated YES for a visit that is already booked is ALREADY_BOOKED with that visit's id.\n  const future = appts.filter(a => live(a) && ms(a.start_iso) > now.toMillis()).sort((a, b) => ms(a.start_iso) - ms(b.start_iso))[0];\n  return [{ json: { action: 'reject', verdict: future ? 'ALREADY_BOOKED ' + future.appt_id : 'NO_PENDING', appt_id: future ? future.appt_id : '' } }];\n}\n// A pending row that starts exactly when an already booked visit of this client starts is a stray (a Create Appt retry in\n// propose_booking can leave one): cancel it and answer with the booked visit, instead of finding the slot taken by the client's own event.\nconst twin = appts.find(a => live(a) && ms(a.start_iso) === ms(pending.start_iso));\nif (twin) return [{ json: { action: 'stray', rec_id: pending.rec_id, verdict: 'ALREADY_BOOKED ' + twin.appt_id, appt_id: twin.appt_id } }];\nconst exp =DateTime.fromISO(String(pending.pending_expires_at || ''));\nif (!exp.isValid || exp < now) return [{ json: { action: 'expire', rec_id: pending.rec_id, appt_id: pending.appt_id } }];\nconst start = DateTime.fromISO(String(pending.start_iso || '')), end = DateTime.fromISO(String(pending.end_iso || ''));\nif (!start.isValid || !end.isValid || end <= start) throw new Error('confirm_booking: pending appointment ' + pending.appt_id + ' has an unreadable start_iso/end_iso');\nif (!/^[A-Za-z0-9-]{1,64}$/.test(String(pending.appt_id))) throw new Error('confirm_booking: unexpected appt_id ' + JSON.stringify(String(pending.appt_id).slice(0, 80)) + ' in Appointments record ' + pending.rec_id);\n// The Google event id is derived from appt_id, so the same booking always gets the same event id: Google refuses a second insert\n// with that id (409), and a retried or concurrent Create Event cannot make a second event. Google ids are base32hex (0-9a-v),\n// 5-1024 characters: 'appt' + the hex of the appt_id's ASCII bytes (tests/lib/n8n.sh appt_event_id computes the same).\nconst event_id = 'appt' + [...pending.appt_id].map(ch => ch.charCodeAt(0).toString(16).padStart(2, '0')).join('');\nconst svc = services.find(x => x.service_id === pending.service_id) || {};\nconst hadVisits = appts.some(a => ['booked', 'reminded', 'confirmed', 'done'].includes(a.status));\nreturn [{ json: { action: 'check', rec_id: pending.rec_id, appt_id: pending.appt_id, start_iso: pending.start_iso, end_iso: pending.end_iso,\n  service_id: pending.service_id, service_name: svc.name || pending.service_id, replaces_appt_id: pending.replaces_appt_id || '', first_visit: !hadVisits, event_id } }];"
       }
     },
     {
@@ -195,6 +195,22 @@
               },
               "renameOutput": true,
               "outputKey": "check"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [
+                  {
+                    "id": "9c0f0001-1006-4c00-8000-000000000006",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "stray",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "stray"
             }
           ]
         },
@@ -352,6 +368,250 @@
       }
     },
     {
+      "id": "9c0f0001-0024-4c00-8000-000000000024",
+      "name": "Own Event",
+      "notes": "Reached when the slot looks taken (from Taken?) or when Create Event failed (its error output). Lists the events of exactly this slot to see whether one of them is THIS booking's own event (id = Decide.event_id): then the booking already exists (a concurrent YES, or an earlier run that died before Mark Booked) and only the row needs repairing. Cancelled events are not listed. A read, so it retries.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [2420, 420],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": { "id": "CRED", "name": "MedSpa Google Calendar" }
+      },
+      "parameters": {
+        "resource": "event",
+        "operation": "getAll",
+        "calendar": { "__rl": true, "value": "={{ $('Settings').first().json.fields.calendar_id }}", "mode": "id" },
+        "returnAll": true,
+        "timeMin": "={{ $('Decide').first().json.start_iso }}",
+        "timeMax": "={{ $('Decide').first().json.end_iso }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0025-4c00-8000-000000000025",
+      "name": "Own Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2640, 420],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// own = this booking's event (id derived from appt_id) is in the calendar. The empty {} item of alwaysOutputData has no id.\nconst d = $('Decide').first().json;\nconst own = $input.all().some(i => (i.json || {}).id === d.event_id);\n// Coming from a failed Create Event, no own event means the create really failed (not a duplicate): fail the tool (-> WF-6).\nif (!own && $('Create Event').isExecuted) {\n  let why = '';\n  try { why = String((($('Create Event').all(1)[0] || {}).json || {}).error || ''); } catch (e) { why = ''; }\n  throw new Error('confirm_booking: Create Event failed for ' + d.appt_id + ' and no event ' + d.event_id + ' is in the calendar' + (why ? ': ' + why : ''));\n}\nreturn [{ json: { own } }];"
+      }
+    },
+    {
+      "id": "9c0f0001-0026-4c00-8000-000000000026",
+      "name": "Own?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [2860, 420],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "9c0f0001-1007-4c00-8000-000000000007",
+              "leftValue": "={{ $json.own === true }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0027-4c00-8000-000000000027",
+      "name": "Repair Booked",
+      "notes": "The booking's own event already exists: make the row say so (idempotent, same values as Mark Booked). No owner message here: the run that created the event sent it (or, after a run that died before Mark Booked, nobody did; the event is in the owner's calendar either way).",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [3080, 320],
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "update",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $('Decide').first().json.rec_id }}",
+            "status": "booked",
+            "calendar_event_id": "={{ $('Decide').first().json.event_id }}"
+          },
+          "matchingColumns": ["id"],
+          "schema": [
+            { "id": "id", "displayName": "id", "required": false, "defaultMatch": true, "display": true, "type": "string", "readOnly": true, "removed": false },
+            {
+              "id": "status", "displayName": "status", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "options",
+              "options": [
+                { "name": "pending", "value": "pending" }, { "name": "booked", "value": "booked" }, { "name": "reminded", "value": "reminded" },
+                { "name": "confirmed", "value": "confirmed" }, { "name": "cancelled", "value": "cancelled" }, { "name": "late_cancel", "value": "late_cancel" },
+                { "name": "no_show", "value": "no_show" }, { "name": "done", "value": "done" }
+              ],
+              "removed": false
+            },
+            { "id": "calendar_event_id", "displayName": "calendar_event_id", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "string", "removed": false }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0028-4c00-8000-000000000028",
+      "name": "Repair Client",
+      "notes": "Same as Activate Client, for a run that died before it. Continue on error: the booking exists.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [3300, 320],
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "update",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Clients", "mode": "id" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $('Client').first().json.id }}",
+            "status": "={{ ['flagged', 'escalated'].includes($('Client').first().json.fields.status) ? $('Client').first().json.fields.status : 'active' }}"
+          },
+          "matchingColumns": ["id"],
+          "schema": [
+            { "id": "id", "displayName": "id", "required": false, "defaultMatch": true, "display": true, "type": "string", "readOnly": true, "removed": false },
+            {
+              "id": "status", "displayName": "status", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "options",
+              "options": [
+                { "name": "new", "value": "new" }, { "name": "active", "value": "active" },
+                { "name": "flagged", "value": "flagged" }, { "name": "escalated", "value": "escalated" }
+              ],
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0029-4c00-8000-000000000029",
+      "name": "Result Already",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [3520, 320],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9c0f0001-2009-4c00-8000-000000000009",
+              "name": "verdict",
+              "value": "={{ 'ALREADY_BOOKED ' + $('Decide').first().json.appt_id }}",
+              "type": "string"
+            },
+            {
+              "id": "9c0f0001-2010-4c00-8000-000000000010",
+              "name": "appt_id",
+              "value": "={{ $('Decide').first().json.appt_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0030-4c00-8000-000000000030",
+      "name": "Cancel Stray",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [1760, 0],
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "update",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $json.rec_id }}",
+            "status": "cancelled"
+          },
+          "matchingColumns": ["id"],
+          "schema": [
+            { "id": "id", "displayName": "id", "required": false, "defaultMatch": true, "display": true, "type": "string", "readOnly": true, "removed": false },
+            {
+              "id": "status", "displayName": "status", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "options",
+              "options": [
+                { "name": "pending", "value": "pending" }, { "name": "booked", "value": "booked" }, { "name": "reminded", "value": "reminded" },
+                { "name": "confirmed", "value": "confirmed" }, { "name": "cancelled", "value": "cancelled" }, { "name": "late_cancel", "value": "late_cancel" },
+                { "name": "no_show", "value": "no_show" }, { "name": "done", "value": "done" }
+              ],
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0031-4c00-8000-000000000031",
+      "name": "Result Stray",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [1980, 0],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9c0f0001-2011-4c00-8000-000000000011",
+              "name": "verdict",
+              "value": "={{ $('Decide').first().json.verdict }}",
+              "type": "string"
+            },
+            {
+              "id": "9c0f0001-2012-4c00-8000-000000000012",
+              "name": "appt_id",
+              "value": "={{ $('Decide').first().json.appt_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
       "id": "9c0f0001-0015-4c00-8000-000000000015",
       "name": "Mark Taken",
       "retryOnFail": true,
@@ -359,7 +619,7 @@
       "waitBetweenTries": 5000,
       "type": "n8n-nodes-base.airtable",
       "typeVersion": 2.2,
-      "position": [2420, 420],
+      "position": [3080, 180],
       "credentials": {
         "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
       },
@@ -400,7 +660,7 @@
       "notes": "check_availability also saves these slots as the client's new offer, so propose_booking accepts one of them next. Continue on error: the slot IS taken whatever happens here, so a failed lookup still answers SLOT_TAKEN (with no alternatives); check_availability's own failure reaches WF-6 from its own execution.",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [2640, 420],
+      "position": [3300, 180],
       "onError": "continueRegularOutput",
       "parameters": {
         "source": "database",
@@ -432,7 +692,7 @@
       "name": "Result Taken",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.5,
-      "position": [2860, 420],
+      "position": [3520, 180],
       "parameters": {
         "assignments": {
           "assignments": [
@@ -456,7 +716,11 @@
     {
       "id": "9c0f0001-0018-4c00-8000-000000000018",
       "name": "Create Event",
-      "notes": "NO retry, on purpose: a retry after a create that timed out but succeeded would put a duplicate event into the owner's real calendar. Do not add retryOnFail here. A failure fails the tool before the row is marked booked, and WF-6 reports it.",
+      "notes": "The event id is Decide.event_id, derived from appt_id, so Google refuses a second event for the same booking (409 duplicate). That makes the retry safe (a retry after a create that timed out but succeeded gets the 409) and stops two concurrent YES runs from making two events. Error output -> Own Event: if this booking's event is there, the row is repaired and the answer is ALREADY_BOOKED (no second owner message); if not, Own Check fails the tool (-> WF-6).",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
       "type": "n8n-nodes-base.googleCalendar",
       "typeVersion": 1.3,
       "position": [2420, 620],
@@ -472,7 +736,8 @@
         "useDefaultReminders": true,
         "additionalFields": {
           "summary": "={{ $('Decide').first().json.service_name + ' — ' + (String($('Client').first().json.fields.name || '').replace(/\\s+/g, ' ').trim().slice(0, 80) || $('Trigger').first().json.contact_id) }}",
-          "description": "={{ $('Decide').first().json.appt_id }}"
+          "description": "={{ $('Decide').first().json.appt_id }}",
+          "id": "={{ $('Decide').first().json.event_id }}"
         }
       }
     },
@@ -499,7 +764,7 @@
           "value": {
             "id": "={{ $('Decide').first().json.rec_id }}",
             "status": "booked",
-            "calendar_event_id": "={{ $('Create Event').first().json.id }}"
+            "calendar_event_id": "={{ $('Decide').first().json.event_id }}"
           },
           "matchingColumns": ["id"],
           "schema": [
@@ -524,10 +789,11 @@
     {
       "id": "9c0f0001-0020-4c00-8000-000000000020",
       "name": "Activate Client",
-      "notes": "new/active -> active. A flagged or escalated client keeps that status: a booking must not silently clear the owner's flag.",
+      "notes": "new/active -> active. A flagged or escalated client keeps that status: a booking must not silently clear the owner's flag. Continue on error: the booking already exists (event and booked row), so the client must still get BOOKED.",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
       "type": "n8n-nodes-base.airtable",
       "typeVersion": 2.2,
       "position": [2860, 620],
@@ -567,7 +833,7 @@
     {
       "id": "9c0f0001-0021-4c00-8000-000000000021",
       "name": "Replaces?",
-      "notes": "Task 10 connects the true branch to cancel_booking (cancel replaces_appt_id). Until then both branches go to Notify.",
+      "notes": "Task 10 connects the true branch to cancel_booking (cancel replaces_appt_id). Until then both branches go to Notify. The repair path (Own? -> Repair Booked -> Result Already) does not pass here: Task 10 must decide whether a repaired booking (an earlier run died after Create Event) still cancels replaces_appt_id.",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [3080, 620],
@@ -659,21 +925,38 @@
       "main": [
         [{ "node": "Result Reject", "type": "main", "index": 0 }],
         [{ "node": "Mark Expired", "type": "main", "index": 0 }],
-        [{ "node": "FreeBusy", "type": "main", "index": 0 }]
+        [{ "node": "FreeBusy", "type": "main", "index": 0 }],
+        [{ "node": "Cancel Stray", "type": "main", "index": 0 }]
       ]
     },
+    "Cancel Stray": { "main": [[{ "node": "Result Stray", "type": "main", "index": 0 }]] },
     "Mark Expired": { "main": [[{ "node": "Result Expired", "type": "main", "index": 0 }]] },
     "FreeBusy": { "main": [[{ "node": "Any Busy", "type": "main", "index": 0 }]] },
     "Any Busy": { "main": [[{ "node": "Taken?", "type": "main", "index": 0 }]] },
     "Taken?": {
       "main": [
-        [{ "node": "Mark Taken", "type": "main", "index": 0 }],
+        [{ "node": "Own Event", "type": "main", "index": 0 }],
         [{ "node": "Create Event", "type": "main", "index": 0 }]
       ]
     },
+    "Own Event": { "main": [[{ "node": "Own Check", "type": "main", "index": 0 }]] },
+    "Own Check": { "main": [[{ "node": "Own?", "type": "main", "index": 0 }]] },
+    "Own?": {
+      "main": [
+        [{ "node": "Repair Booked", "type": "main", "index": 0 }],
+        [{ "node": "Mark Taken", "type": "main", "index": 0 }]
+      ]
+    },
+    "Repair Booked": { "main": [[{ "node": "Repair Client", "type": "main", "index": 0 }]] },
+    "Repair Client": { "main": [[{ "node": "Result Already", "type": "main", "index": 0 }]] },
     "Mark Taken": { "main": [[{ "node": "Alternatives", "type": "main", "index": 0 }]] },
     "Alternatives": { "main": [[{ "node": "Result Taken", "type": "main", "index": 0 }]] },
-    "Create Event": { "main": [[{ "node": "Mark Booked", "type": "main", "index": 0 }]] },
+    "Create Event": {
+      "main": [
+        [{ "node": "Mark Booked", "type": "main", "index": 0 }],
+        [{ "node": "Own Event", "type": "main", "index": 0 }]
+      ]
+    },
     "Mark Booked": { "main": [[{ "node": "Activate Client", "type": "main", "index": 0 }]] },
     "Activate Client": { "main": [[{ "node": "Replaces?", "type": "main", "index": 0 }]] },
     "Replaces?": {

@@ -325,14 +325,14 @@
     {
       "id": "5d1f0a10-0017-4c00-8000-000000000017",
       "name": "Pick Ids",
-      "notes": "delete_events_by_id is called only by tests/cleanup.sh, with the calendar_event_id values of Appointments rows whose client_id starts with C-test (booking events are titled '<service> — <client>', so the [TEST] sweep never reaches them). Only those ids are deleted, and only if the event still exists.",
+      "notes": "delete_events_by_id is called only by tests/cleanup.sh, with the calendar_event_id values of Appointments rows whose client_id starts with C-test (booking events are titled '<service> — <client>', so the [TEST] sweep never reaches them). Only those ids are deleted, only if the event still exists, and only if its description is an appt_id (^A-[0-9A-Z]+$).",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [920, 700],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// event_ids: comma-separated Google event ids. Anything that is not a plain event id fails the run (the delete node puts the id into the request path unencoded).\nconst ids = [...new Set(String($('Trigger').first().json.event_ids || '').split(',').map(s => s.trim()).filter(Boolean))];\nfor (const id of ids) if (!/^[A-Za-z0-9_-]{1,1024}$/.test(id)) throw new Error('test-fixtures: not a Google event id: ' + JSON.stringify(id.slice(0, 80)));\n// Keep only requested ids that still exist in the calendar; an id that is already gone is skipped, not an error.\nconst existing = new Set($input.all().map(i => i.json && i.json.id).filter(Boolean));\nconst hits = ids.filter(id => existing.has(id));\nreturn hits.length ? hits.map(id => ({ json: { id, requested: ids.length } })) : [{ json: { none: true, requested: ids.length } }];"
+        "jsCode": "// event_ids: comma-separated Google event ids. Anything that is not a plain event id fails the run (the delete node puts the id into the request path unencoded).\nconst ids = [...new Set(String($('Trigger').first().json.event_ids || '').split(',').map(s => s.trim()).filter(Boolean))];\nfor (const id of ids) if (!/^[A-Za-z0-9_-]{1,1024}$/.test(id)) throw new Error('test-fixtures: not a Google event id: ' + JSON.stringify(id.slice(0, 80)));\n// Keep only requested ids that still exist in the calendar AND whose description is an appt_id (^A-[0-9A-Z]+$, what\n// confirm_booking writes): defence in depth for the test webhook, so this action can only ever reach booking events.\n// An id that is gone, or whose event is not a booking, is skipped (DELETED n of m with n < m), not an error.\nconst existing = new Map($input.all().map(i => i.json || {}).filter(e => e.id).map(e => [e.id, String(e.description || '')]));\nconst hits = ids.filter(id => existing.has(id) && /^A-[0-9A-Z]+$/.test(existing.get(id)));\nreturn hits.length ? hits.map(id => ({ json: { id, requested: ids.length } })) : [{ json: { none: true, requested: ids.length } }];"
       }
     },
     {

@@ -25,7 +25,7 @@ while IFS=$'\t' read -r name tool input expected setup teardown || [ -n "${name:
     else out="NO_OUTPUT"; fi
     if [[ "$out" =~ $expected ]]; then res="PASS  $name  -> $out"; ok=1; else res="FAIL  $name  -> got: $out | expected: /$expected/"; ok=0; fi
   else res="FAIL  $name  -> setup failed"; ok=0; fi
-  if [ -n "$teardown" ] && ! eval "$teardown" > /dev/null; then res="FAIL  $name  -> teardown failed (was: ${res%%  ->*})"; ok=0; fi
+  if [ -n "$teardown" ] && ! eval "$teardown" > /dev/null; then res="FAIL  $name  -> teardown failed (was: $res)"; ok=0; fi
   echo "$res"; if [ "$ok" -eq 1 ]; then pass=$((pass+1)); else fail=$((fail+1)); fi
 done < <(sed "s/\r$//; s/\t/\t$M/g" tests/tool-cases.tsv)
 echo "passed $pass, failed $fail"

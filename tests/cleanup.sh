@@ -26,7 +26,9 @@ rc=0
 test_appts="REGEX_MATCH({client_id}, '^C-test')"
 event_ids=$(at_list Appointments "AND($test_appts, {calendar_event_id} != '')" | jq -r '[.records[].fields.calendar_event_id | select(type == "string" and length > 0)] | unique | join(",")')
 if [ -n "$event_ids" ]; then
-  if out=$(tests/run-case.sh test-fixtures "$(jq -nc --arg ids "$event_ids" '{action: "delete_events_by_id", event_ids: $ids}')" 2>&1) && verdict=$(printf '%s' "$out" | jq -er '.verdict | select(type == "string" and startswith("DELETED "))'); then
+  # "DELETED n of m" with n < m is a failure too: an event that is already gone or is not a booking event (test-fixtures
+  # deletes only events whose description is an appt_id) means something else touched it; keep the rows and look.
+  if out=$(tests/run-case.sh test-fixtures "$(jq -nc --arg ids "$event_ids" '{action: "delete_events_by_id", event_ids: $ids}')" 2>&1) && verdict=$(printf '%s' "$out" | jq -er '.verdict | select(type == "string" and (capture("^DELETED (?<n>[0-9]+) of (?<m>[0-9]+)$") | .n == .m))'); then
     echo "booking events: ok $verdict"
     at_delete_where Appointments "$test_appts"
   else

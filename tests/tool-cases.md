@@ -56,8 +56,9 @@ Booking events are cleaned up by id. `confirm_booking` titles its events `<servi
 way). So, before the test Appointments rows are deleted, `tests/cleanup.sh` collects the `calendar_event_id` of every
 Appointments row whose `client_id` starts with `C-test` and calls `test-fixtures` `delete_events_by_id` with exactly
 those ids; it prints `booking events: ok DELETED n of m`. The ids only ever come from `C-test` rows, so a real
-booking cannot be reached. If that call fails, the rows that carry an event id are kept (the next cleanup still
-finds their events) and cleanup exits 1. This step runs even with `--no-calendar` whenever such ids exist, because
+booking cannot be reached. If that call fails, or answers `DELETED n of m` with n < m (an event that is already gone,
+or whose description is not an appt_id, means something else touched it), the rows that carry an event id are kept
+(the next cleanup still finds their events) and cleanup exits 1. This step runs even with `--no-calendar` whenever such ids exist, because
 deleting the rows first would lose the ids for good; normally only a confirm_* case leaves them.
 
 Empty `setup` or `teardown` columns are written as empty between tabs. Tab characters
@@ -77,8 +78,9 @@ Test clients use a `client_id` with the prefix `C-test`; test calendar events ha
 Shell helpers sourced by the scripts: `at_list TABLE FORMULA`, `at_create TABLE FIELDS_JSON`,
 `at_update TABLE REC_ID FIELDS_JSON`, `at_delete TABLE REC_ID`, `at_delete_where TABLE FORMULA`,
 `at_rec_id TABLE FORMULA` (record id of the first match, fails when there is none) and
-`at_test_client_with_offer N SLOT_ISO` (recreates client `C-test-N`, Telegram chat `90000000N`, name `Test C-test-N`,
-status `new`, whose last offer, made just now, is exactly that slot).
+`at_test_client_with_offer N SLOT_ISO [SERVICE_ID]` (recreates client `C-test-N`, Telegram chat `90000000N`, name
+`Test C-test-N`, status `new`, whose last offer, made just now, is exactly that slot for that service, default `botox`,
+in check_availability's format `{"service_id":"botox","slots":["<iso>"]}`).
 
 ## `tests/lib/n8n.sh`
 
@@ -87,6 +89,12 @@ status `new`, whose last offer, made just now, is exactly that slot).
 `bk_propose N SLOT_ISO` (propose_booking botox at that slot for `tg:90000000N`, must answer `PENDING A-...`) and
 `bk_confirm N` (confirm_booking for `tg:90000000N`, must answer `BOOKED A-...`). Each fails unless the tool gave that
 verdict, so a setup chained with `&&` stops at the first step that did not work.
+
+Also: `appt_event_id APPT_ID` (the Google event id confirm_booking gives that booking: `appt` + the hex of the appt_id
+bytes), `execs_since WORKFLOW ISO` (how many executions of that workflow started at or after that instant, newest 50;
+the cases count owner notifications with `execs_since notify_owner "$t0"`) and `cal_sweep_day DATE` (deletes that
+day's events whose description is an appt_id, through `delete_events_by_id`; the safety net of `confirm_repair` and
+`confirm_concurrent`, which can leave an event that no row points at when they FAIL).
 
 ## Cases
 
@@ -103,10 +111,11 @@ Cases are appended to the tsv together with the tools they test (tasks 7-12).
 | `create_busy` | creates `[TEST] busy` (description `test-fixture`) from `start_iso` to `end_iso` | `BUSY_CREATED <event id>` |
 | `list_events` | lists every event between `start_iso` and `end_iso`; also returns `events` (id, summary, description, start, end) | `EVENTS <n>` |
 | `delete_test_events` | deletes every event whose title starts with `[TEST]`, from a year ago to ten years ahead | `DELETED <n>` |
-| `delete_events_by_id` | deletes the events whose ids are in `event_ids` (comma-separated); only `tests/cleanup.sh` calls it, with the ids of test bookings | `DELETED <n> of <m>` |
+| `delete_events_by_id` | deletes the events whose ids are in `event_ids` (comma-separated) and whose description is an appt_id (`^A-[0-9A-Z]+$`); only `tests/cleanup.sh` and `cal_sweep_day` call it, with the ids of test bookings | `DELETED <n> of <m>` |
 
-`delete_events_by_id` first lists the calendar over the same window and deletes only requested ids that still exist,
-so an id whose event is already gone is skipped instead of failing (deleting it again is HTTP 410 `Resource has been
+`delete_events_by_id` first lists the calendar over the same window and deletes only requested ids that still exist
+and whose description is an appt_id (what confirm_booking writes; defence in depth for the test webhook, so it can only
+ever reach booking events). Anything else is skipped and shows as n < m. An id whose event is already gone is skipped instead of failing (deleting it again is HTTP 410 `Resource has been
 deleted`, and with continue-on-fail the node keeps only the generic message, so a 410 could not be told apart from a
 real error). An id that is not a plain Google event id (`[A-Za-z0-9_-]`) fails the call: the delete node puts the id
 into the request path unencoded. Checked live: create a `[TEST]` event, `DELETED 1 of 1`, the same id again
@@ -124,6 +133,7 @@ test dates (the cases use 2030): the brief's -30/+60 days missed them. With noth
 | `fixtures_created_event_is_listed` | a created event shows up in `list_events` (`EVENTS 1`) |
 | `fixtures_delete_removes_all` | two events are deleted (`DELETED 2`) and the day is empty afterwards |
 | `fixtures_delete_none` | the zero-events case: `DELETED 0`, no error |
+| `fixtures_by_id_skips_non_booking` | a `[TEST]` busy event (description `test-fixture`) passed to `delete_events_by_id` is NOT deleted (`DELETED 0 of 1`, still listed); the teardown removes it with the `[TEST]` sweep (`DELETED 1`) |
 
 `tests/cleanup.sh` calls `delete_test_events` last and exits 1 if that call fails (`--no-calendar` skips it).
 `Settings`, `List Test Events`, `List Events`, `Delete Each`, `List For Ids` and `Delete By Id` retry once (2 tries, 5 s apart); `Create Busy` deliberately
@@ -302,7 +312,9 @@ branches (query failed, junk rows, huge rows, hostile text) were checked by runn
 `check_availability(contact_id, service_id, date, part_of_day?)` is the first calendar-backed tool. It returns `FREE <iso>, ...` (up to 6 slots of the
 requested day), `NONE nearest: <iso>, <iso>, <iso>` (the first slot of each of the next days that has one, within 7 days), `NONE no slots in the next 7 days`
 or `UNKNOWN_SERVICE <id> (<name>, <min> min); ...`, and writes the slots it offered to `Clients.last_offer_json` / `last_offer_at`, which is the only thing
-`propose_booking` will accept. The dates are in the future on purpose: 2030-01-07 is a Monday (10:00-19:00 in the live `working_hours`), 2030-01-13 a Sunday
+`propose_booking` will accept. `last_offer_json` is `{"service_id":"<id>","slots":["<iso>",...]}`: the slots are sized to that service, so
+`propose_booking` accepts them only for that service. Invalid-input verdicts (`UNKNOWN_SERVICE`, invalid date or part of day) save
+`{"service_id":"","slots":[]}`. The dates are in the future on purpose: 2030-01-07 is a Monday (10:00-19:00 in the live `working_hours`), 2030-01-13 a Sunday
 (closed). 2030-01-06, the date the fixtures cases use, is a Sunday, so these cases do not use it.
 
 | case | why |
@@ -311,9 +323,9 @@ or `UNKNOWN_SERVICE <id> (<name>, <min> min); ...`, and writes the slots it offe
 | `avail_busy_excluded` | the setup deletes old `[TEST]` events and creates a busy block 14:00-15:00 on the Monday; for an afternoon Botox the answer is exactly `12:00, 12:30, 13:00, 13:30, 15:00, 15:30`: 13:30 stays (it ends at 14:00), 14:00 and 14:30 are gone, 15:00 is back. The teardown deletes the `[TEST]` events |
 | `avail_morning_only` | HydraFacial (60 min), morning: exactly `10:00, 10:30, 11:00`. A morning visit must END by 12:00, so 11:30 is not offered |
 | `avail_closed_day` | a Sunday gives `NONE nearest:` with 10:00 on the following Monday, Tuesday and Wednesday |
-| `avail_saves_offer` | with a client row `C-test-1` on file, the teardown reads the row back: `last_offer_json` is a JSON list of 6 slots of that day and `last_offer_at` is set (prints `offer_saved`); then `tests/cleanup.sh --no-calendar` removes the row, and a failure on either side fails the case |
+| `avail_saves_offer` | with a client row `C-test-1` on file, the teardown reads the row back: `last_offer_json` is `{"service_id":"botox","slots":[...]}` with 6 slots of that day and `last_offer_at` is set (prints `offer_saved`); then `tests/cleanup.sh --no-calendar` removes the row, and a failure on either side fails the case |
 | `avail_pod_anytime` | `part_of_day` `" Anytime "` (the model passes things like this) is trimmed and treated as "no filter": the first 6 slots of the day, 10:00 to 12:30 |
-| `avail_pod_invalid` | `part_of_day` `brunch` gives `NONE invalid part_of_day, expected morning\|afternoon\|evening` instead of a false "no slots", and (like the other invalid-input verdicts) saves `[]`: the setup puts a real offer on the client row, the teardown asserts `last_offer_json` is now `[]` (prints `offer_cleared`) |
+| `avail_pod_invalid` | `part_of_day` `brunch` gives `NONE invalid part_of_day, expected morning\|afternoon\|evening` instead of a false "no slots", and (like the other invalid-input verdicts) saves the empty offer: the setup puts a real botox offer on the client row, the teardown asserts `last_offer_json` is now `{"service_id":"","slots":[]}` (prints `offer_cleared`) |
 
 No filter: empty, `any`, `anytime`, `null`, `none` (after trim and lower-casing).
 
@@ -328,15 +340,22 @@ Google Calendar Availability, output format Booked Slots (n8n 2.41.5, node 1.3):
 `propose_booking(contact_id, service_id, start_iso, name?, channel?, replaces_appt_id?)` is the only booking tool the
 agent has, and all it can create is a `pending` Appointments row. It returns `PENDING <appt_id>` (plus the field
 `appt_id`), `SLOT_NOT_OFFERED`, `UNKNOWN_SERVICE <id> (<name>, <min> min); ...` or `NO_CLIENT_ROW`. The slot must be
-one that `check_availability` offered THIS client (`Clients.last_offer_json`, compared as instants) no more than
-`Settings.pending_ttl_min` minutes ago (`last_offer_at`); anything else, including an unreadable `start_iso` or offer, is
-`SLOT_NOT_OFFERED`. Side effects of `PENDING`: every earlier `pending` row of the client becomes `cancelled` (one live
+one that `check_availability` offered THIS client FOR THIS SERVICE (`Clients.last_offer_json` is
+`{"service_id","slots"}`; its `service_id` must equal the requested service, the slots are compared as instants) no
+more than `Settings.pending_ttl_min` minutes ago (`last_offer_at`); anything else, including an unreadable `start_iso`
+or offer and the pre-fix plain-array offer format, is `SLOT_NOT_OFFERED`. Without the service check the agent could get
+Botox (30 min) offered at the last slot before closing and then propose Microneedling (60 min) there, and the booking
+would run past closing (or past noon for a morning slot). Side effects of `PENDING`: every earlier `pending` row of the client becomes `cancelled` (one live
 proposal per client); `name` (trimmed, control characters removed, at most 80 characters) is written to
 `Clients.name` only when the row has none; the new row carries `client` and `service` links, `start_iso`/`end_iso` in
 the Settings timezone, `start_dt` in UTC, `created_via` (`tg`, `wa`, `test` or `owner`, otherwise `tg`),
 `pending_expires_at` = now + `pending_ttl_min`, and `replaces_appt_id`. The calendar is not touched.
+`replaces_appt_id` is stored only when it names an Appointments row of THIS client in status
+`booked`/`reminded`/`confirmed` whose start is still ahead (read by `Client Appts`); anything else is stored as `''`,
+so the cancel of the replaced visit (Task 10) can never reach another client's visit or a past one.
 
-Nodes: `Settings` -> `Client Formula` (the validated one) -> `Client` -> `Services` (`{active}=1`) -> `Validate` ->
+Nodes: `Settings` -> `Client Formula` (the validated one) -> `Client` -> `Client Appts` (the client's live visits) ->
+`Services` (`{active}=1`) -> `Validate` ->
 `Valid?`; false -> `Result Reject`; true -> `Old Pending` -> `Has Id?` -> `Cancel Old` (one update per old row) ->
 `Set Name?` -> `Update Name` (only with a name to set) -> `Appt Fields` -> `Create Appt` -> `Result`. `Set Name?` runs
 once (`executeOnce`) and `Appt Fields` turns `Validate.fields` into the single item that `Create Appt` maps
@@ -356,6 +375,12 @@ All propose cases use Monday 2030-01-07 (2030-01-06 is a Sunday). Each has its o
 | `propose_unknown_service` | `tattoo` gives `UNKNOWN_SERVICE` with the active services; no row |
 | `propose_ok` | the client row has no name; the teardown checks the one new row field by field (`pending`, botox, 12:00-12:30 `+01:00`, `start_dt` `11:00:00.000Z`, `created_via` `test`, `client` linked to the client's record, a `service` link, `pending_expires_at` set, its `appt_id` equal to the verdict and to `$raw.appt_id`) and that `Clients.name` is now `Anna Test` |
 | `propose_replaces_pending` | two earlier pending rows of the same client become `cancelled`, a pending row of ANOTHER client stays `pending`, exactly one new pending row exists (4 rows in all), and the existing name `Test C-test-1` is not overwritten by the `name` passed in |
+| `propose_other_service` | end to end with the real `check_availability`: Botox offered for Monday evening (`FREE 17:00, 17:30, 18:00, 18:30`), then Microneedling (60 min) at 18:30, which would end at 19:30, after closing: `SLOT_NOT_OFFERED`, no row |
+| `propose_after_real_offer` | the same real offer, Botox at 18:30: `PENDING`, the row ends at 19:00 (the two real tools agree on the new offer format) |
+| `propose_old_format_offer` | an offer in the pre-fix plain-array format `["...12:00..."]` is no offer: `SLOT_NOT_OFFERED`, no row |
+| `propose_replaces_own` | `replaces_appt_id` naming the client's own future `booked` visit is stored on the new pending row |
+| `propose_replaces_foreign` | `replaces_appt_id` naming ANOTHER client's future `booked` visit is stored as `''` |
+| `propose_replaces_past` | `replaces_appt_id` naming the client's own `booked` visit in the past (2026-06-01) is stored as `''` |
 
 ### confirm_booking
 
@@ -363,29 +388,56 @@ All propose cases use Monday 2030-01-07 (2030-01-06 is a Sunday). Each has its o
 `appt_id` and `first_visit`), `SLOT_TAKEN` (plus `alternatives`), `EXPIRED`, `NO_PENDING` or `ALREADY_BOOKED <appt_id>`
 (plus `appt_id`; `NO_PENDING` carries `appt_id` = `""`). `Decide` takes the newest `pending` row of the client: none
 and a future `booked`/`reminded`/`confirmed` row exists -> `ALREADY_BOOKED` with the earliest one; none at all ->
-`NO_PENDING`; `pending_expires_at` passed -> the row becomes `cancelled` and the answer is `EXPIRED`. Otherwise
-`FreeBusy` (Google Calendar Availability, Booked Slots) reads the calendar for exactly that slot and `Any Busy` checks
-for a real overlap:
+`NO_PENDING`; the pending row starts exactly when one of the client's `booked`/`reminded`/`confirmed` visits starts (a
+stray, which a `Create Appt` retry in propose_booking can leave) -> the stray becomes `cancelled` (`Cancel Stray`) and
+the answer is `ALREADY_BOOKED` with the booked visit; `pending_expires_at` passed -> the row becomes `cancelled` and the
+answer is `EXPIRED`. Otherwise `Decide` derives the booking's Google event id from its `appt_id` (`event_id` =
+`appt` + the hex of the appt_id bytes: Google ids are base32hex `0-9a-v`, 5-1024 characters; `appt_event_id` in
+`tests/lib/n8n.sh` computes the same), `FreeBusy` (Google Calendar Availability, Booked Slots) reads the calendar for
+exactly that slot and `Any Busy` checks for a real overlap:
 
-- taken: the pending row becomes `cancelled`, `check_availability` is called for the same service and day with no
+- taken: `Own Event` lists the events of that slot and `Own Check` looks for this booking's own `event_id`. If it is
+  there, the booking already exists (a concurrent YES, or an earlier run that died after `Create Event`): `Repair Booked`
+  sets the row `booked` with that `calendar_event_id`, `Repair Client` does what `Activate Client` does, and the answer
+  is `ALREADY_BOOKED <appt_id>` with no owner message. If it is not there, the slot is really taken: the pending row
+  becomes `cancelled`, `check_availability` is called for the same service and day with no
   part-of-day filter (which also saves its slots as the client's new offer, so `propose_booking` accepts one of them
   next), and `alternatives` holds its first three slots as `Mon, Jan 7, 10:00 AM; ...` in the Settings timezone (empty
   when that lookup fails or finds nothing; the lookup continues on error, the slot is taken either way);
-- free: `Create Event` writes `<service name> — <client name>` (description = `appt_id`, no attendees, default
-  reminders) into `Settings.calendar_id`, `Mark Booked` sets `status = booked` and `calendar_event_id`,
+- free: `Create Event` writes `<service name> — <client name>` with the id `event_id` (description = `appt_id`, no
+  attendees, default reminders) into `Settings.calendar_id`. If Google refuses it (a second insert of the same id is
+  refused; the node keeps only the generic message `Your request is invalid or could not be processed by the service`),
+  the error output goes to the same `Own Event` / `Own Check`: own event there -> the repair above (`ALREADY_BOOKED`, no
+  second owner message); not there -> the create really failed and `Own Check` fails the tool (-> WF-6) with the create
+  error in the message. On success `Mark Booked` sets `status = booked` and `calendar_event_id`,
   `Activate Client` sets the client to `active` (a `flagged` or `escalated` client keeps that status), `Replaces?`
   (its true branch goes to `cancel_booking` in Task 10; until then both branches go on), `Notify` sends the owner
   `✅ New booking: <name> (<contact>) — <service> — Mon, Jan 7, 12:00 PM — <appt_id>`, and `Result Booked` answers.
 
-`first_visit` is true when the client has no `booked`, `reminded`, `confirmed` or `done` row. `Create Event` has no
-retry on purpose (its `notes` say so): a retry after a create that timed out but succeeded would put a duplicate event
-into the owner's real calendar. Every other Airtable and Google node retries once (2 tries, 5 s). `Notify` continues on
-error: by then the booking exists in the calendar and in Airtable, so the client must get `BOOKED`. `Decide` throws on a
-missing Settings row, `calendar_id` or timezone and on a pending row whose times do not parse, before anything is
+`first_visit` is true when the client has no `booked`, `reminded`, `confirmed` or `done` row. Because the event id is
+deterministic, `Create Event` now retries like every other Airtable and Google node (2 tries, 5 s): a retry after a create
+that timed out but succeeded is refused by Google and ends in the repair path, not in a second event. (In that one case
+the run answers `ALREADY_BOOKED` and sends no owner message although it made the booking; the event and the row are
+right.) `Notify` and `Activate Client` (and `Repair Client`) continue on error: by then the booking exists in the
+calendar and in Airtable, so the client must get `BOOKED`. `Decide` throws on a missing Settings row, `calendar_id` or
+timezone, on a pending row whose times do not parse and on an appt_id that is not a plain id, before anything is
 written; `Any Busy` throws on a busy interval it cannot read.
 
-Every `BOOKED` sends the owner a real Telegram message (`confirm_ok`, `confirm_again`, `confirm_slot_taken`,
-`confirm_returning_client`: four per full run). Each confirm case builds its own state through the real tools
+Checked live (fix round 1): two `confirm_booking` calls for one pending row, 33 ms apart, both passed `FreeBusy`; one
+created the event and notified the owner, the other got Google's refusal on `Create Event`, found its own event and
+answered `ALREADY_BOOKED` (one event, one booked row, one `notify_owner` run). Google keeps a deleted event's id
+reserved: after the booking's event was deleted and the row reset to `pending`, `Create Event` was refused, `Own Event`
+listed nothing (deleted events are not listed) and `Own Check` failed the tool with `confirm_booking: Create Event failed
+for A-... and no event appt... is in the calendar: ...`, which is the intended loud failure.
+
+Residual risk, not handled: two DIFFERENT clients confirming the same slot at the same instant. Their bookings have
+different event ids, so both inserts succeed if both runs pass `FreeBusy` before either event exists. At this clinic's
+volume (a pending row lives `pending_ttl_min` minutes, and two clients must have been offered and proposed the same slot
+and answer YES within the same few seconds) this is rare; `confirm_slot_taken` covers the sequential case.
+
+Every `BOOKED` sends the owner a real Telegram message (`confirm_ok`, and the setups of `confirm_again`,
+`confirm_slot_taken`, `confirm_returning_client`, `confirm_stray_pending`, `confirm_repair`, plus the one booking of
+`confirm_concurrent`: seven per full run). Each confirm case builds its own state through the real tools
 (`at_test_client_with_offer`, `bk_propose`, `bk_confirm`), so it can run alone; the cases that book start by asserting
 that Monday 2030-01-07 has no events, and every confirm case ends with the full `tests/cleanup.sh`, which deletes the
 booking events by id.
@@ -393,11 +445,19 @@ booking events by id.
 | case | why |
 |---|---|
 | `confirm_no_pending` | a client with no appointment at all: `NO_PENDING` and `appt_id` `""` |
-| `confirm_ok` | after `propose_booking` for 12:00: `BOOKED A-...` with `first_visit` true; the row is `booked` with a `calendar_event_id`, the client is `active`, the day has exactly one event whose id is that `calendar_event_id`, whose title is `Botox — Test C-test-1` and whose description is the `appt_id`. After the cleanup the day is empty again (`EVENTS 0`): the proof that booking events are removed by id |
+| `confirm_ok` | after `propose_booking` for 12:00: `BOOKED A-...` with `first_visit` true; the row is `booked` with a `calendar_event_id`, the client is `active`, the day has exactly one event whose id is that `calendar_event_id` and equals `appt_event_id <appt_id>`, which runs 12:00-12:30 `+01:00`, whose title is `Botox — Test C-test-1` and whose description is the `appt_id`. After the cleanup the day is empty again (`EVENTS 0`): the proof that booking events are removed by id |
 | `confirm_again` | the setup already booked the slot; a second YES is `ALREADY_BOOKED` with the booked `appt_id` (verdict and field), and the day still has exactly one event |
 | `confirm_expired` | a pending row whose `pending_expires_at` is in 2020: `EXPIRED`, the row is `cancelled`, no event |
 | `confirm_slot_taken` | two clients, one slot: both proposed 12:00, client 1 confirmed first; client 2 gets `SLOT_TAKEN` with `alternatives` exactly `Mon, Jan 7, 10:00 AM; Mon, Jan 7, 10:30 AM; Mon, Jan 7, 11:00 AM`, its row is `cancelled`, client 1's stays `booked`, client 2's new offer is the six free slots without 12:00, and the day has one event, not two |
 | `confirm_returning_client` | a client with a `done` visit in 2026 and status `escalated`: `BOOKED` with `first_visit` false, and the status stays `escalated` |
+| `confirm_other_client_pending` | only client 1 has a pending row; client 2 confirms: `NO_PENDING` with `appt_id` `""`, client 1's row is still `pending` with no event id, no event |
+| `confirm_stray_pending` | client 1 is booked at 12:00 and a stray pending row `A-TEST-STRAY` starts at 12:00 too: `ALREADY_BOOKED` with the BOOKED visit's appt_id (not `SLOT_TAKEN`), the stray is `cancelled`, still one event |
+| `confirm_repair` | the "event created, row not marked" state: after a real booking the row is reset to `pending` with no `calendar_event_id`; confirm answers `ALREADY_BOOKED <appt_id>`, the row is `booked` again with the event's id (`appt_event_id`), the day still has one event, and no `notify_owner` run started since the reset (`execs_since`). It goes through `FreeBusy` (busy) -> `Own Event` -> repair |
+| `confirm_concurrent` | the setup starts one `confirm_booking` in the background and the case fires a second at once, for the same pending row: the two verdicts are exactly `BOOKED X` and `ALREADY_BOOKED X`, one booked row whose `calendar_event_id` is `appt_event_id X`, one event, and exactly one `notify_owner` run since the setup. Which run wins varies, so the case's own regex accepts both |
+
+`confirm_repair` and `confirm_concurrent` end with `cal_sweep_day 2030-01-07` after the cleanup: when they fail (as they
+did against the pre-fix workflow, which double-booked), an event can be left that no row points at, and the cleanup by id
+cannot find it.
 
 ### Why confirm_booking is not an agent tool
 
