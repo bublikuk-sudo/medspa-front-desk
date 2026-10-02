@@ -27,7 +27,7 @@ out=$(printf '%s' "$wf" | jq --slurpfile ids deploy/workflow-ids.json --slurpfil
   ($ids[0] | to_entries | map({key: .value, value: ("WFID:" + .key)}) | from_entries) as $rev
   | (($at[0].base // "") as $b | (if ($b|type)=="string" and ($b|length)>0 then [{key: $b, value: "ATBASE"}] else [] end)
      + (($at[0].tables // {}) | to_entries | map({key: .value, value: ("ATTBL:" + .key)})) | from_entries) as $atrev
-  | {name, nodes, connections, settings: ((.settings // {}) | {executionOrder, saveManualExecutions, errorWorkflow} | with_entries(select(.value != null)))}
+  | {name, nodes, connections, settings: ((.settings // {}) | {executionOrder, saveManualExecutions, errorWorkflow} | with_entries(select(.value != null and .value != "")))}
   | .settings.errorWorkflow |= (if . then ($rev[.] // .) else empty end)
   | walk(if type=="object" and (.credentials|type)=="object" then .credentials |= map_values(.id = "CRED") else . end)
   | walk(if type=="object" and .__rl==true and (.value|type)=="string"

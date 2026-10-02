@@ -24,6 +24,9 @@ f="$1"; name=$(jq -r .name "$f")
 # settings.errorWorkflow = WFID:<x> with <x> not yet in workflow-ids.json (the first push-all pass, before WF-6 exists)
 # would make every other WFID: resolution below fatal. Drop the setting instead, but LOUDLY: a workflow pushed
 # without its error handler is silently unmonitored. scripts/push-all.sh's second pass re-pushes with the id known.
+# NB: PUT /workflows/{id} MERGES settings: leaving errorWorkflow out of the body keeps the old value (observed on
+# 2.41.5). So "no error workflow" is sent explicitly as "" (the jq below); without that a workflow whose file
+# dropped the setting (notify_owner) would silently keep its old handler.
 drop_ew=false
 ew=$(jq -r '.settings.errorWorkflow // empty' "$f")
 if [[ "$ew" == WFID:* ]] && ! jq -e --arg k "${ew#WFID:}" 'has($k)' deploy/workflow-ids.json > /dev/null; then
@@ -39,7 +42,7 @@ body=$(jq --argjson dropew "$drop_ew" --arg waid "${WHATSAPP_PHONE_NUMBER_ID:-}"
              elif (s|type)=="string" and (s|startswith("ATTBL:")) then ($at[0].tables[s[6:]] // error("unknown table " + s))
              else s end;
   {name, nodes, connections, settings: (.settings // {})}
-  | if $dropew then del(.settings.errorWorkflow) else . end
+  | if $dropew or (.settings.errorWorkflow == null) then .settings.errorWorkflow = "" else . end
   | walk(if type=="object" and (.credentials|type)=="object"
          then .credentials |= with_entries(.value.id = ($creds[0][.value.name] // error("unknown credential " + .value.name)))
          else . end)

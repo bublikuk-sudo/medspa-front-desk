@@ -278,9 +278,6 @@
     {
       "id": "5e5d0001-0010-4c00-8000-000000000010",
       "name": "Haiku",
-      "retryOnFail": true,
-      "maxTries": 2,
-      "waitBetweenTries": 5000,
       "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
       "typeVersion": 1.6,
       "position": [

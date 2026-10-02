@@ -49,6 +49,8 @@ services:
       N8N_RUNNERS_ENABLED: "true"
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
       PUBLIC_BASE_URL: https://${N8N_HOST}
+      # Telegram chat id of the owner for the Airtable-free alert path (notify_owner, node Direct Telegram)
+      OWNER_TELEGRAM_CHAT_ID: ${OWNER_TELEGRAM_CHAT_ID}
     volumes:
       - n8n_data:/home/node/.n8n
 

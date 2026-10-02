@@ -231,9 +231,6 @@
     {
       "id": "4b0e0016-0009-4c00-8000-000000000009",
       "name": "Embeddings",
-      "retryOnFail": true,
-      "maxTries": 2,
-      "waitBetweenTries": 5000,
       "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
       "typeVersion": 1.2,
       "position": [1880, 500],
