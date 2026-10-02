@@ -18,16 +18,32 @@
       }
     },
     {
+      "id": "e1a10015-0001-4c00-8000-000000000015",
+      "name": "WhatsApp Trigger",
+      "notes": "Meta WhatsApp Cloud API inbound. Activation registers the app-level webhook subscription itself (POST /<App ID>/subscriptions: this node's Production URL, verify token = this node's id, field messages) and answers Meta's hub.challenge GET. The node checks X-Hub-Signature-256 against the App Secret and, on a mismatch, returns nothing, so no execution starts. One WhatsApp Trigger per Meta app: deactivating this workflow deletes the app's whatsapp_business_account subscription. Keep this node id and webhookId fixed: the id is the verify token.",
+      "type": "n8n-nodes-base.whatsAppTrigger",
+      "typeVersion": 1,
+      "position": [0, 600],
+      "webhookId": "6f1e5b15-0d1a-4c13-9a13-0000000f0015",
+      "credentials": {
+        "whatsAppTriggerApi": { "id": "CRED", "name": "MedSpa WhatsApp Trigger" }
+      },
+      "parameters": {
+        "updates": ["messages"],
+        "options": {}
+      }
+    },
+    {
       "id": "e1a10013-0002-4c00-8000-000000000002",
       "name": "Normalize",
-      "notes": "Returns [] (the run ends) for anything that is not a private Telegram chat or a WhatsApp message: groups, WhatsApp status callbacks, unknown bodies. Never emits an empty contact_id.",
+      "notes": "Returns [] (the run ends) for anything that is not a private Telegram chat or a WhatsApp message: groups, WhatsApp status callbacks and other fields, a sender that is not 7-15 digits, unknown bodies. A non-text WhatsApp message keeps its contact with text empty (Send Non-Text, like a Telegram sticker). WhatsApp Trigger items are {...change.value, field}; only the first item of a run is read. Never emits an empty contact_id.",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [220, 400],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const j = $input.first().json;\nif (j.message) {  // Telegram update\n  const m = j.message;\n  // Private chats only: in a group chat.id is the group, not a client, and the bot must not answer there.\n  if (!m.chat || m.chat.type !== 'private') return [];\n  return [{ json: { channel: 'tg', contact_id: 'tg:' + m.chat.id, text: (m.text || '').trim(), raw_name: [m.from?.first_name, m.from?.last_name].filter(Boolean).join(' ') } }];\n}\n// Meta WhatsApp Cloud API (Task 15): the webhook body is entry[0].changes[0].value; the node may hand it over in $json or in $json.body\nconst meta = (j.entry ? j : (j.body && j.body.entry ? j.body : null));\nif (meta) {\n  const v = meta.entry?.[0]?.changes?.[0]?.value || {};\n  const m = v.messages?.[0];\n  if (!m) return [];  // status callback (statuses: sent/delivered/read): start nothing\n  return [{ json: { channel: 'wa', contact_id: 'wa:+' + m.from, text: (m.text?.body || '').trim(), raw_name: v.contacts?.[0]?.profile?.name || '' } }];\n}\n// Unknown channel: end the run; an item with an empty contact_id must never go on.\nreturn [];"
+        "jsCode": "const j = $input.first().json;\nif (j.message) {  // Telegram update\n  const m = j.message;\n  // Private chats only: in a group chat.id is the group, not a client, and the bot must not answer there.\n  if (!m.chat || m.chat.type !== 'private') return [];\n  return [{ json: { channel: 'tg', contact_id: 'tg:' + m.chat.id, text: (m.text || '').trim(), raw_name: [m.from?.first_name, m.from?.last_name].filter(Boolean).join(' ') } }];\n}\n// Meta WhatsApp Cloud API (Task 15). WhatsApp Trigger emits one item per webhook change, shaped { ...change.value, field }\n// (messaging_product, metadata, contacts, messages, statuses, field): there is no entry[] level here.\nif (j.field === 'messages') {\n  const m = j.messages?.[0];\n  if (!m) return [];  // status callback (statuses: sent/delivered/read): start nothing\n  // Meta gives the number as E.164 digits without a plus. Anything else must not become a contact_id.\n  const from = typeof m.from === 'string' ? m.from : '';\n  if (!/^\\d{7,15}$/.test(from)) return [];\n  // Non-text (image, sticker, audio, ...) keeps the contact and gets text '': the same Send Non-Text path as a Telegram sticker.\n  const text = m.type === 'text' && typeof m.text?.body === 'string' ? m.text.body.trim() : '';\n  return [{ json: { channel: 'wa', contact_id: 'wa:+' + from, text, raw_name: String(j.contacts?.[0]?.profile?.name || '') } }];\n}\n// Any other WhatsApp field (template status, account update, ...) and any unknown body: end the run; an item with an empty contact_id must never go on.\nreturn [];"
       }
     },
     {
@@ -1597,6 +1613,7 @@
   ],
   "connections": {
     "Telegram Trigger": { "main": [[{ "node": "Normalize", "type": "main", "index": 0 }]] },
+    "WhatsApp Trigger": { "main": [[{ "node": "Normalize", "type": "main", "index": 0 }]] },
     "Normalize": { "main": [[{ "node": "Has Text?", "type": "main", "index": 0 }]] },
     "Has Text?": {
       "main": [

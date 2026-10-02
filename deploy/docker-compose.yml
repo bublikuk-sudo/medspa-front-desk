@@ -43,11 +43,10 @@ services:
       EXECUTIONS_DATA_MAX_AGE: "168"
       N8N_DIAGNOSTICS_ENABLED: "false"
       N8N_PERSONALIZATION_ENABLED: "false"
-      # Code-узлам нужен crypto (подпись Twilio) и доступ к $env.TWILIO_AUTH_TOKEN
+      # Code-узлам нужен crypto и доступ к $env (OWNER_TELEGRAM_CHAT_ID в notify_owner)
       NODE_FUNCTION_ALLOW_BUILTIN: crypto
       N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
       N8N_RUNNERS_ENABLED: "true"
-      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
       PUBLIC_BASE_URL: https://${N8N_HOST}
       # Telegram chat id of the owner for the Airtable-free alert path (notify_owner, node Direct Telegram)
       OWNER_TELEGRAM_CHAT_ID: ${OWNER_TELEGRAM_CHAT_ID}

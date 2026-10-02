@@ -605,36 +605,81 @@
       ]
     },
     {
-      "type": "n8n-nodes-base.twilio",
-      "displayName": "Twilio",
+      "type": "n8n-nodes-base.whatsApp",
+      "displayName": "WhatsApp Business Cloud",
+      "typeVersion": 1.1,
+      "allVersions": [
+        1,
+        1.1
+      ],
+      "parameters": [
+        "resource",
+        "operation",
+        "messagingProduct",
+        "phoneNumberId",
+        "recipientPhoneNumber",
+        "messageType",
+        "name",
+        "additionalFields",
+        "longitude",
+        "latitude",
+        "textBody",
+        "mediaPath",
+        "mediaLink",
+        "mediaId",
+        "mediaPropertyName",
+        "mediaFilename",
+        "template",
+        "components",
+        "mediaGetId",
+        "mediaDeleteId",
+        "message",
+        "responseType",
+        "defineForm",
+        "jsonOutput",
+        "formFields",
+        "approvalOptions",
+        "options"
+      ],
+      "defaultVersion": 1.1,
+      "resources": [
+        "message",
+        "media"
+      ],
+      "operations": [
+        "send",
+        "sendAndWait",
+        "sendTemplate",
+        "mediaUpload",
+        "mediaUrlGet",
+        "mediaDelete"
+      ],
+      "credentials": [
+        "whatsAppApi"
+      ],
+      "inputs": [
+        "main"
+      ],
+      "outputs": [
+        "main"
+      ]
+    },
+    {
+      "type": "n8n-nodes-base.whatsAppTrigger",
+      "displayName": "WhatsApp Trigger",
       "typeVersion": 1,
       "allVersions": [
         1
       ],
       "parameters": [
-        "resource",
-        "operation",
-        "from",
-        "to",
-        "toWhatsapp",
-        "message",
-        "twiml",
+        "whatsAppNotice",
+        "updates",
         "options"
       ],
-      "resources": [
-        "call",
-        "sms"
-      ],
-      "operations": [
-        "send",
-        "make"
-      ],
       "credentials": [
-        "twilioApi"
+        "whatsAppTriggerApi"
       ],
-      "inputs": [
-        "main"
-      ],
+      "inputs": [],
       "outputs": [
         "main"
       ]
