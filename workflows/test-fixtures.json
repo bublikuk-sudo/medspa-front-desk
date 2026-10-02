@@ -13,7 +13,8 @@
           "values": [
             { "name": "action", "type": "string" },
             { "name": "start_iso", "type": "string" },
-            { "name": "end_iso", "type": "string" }
+            { "name": "end_iso", "type": "string" },
+            { "name": "event_ids", "type": "string" }
           ]
         }
       }
@@ -96,6 +97,22 @@
               },
               "renameOutput": true,
               "outputKey": "list_events"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [
+                  {
+                    "id": "5d1f0a10-1005-4c00-8000-000000000005",
+                    "leftValue": "={{ $('Trigger').item.json.action }}",
+                    "rightValue": "delete_events_by_id",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "delete_events_by_id"
             }
           ]
         },
@@ -279,6 +296,107 @@
         "language": "javaScript",
         "jsCode": "const events = $input.all().map(i => i.json).filter(e => e && e.id);\nreturn [{ json: {\n  verdict: 'EVENTS ' + events.length,\n  events: events.map(e => ({ id: e.id, summary: e.summary, description: e.description || '', start: e.start && (e.start.dateTime || e.start.date), end: e.end && (e.end.dateTime || e.end.date) }))\n}}];"
       }
+    },
+    {
+      "id": "5d1f0a10-0013-4c00-8000-000000000013",
+      "name": "List For Ids",
+      "notes": "Lists first so that an id whose event is already gone is skipped: deleting it again is HTTP 410 'Resource has been deleted', and with continueOnFail the node keeps only the generic message, so a 410 cannot be told apart from a real error afterwards. Same window as List Test Events.",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [700, 700],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googleCalendarOAuth2Api": { "id": "CRED", "name": "MedSpa Google Calendar" }
+      },
+      "parameters": {
+        "resource": "event",
+        "operation": "getAll",
+        "calendar": { "__rl": true, "value": "={{ $('Settings').first().json.fields.calendar_id }}", "mode": "id" },
+        "returnAll": true,
+        "timeMin": "={{ $now.minus({days: 365}).toISO() }}",
+        "timeMax": "={{ $now.plus({years: 10}).toISO() }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "5d1f0a10-0017-4c00-8000-000000000017",
+      "name": "Pick Ids",
+      "notes": "delete_events_by_id is called only by tests/cleanup.sh, with the calendar_event_id values of Appointments rows whose client_id starts with C-test (booking events are titled '<service> — <client>', so the [TEST] sweep never reaches them). Only those ids are deleted, and only if the event still exists.",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 700],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// event_ids: comma-separated Google event ids. Anything that is not a plain event id fails the run (the delete node puts the id into the request path unencoded).\nconst ids = [...new Set(String($('Trigger').first().json.event_ids || '').split(',').map(s => s.trim()).filter(Boolean))];\nfor (const id of ids) if (!/^[A-Za-z0-9_-]{1,1024}$/.test(id)) throw new Error('test-fixtures: not a Google event id: ' + JSON.stringify(id.slice(0, 80)));\n// Keep only requested ids that still exist in the calendar; an id that is already gone is skipped, not an error.\nconst existing = new Set($input.all().map(i => i.json && i.json.id).filter(Boolean));\nconst hits = ids.filter(id => existing.has(id));\nreturn hits.length ? hits.map(id => ({ json: { id, requested: ids.length } })) : [{ json: { none: true, requested: ids.length } }];"
+      }
+    },
+    {
+      "id": "5d1f0a10-0014-4c00-8000-000000000014",
+      "name": "Any Ids?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [1140, 700],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "5d1f0a10-1006-4c00-8000-000000000006",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "exists", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "5d1f0a10-0015-4c00-8000-000000000015",
+      "name": "Delete By Id",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [1360, 620],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googleCalendarOAuth2Api": { "id": "CRED", "name": "MedSpa Google Calendar" }
+      },
+      "parameters": {
+        "resource": "event",
+        "operation": "delete",
+        "calendar": { "__rl": true, "value": "={{ $('Settings').first().json.fields.calendar_id }}", "mode": "id" },
+        "eventId": "={{ $json.id }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "5d1f0a10-0016-4c00-8000-000000000016",
+      "name": "Result Deleted Ids",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [1580, 700],
+      "executeOnce": true,
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5d1f0a10-2003-4c00-8000-000000000003",
+              "name": "verdict",
+              "value": "={{ 'DELETED ' + $('Pick Ids').all().filter(i => i.json.id).length + ' of ' + $('Pick Ids').first().json.requested }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
     }
   ],
   "connections": {
@@ -288,9 +406,19 @@
       "main": [
         [{ "node": "Create Busy", "type": "main", "index": 0 }],
         [{ "node": "List Test Events", "type": "main", "index": 0 }],
-        [{ "node": "List Events", "type": "main", "index": 0 }]
+        [{ "node": "List Events", "type": "main", "index": 0 }],
+        [{ "node": "List For Ids", "type": "main", "index": 0 }]
       ]
     },
+    "List For Ids": { "main": [[{ "node": "Pick Ids", "type": "main", "index": 0 }]] },
+    "Pick Ids": { "main": [[{ "node": "Any Ids?", "type": "main", "index": 0 }]] },
+    "Any Ids?": {
+      "main": [
+        [{ "node": "Delete By Id", "type": "main", "index": 0 }],
+        [{ "node": "Result Deleted Ids", "type": "main", "index": 0 }]
+      ]
+    },
+    "Delete By Id": { "main": [[{ "node": "Result Deleted Ids", "type": "main", "index": 0 }]] },
     "Create Busy": { "main": [[{ "node": "Result Created", "type": "main", "index": 0 }]] },
     "List Test Events": { "main": [[{ "node": "Only Test Events", "type": "main", "index": 0 }]] },
     "Only Test Events": { "main": [[{ "node": "Any Test Events?", "type": "main", "index": 0 }]] },

@@ -8,3 +8,20 @@ last_compose() {
   curl -fsS -H "X-N8N-API-KEY: $N8N_API_KEY" "https://$N8N_HOST/api/v1/executions?workflowId=$id&limit=1&includeData=true" |
     jq -r '.data[0].data.resultData.runData.Compose[0].data.main[0][0].json.text'
 }
+
+# Booking helpers (Task 9). They call the tools through the harness, like a case does, and fail unless the tool
+# gave the expected verdict, so a setup built from them stops at the first step that did not work.
+# cal_on <YYYY-MM-DD>: test-fixtures list_events for that whole day as JSON ({verdict: "EVENTS n", events: [...]}).
+# The offset is +01:00, so it is only right for winter dates (the cases use January 2030).
+cal_on() {
+  tests/run-case.sh test-fixtures "$(jq -nc --arg s "$1T00:00:00+01:00" --arg e "$(date -d "$1 + 1 day" +%F)T00:00:00+01:00" '{action:"list_events", start_iso:$s, end_iso:$e}')"
+}
+# bk_propose <n> <slot iso>: propose_booking botox at that slot for test client n (tg:90000000n); must answer PENDING
+bk_propose() {
+  tests/run-case.sh propose_booking "$(jq -nc --arg c "tg:90000000$1" --arg s "$2" '{contact_id:$c, service_id:"botox", start_iso:$s, channel:"test"}')" |
+    jq -e '.verdict | startswith("PENDING A-")' > /dev/null
+}
+# bk_confirm <n>: confirm_booking for test client n; must answer BOOKED (this sends the owner a real Telegram message)
+bk_confirm() {
+  tests/run-case.sh confirm_booking "$(jq -nc --arg c "tg:90000000$1" '{contact_id:$c}')" | jq -e '.verdict | startswith("BOOKED A-")' > /dev/null
+}

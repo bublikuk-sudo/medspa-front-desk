@@ -16,9 +16,13 @@ while IFS=$'\t' read -r name tool input expected setup teardown || [ -n "${name:
   [[ -n "$only" && "$name" != "$only" ]] && continue
   # A setup or teardown that exits non-zero fails the case, so setup/teardown can carry assertions
   # (for example "the Clients row really exists"); the teardown still runs so test data is cleaned up.
-  setup_ok=1; [ -z "$setup" ] || eval "$setup" > /dev/null || setup_ok=0
+  setup_ok=1; raw=""; [ -z "$setup" ] || eval "$setup" > /dev/null || setup_ok=0
   if [ "$setup_ok" -eq 1 ]; then
-    out=$(tests/run-case.sh "$tool" "$input" 2>&1 | jq -r 'if type=="object" then (.verdict // tostring) else tostring end' 2>/dev/null || echo "NO_OUTPUT")
+    # $raw keeps the whole JSON the tool returned, so a teardown can assert on fields other than the verdict
+    # (for example confirm_booking's first_visit). $out is the verdict that the regex is matched against.
+    if raw=$(tests/run-case.sh "$tool" "$input" 2>&1); then
+      out=$(printf '%s' "$raw" | jq -r 'if type=="object" then (.verdict // tostring) else tostring end' 2>/dev/null || echo "NO_OUTPUT")
+    else out="NO_OUTPUT"; fi
     if [[ "$out" =~ $expected ]]; then res="PASS  $name  -> $out"; ok=1; else res="FAIL  $name  -> got: $out | expected: /$expected/"; ok=0; fi
   else res="FAIL  $name  -> setup failed"; ok=0; fi
   if [ -n "$teardown" ] && ! eval "$teardown" > /dev/null; then res="FAIL  $name  -> teardown failed (was: ${res%%  ->*})"; ok=0; fi

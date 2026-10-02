@@ -1,0 +1,688 @@
+{
+  "name": "confirm_booking",
+  "nodes": [
+    {
+      "id": "9c0f0001-0001-4c00-8000-000000000001",
+      "name": "Trigger",
+      "notes": "Not an agent tool: WF-1 calls this after the client's YES. The agent can only create a pending row (propose_booking); the calendar is written only here.",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            { "name": "contact_id", "type": "string" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "9c0f0001-0002-4c00-8000-000000000002",
+      "name": "Settings",
+      "notes": "alwaysOutputData: an empty Settings table reaches Decide, which fails the tool (-> WF-6) instead of ending the run silently.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [220, 300],
+      "alwaysOutputData": true,
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Settings", "mode": "id" },
+        "returnAll": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0003-4c00-8000-000000000003",
+      "name": "Client Formula",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Validate first: an empty or malformed contact_id must match NO client row (a comparison with '' would match every row whose column is blank).\nconst raw = String($('Trigger').first().json.contact_id || '').trim();\nconst ok = /^(tg:\\d{1,20}|wa:\\+\\d{1,20})$/.test(raw);\nconst formula = ok\n  ? (raw.startsWith('tg:') ? \"{telegram_chat_id}='\" + raw.slice(3) + \"'\" : \"{phone}='\" + raw.slice(3) + \"'\")\n  : \"{client_id}='__no_such_client__'\";\nreturn [{ json: { formula } }];"
+      }
+    },
+    {
+      "id": "9c0f0001-0004-4c00-8000-000000000004",
+      "name": "Client",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [660, 300],
+      "alwaysOutputData": true,
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Clients", "mode": "id" },
+        "filterByFormula": "={{ $json.formula }}",
+        "limit": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0005-4c00-8000-000000000005",
+      "name": "Appointments",
+      "notes": "All statuses, not only the live ones: first_visit needs the done visits too.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [880, 300],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
+        "filterByFormula": "={{ \"{client_id}='\" + (/^[A-Za-z0-9_-]{1,64}$/.test(String($json.fields?.client_id || '')) ? $json.fields.client_id : '__no_such_client__') + \"'\" }}",
+        "returnAll": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0006-4c00-8000-000000000006",
+      "name": "Services",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [1100, 300],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Services", "mode": "id" },
+        "returnAll": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0007-4c00-8000-000000000007",
+      "name": "Decide",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Settings are checked before anything is written: the event goes into Settings.calendar_id.\nconst s = ($('Settings').first().json || {}).fields;\nif (!s) throw new Error('confirm_booking: the Settings table has no row');\nif (typeof s.calendar_id !== 'string' || !s.calendar_id.trim()) throw new Error('confirm_booking: Settings.calendar_id is missing');\nif (typeof s.timezone !== 'string' || !s.timezone.trim() || !DateTime.now().setZone(s.timezone).isValid) throw new Error('confirm_booking: Settings.timezone is missing or not a valid IANA zone, got ' + JSON.stringify(s.timezone));\nconst c = $('Client').first().json || {};   // the whole record: c.id is the Clients record id\nconst cid = (c.fields || {}).client_id;\nif (!c.id || !cid) return [{ json: { action: 'reject', verdict: 'NO_PENDING', appt_id: '' } }];\n// rec_id is the Appointments record id (for the updates), the rest are the columns\nconst appts = $('Appointments').all().map(i => ({ ...((i.json || {}).fields || {}), rec_id: (i.json || {}).id })).filter(a => a.appt_id && a.client_id === cid);\nconst services = $('Services').all().map(i => (i.json || {}).fields || {});\nconst now = DateTime.utc();\nconst ms = (iso) => DateTime.fromISO(String(iso || '')).toMillis();\nconst pending = appts.filter(a => a.status === 'pending').sort((a, b) => String(b.pending_expires_at || '').localeCompare(String(a.pending_expires_at || '')))[0];\nif (!pending) {\n  // No proposal waiting: a repeated YES for a visit that is already booked is ALREADY_BOOKED with that visit's id.\n  const future = appts.filter(a => ['booked', 'reminded', 'confirmed'].includes(a.status) && ms(a.start_iso) > now.toMillis()).sort((a, b) => ms(a.start_iso) - ms(b.start_iso))[0];\n  return [{ json: { action: 'reject', verdict: future ? 'ALREADY_BOOKED ' + future.appt_id : 'NO_PENDING', appt_id: future ? future.appt_id : '' } }];\n}\nconst exp = DateTime.fromISO(String(pending.pending_expires_at || ''));\nif (!exp.isValid || exp < now) return [{ json: { action: 'expire', rec_id: pending.rec_id, appt_id: pending.appt_id } }];\nconst start = DateTime.fromISO(String(pending.start_iso || '')), end = DateTime.fromISO(String(pending.end_iso || ''));\nif (!start.isValid || !end.isValid || end <= start) throw new Error('confirm_booking: pending appointment ' + pending.appt_id + ' has an unreadable start_iso/end_iso');\nconst svc = services.find(x => x.service_id === pending.service_id) || {};\nconst hadVisits = appts.some(a => ['booked', 'reminded', 'confirmed', 'done'].includes(a.status));\nreturn [{ json: { action: 'check', rec_id: pending.rec_id, appt_id: pending.appt_id, start_iso: pending.start_iso, end_iso: pending.end_iso,\n  service_id: pending.service_id, service_name: svc.name || pending.service_id, replaces_appt_id: pending.replaces_appt_id || '', first_visit: !hadVisits } }];"
+      }
+    },
+    {
+      "id": "9c0f0001-0008-4c00-8000-000000000008",
+      "name": "Route",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [1540, 300],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [
+                  {
+                    "id": "9c0f0001-1001-4c00-8000-000000000001",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "reject",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "reject"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [
+                  {
+                    "id": "9c0f0001-1002-4c00-8000-000000000002",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "expire",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "expire"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [
+                  {
+                    "id": "9c0f0001-1003-4c00-8000-000000000003",
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "check",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "check"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0009-4c00-8000-000000000009",
+      "name": "Result Reject",
+      "notes": "appt_id is always present (empty for NO_PENDING): Send Already Booked (Task 13) passes it to send_message, which fails without it.",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [1760, 100],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9c0f0001-2001-4c00-8000-000000000001",
+              "name": "verdict",
+              "value": "={{ $json.verdict }}",
+              "type": "string"
+            },
+            {
+              "id": "9c0f0001-2002-4c00-8000-000000000002",
+              "name": "appt_id",
+              "value": "={{ $json.appt_id || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0010-4c00-8000-000000000010",
+      "name": "Mark Expired",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [1760, 300],
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "update",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $json.rec_id }}",
+            "status": "cancelled"
+          },
+          "matchingColumns": ["id"],
+          "schema": [
+            { "id": "id", "displayName": "id", "required": false, "defaultMatch": true, "display": true, "type": "string", "readOnly": true, "removed": false },
+            {
+              "id": "status", "displayName": "status", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "options",
+              "options": [
+                { "name": "pending", "value": "pending" }, { "name": "booked", "value": "booked" }, { "name": "reminded", "value": "reminded" },
+                { "name": "confirmed", "value": "confirmed" }, { "name": "cancelled", "value": "cancelled" }, { "name": "late_cancel", "value": "late_cancel" },
+                { "name": "no_show", "value": "no_show" }, { "name": "done", "value": "done" }
+              ],
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0011-4c00-8000-000000000011",
+      "name": "Result Expired",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [1980, 300],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9c0f0001-2003-4c00-8000-000000000003",
+              "name": "verdict",
+              "value": "EXPIRED",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0012-4c00-8000-000000000012",
+      "name": "FreeBusy",
+      "notes": "Booked Slots output: one item per busy interval, {start, end} in UTC; none gives one empty {} item (alwaysOutputData). A failed calendar call fails the tool: booking blind could double-book.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [1760, 520],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": { "id": "CRED", "name": "MedSpa Google Calendar" }
+      },
+      "parameters": {
+        "resource": "calendar",
+        "operation": "availability",
+        "calendar": { "__rl": true, "value": "={{ $('Settings').first().json.fields.calendar_id }}", "mode": "id" },
+        "timeMin": "={{ $json.start_iso }}",
+        "timeMax": "={{ $json.end_iso }}",
+        "options": {
+          "outputFormat": "bookedSlots"
+        }
+      }
+    },
+    {
+      "id": "9c0f0001-0013-4c00-8000-000000000013",
+      "name": "Any Busy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1980, 520],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Taken = some busy interval really overlaps [start, end). The empty {} item of alwaysOutputData is dropped; a busy item that does not parse is not \"free\": throw.\nconst d = $('Decide').first().json;\nconst s = DateTime.fromISO(d.start_iso), e = DateTime.fromISO(d.end_iso);\nconst taken = $input.all().map(i => i.json || {}).filter(b => b.start || b.end).some(b => {\n  const bs = DateTime.fromISO(String(b.start)), be = DateTime.fromISO(String(b.end));\n  if (!bs.isValid || !be.isValid) throw new Error('confirm_booking: unreadable busy interval from Google Calendar: ' + JSON.stringify(b));\n  return bs < e && be > s;\n});\nreturn [{ json: { taken } }];"
+      }
+    },
+    {
+      "id": "9c0f0001-0014-4c00-8000-000000000014",
+      "name": "Taken?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [2200, 520],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "9c0f0001-1004-4c00-8000-000000000004",
+              "leftValue": "={{ $json.taken === true }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0015-4c00-8000-000000000015",
+      "name": "Mark Taken",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [2420, 420],
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "update",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $('Decide').first().json.rec_id }}",
+            "status": "cancelled"
+          },
+          "matchingColumns": ["id"],
+          "schema": [
+            { "id": "id", "displayName": "id", "required": false, "defaultMatch": true, "display": true, "type": "string", "readOnly": true, "removed": false },
+            {
+              "id": "status", "displayName": "status", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "options",
+              "options": [
+                { "name": "pending", "value": "pending" }, { "name": "booked", "value": "booked" }, { "name": "reminded", "value": "reminded" },
+                { "name": "confirmed", "value": "confirmed" }, { "name": "cancelled", "value": "cancelled" }, { "name": "late_cancel", "value": "late_cancel" },
+                { "name": "no_show", "value": "no_show" }, { "name": "done", "value": "done" }
+              ],
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0016-4c00-8000-000000000016",
+      "name": "Alternatives",
+      "notes": "check_availability also saves these slots as the client's new offer, so propose_booking accepts one of them next. Continue on error: the slot IS taken whatever happens here, so a failed lookup still answers SLOT_TAKEN (with no alternatives); check_availability's own failure reaches WF-6 from its own execution.",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [2640, 420],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:check_availability", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Trigger').first().json.contact_id }}",
+            "service_id": "={{ $('Decide').first().json.service_id }}",
+            "date": "={{ String($('Decide').first().json.start_iso).slice(0, 10) }}",
+            "part_of_day": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "service_id", "displayName": "service_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "date", "displayName": "date", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "part_of_day", "displayName": "part_of_day", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0017-4c00-8000-000000000017",
+      "name": "Result Taken",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [2860, 420],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9c0f0001-2004-4c00-8000-000000000004",
+              "name": "verdict",
+              "value": "SLOT_TAKEN",
+              "type": "string"
+            },
+            {
+              "id": "9c0f0001-2005-4c00-8000-000000000005",
+              "name": "alternatives",
+              "value": "={{ (() => { const m = String($json.verdict || '').match(/^(?:FREE|NONE nearest:) (.+)$/); if (!m) return ''; const tz = $('Settings').first().json.fields.timezone; return m[1].split(', ').slice(0, 3).map(x => DateTime.fromISO(x).setZone(tz)).filter(d => d.isValid).map(d => d.toFormat('ccc, LLL d, h:mm a')).join('; '); })() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0018-4c00-8000-000000000018",
+      "name": "Create Event",
+      "notes": "NO retry, on purpose: a retry after a create that timed out but succeeded would put a duplicate event into the owner's real calendar. Do not add retryOnFail here. A failure fails the tool before the row is marked booked, and WF-6 reports it.",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [2420, 620],
+      "credentials": {
+        "googleCalendarOAuth2Api": { "id": "CRED", "name": "MedSpa Google Calendar" }
+      },
+      "parameters": {
+        "resource": "event",
+        "operation": "create",
+        "calendar": { "__rl": true, "value": "={{ $('Settings').first().json.fields.calendar_id }}", "mode": "id" },
+        "start": "={{ $('Decide').first().json.start_iso }}",
+        "end": "={{ $('Decide').first().json.end_iso }}",
+        "useDefaultReminders": true,
+        "additionalFields": {
+          "summary": "={{ $('Decide').first().json.service_name + ' — ' + (String($('Client').first().json.fields.name || '').replace(/\\s+/g, ' ').trim().slice(0, 80) || $('Trigger').first().json.contact_id) }}",
+          "description": "={{ $('Decide').first().json.appt_id }}"
+        }
+      }
+    },
+    {
+      "id": "9c0f0001-0019-4c00-8000-000000000019",
+      "name": "Mark Booked",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [2640, 620],
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "update",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $('Decide').first().json.rec_id }}",
+            "status": "booked",
+            "calendar_event_id": "={{ $('Create Event').first().json.id }}"
+          },
+          "matchingColumns": ["id"],
+          "schema": [
+            { "id": "id", "displayName": "id", "required": false, "defaultMatch": true, "display": true, "type": "string", "readOnly": true, "removed": false },
+            {
+              "id": "status", "displayName": "status", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "options",
+              "options": [
+                { "name": "pending", "value": "pending" }, { "name": "booked", "value": "booked" }, { "name": "reminded", "value": "reminded" },
+                { "name": "confirmed", "value": "confirmed" }, { "name": "cancelled", "value": "cancelled" }, { "name": "late_cancel", "value": "late_cancel" },
+                { "name": "no_show", "value": "no_show" }, { "name": "done", "value": "done" }
+              ],
+              "removed": false
+            },
+            { "id": "calendar_event_id", "displayName": "calendar_event_id", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "string", "removed": false }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0020-4c00-8000-000000000020",
+      "name": "Activate Client",
+      "notes": "new/active -> active. A flagged or escalated client keeps that status: a booking must not silently clear the owner's flag.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [2860, 620],
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "update",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Clients", "mode": "id" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $('Client').first().json.id }}",
+            "status": "={{ ['flagged', 'escalated'].includes($('Client').first().json.fields.status) ? $('Client').first().json.fields.status : 'active' }}"
+          },
+          "matchingColumns": ["id"],
+          "schema": [
+            { "id": "id", "displayName": "id", "required": false, "defaultMatch": true, "display": true, "type": "string", "readOnly": true, "removed": false },
+            {
+              "id": "status", "displayName": "status", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "options",
+              "options": [
+                { "name": "new", "value": "new" }, { "name": "active", "value": "active" },
+                { "name": "flagged", "value": "flagged" }, { "name": "escalated", "value": "escalated" }
+              ],
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0021-4c00-8000-000000000021",
+      "name": "Replaces?",
+      "notes": "Task 10 connects the true branch to cancel_booking (cancel replaces_appt_id). Until then both branches go to Notify.",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [3080, 620],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "9c0f0001-1005-4c00-8000-000000000005",
+              "leftValue": "={{ !!$('Decide').first().json.replaces_appt_id }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0022-4c00-8000-000000000022",
+      "name": "Notify",
+      "notes": "Continue on error: the booking already exists (event in the owner's calendar, row booked), so the client must get BOOKED even if the owner message fails. notify_owner retries its own nodes and has an Airtable-free fallback.",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [3300, 620],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:notify_owner", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "text": "={{ '✅ New booking: ' + (String($('Client').first().json.fields.name || '').replace(/\\s+/g, ' ').trim().slice(0, 80) || '(no name)') + ' (' + $('Trigger').first().json.contact_id + ') — ' + $('Decide').first().json.service_name + ' — ' + DateTime.fromISO($('Decide').first().json.start_iso).setZone($('Settings').first().json.fields.timezone).toFormat('ccc, LLL d, h:mm a') + ' — ' + $('Decide').first().json.appt_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "9c0f0001-0023-4c00-8000-000000000023",
+      "name": "Result Booked",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [3520, 620],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9c0f0001-2006-4c00-8000-000000000006",
+              "name": "verdict",
+              "value": "={{ 'BOOKED ' + $('Decide').first().json.appt_id }}",
+              "type": "string"
+            },
+            {
+              "id": "9c0f0001-2007-4c00-8000-000000000007",
+              "name": "appt_id",
+              "value": "={{ $('Decide').first().json.appt_id }}",
+              "type": "string"
+            },
+            {
+              "id": "9c0f0001-2008-4c00-8000-000000000008",
+              "name": "first_visit",
+              "value": "={{ $('Decide').first().json.first_visit === true }}",
+              "type": "boolean"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Trigger": { "main": [[{ "node": "Settings", "type": "main", "index": 0 }]] },
+    "Settings": { "main": [[{ "node": "Client Formula", "type": "main", "index": 0 }]] },
+    "Client Formula": { "main": [[{ "node": "Client", "type": "main", "index": 0 }]] },
+    "Client": { "main": [[{ "node": "Appointments", "type": "main", "index": 0 }]] },
+    "Appointments": { "main": [[{ "node": "Services", "type": "main", "index": 0 }]] },
+    "Services": { "main": [[{ "node": "Decide", "type": "main", "index": 0 }]] },
+    "Decide": { "main": [[{ "node": "Route", "type": "main", "index": 0 }]] },
+    "Route": {
+      "main": [
+        [{ "node": "Result Reject", "type": "main", "index": 0 }],
+        [{ "node": "Mark Expired", "type": "main", "index": 0 }],
+        [{ "node": "FreeBusy", "type": "main", "index": 0 }]
+      ]
+    },
+    "Mark Expired": { "main": [[{ "node": "Result Expired", "type": "main", "index": 0 }]] },
+    "FreeBusy": { "main": [[{ "node": "Any Busy", "type": "main", "index": 0 }]] },
+    "Any Busy": { "main": [[{ "node": "Taken?", "type": "main", "index": 0 }]] },
+    "Taken?": {
+      "main": [
+        [{ "node": "Mark Taken", "type": "main", "index": 0 }],
+        [{ "node": "Create Event", "type": "main", "index": 0 }]
+      ]
+    },
+    "Mark Taken": { "main": [[{ "node": "Alternatives", "type": "main", "index": 0 }]] },
+    "Alternatives": { "main": [[{ "node": "Result Taken", "type": "main", "index": 0 }]] },
+    "Create Event": { "main": [[{ "node": "Mark Booked", "type": "main", "index": 0 }]] },
+    "Mark Booked": { "main": [[{ "node": "Activate Client", "type": "main", "index": 0 }]] },
+    "Activate Client": { "main": [[{ "node": "Replaces?", "type": "main", "index": 0 }]] },
+    "Replaces?": {
+      "main": [
+        [{ "node": "Notify", "type": "main", "index": 0 }],
+        [{ "node": "Notify", "type": "main", "index": 0 }]
+      ]
+    },
+    "Notify": { "main": [[{ "node": "Result Booked", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "errorWorkflow": "WFID:wf6-error-handler" }
+}

@@ -1,0 +1,425 @@
+{
+  "name": "propose_booking",
+  "nodes": [
+    {
+      "id": "9b0c0001-0001-4c00-8000-000000000001",
+      "name": "Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            { "name": "contact_id", "type": "string" },
+            { "name": "service_id", "type": "string" },
+            { "name": "start_iso", "type": "string" },
+            { "name": "name", "type": "string" },
+            { "name": "channel", "type": "string" },
+            { "name": "replaces_appt_id", "type": "string" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "9b0c0001-0002-4c00-8000-000000000002",
+      "name": "Settings",
+      "notes": "alwaysOutputData: an empty Settings table reaches Validate, which fails the tool (-> WF-6) instead of ending the run silently.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [220, 300],
+      "alwaysOutputData": true,
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Settings", "mode": "id" },
+        "returnAll": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "9b0c0001-0003-4c00-8000-000000000003",
+      "name": "Client Formula",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Validate first: an empty or malformed contact_id must match NO client row (a comparison with '' would match every row whose column is blank).\nconst raw = String($('Trigger').first().json.contact_id || '').trim();\nconst ok = /^(tg:\\d{1,20}|wa:\\+\\d{1,20})$/.test(raw);\nconst formula = ok\n  ? (raw.startsWith('tg:') ? \"{telegram_chat_id}='\" + raw.slice(3) + \"'\" : \"{phone}='\" + raw.slice(3) + \"'\")\n  : \"{client_id}='__no_such_client__'\";\nreturn [{ json: { formula } }];"
+      }
+    },
+    {
+      "id": "9b0c0001-0004-4c00-8000-000000000004",
+      "name": "Client",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [660, 300],
+      "alwaysOutputData": true,
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Clients", "mode": "id" },
+        "filterByFormula": "={{ $json.formula }}",
+        "limit": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "9b0c0001-0005-4c00-8000-000000000005",
+      "name": "Services",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [880, 300],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Services", "mode": "id" },
+        "filterByFormula": "{active}=1",
+        "returnAll": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "9b0c0001-0006-4c00-8000-000000000006",
+      "name": "Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// The decision is made here, not by the model: the agent can only get a PENDING row, and only for a slot that\n// check_availability offered THIS client (Clients.last_offer_json) less than pending_ttl_min minutes ago.\n// The calendar is not touched; confirm_booking writes the event after the client's YES (called by WF-1, not by the agent).\nconst s = ($('Settings').first().json || {}).fields;\nif (!s) throw new Error('propose_booking: the Settings table has no row');\nconst ttl = (s.pending_ttl_min === null || s.pending_ttl_min === undefined || String(s.pending_ttl_min).trim() === '') ? NaN : Number(s.pending_ttl_min);\nif (!Number.isFinite(ttl) || ttl <= 0) throw new Error('propose_booking: Settings.pending_ttl_min must be a positive number, got ' + JSON.stringify(s.pending_ttl_min));\nconst tz = s.timezone;\nif (typeof tz !== 'string' || !tz.trim() || !DateTime.now().setZone(tz).isValid) throw new Error('propose_booking: Settings.timezone is missing or not a valid IANA zone, got ' + JSON.stringify(tz));\nconst inp = $('Trigger').first().json;\nconst cr = $('Client').first().json || {};   // the whole record: cr.id is the record id, the columns are in cr.fields\nconst c = cr.fields || {};\n// rec_id is the Services record id (for the `service` link), the rest are the columns\nconst services = $('Services').all().map(i => ({ ...((i.json || {}).fields || {}), rec_id: (i.json || {}).id })).filter(x => x.service_id);\nconst reject = (verdict) => [{ json: { ok: false, verdict } }];\nif (!cr.id || !c.client_id) return reject('NO_CLIENT_ROW');\n// client_id goes into the Old Pending formula: anything but a plain id would let a row edit change that formula\nif (!/^[A-Za-z0-9_-]{1,64}$/.test(c.client_id)) throw new Error('propose_booking: unexpected Clients.client_id ' + JSON.stringify(String(c.client_id).slice(0, 80)) + ' in record ' + cr.id);\nconst svc = services.find(x => x.service_id === String(inp.service_id || '').trim().toLowerCase());\nif (!svc) return reject('UNKNOWN_SERVICE ' + services.map(x => `${x.service_id} (${x.name}, ${x.duration_min} min)`).join('; '));\nconst dur = Number(svc.duration_min);\nif (!Number.isFinite(dur) || dur <= 0) throw new Error('propose_booking: Services.duration_min of ' + svc.service_id + ' must be a positive number, got ' + JSON.stringify(svc.duration_min));\nconst start = DateTime.fromISO(String(inp.start_iso || '').trim());\nif (!start.isValid) return reject('SLOT_NOT_OFFERED');\n// The offer is compared as instants, so 12:00+01:00 and 11:00Z are the same slot. An unreadable offer is no offer.\nlet offered = [];\ntry { const o = JSON.parse(c.last_offer_json || '[]'); if (Array.isArray(o)) offered = o.map(x => DateTime.fromISO(String(x))).filter(d => d.isValid).map(d => d.toMillis()); } catch (e) { offered = []; }\nconst offeredAt = c.last_offer_at ? DateTime.fromISO(String(c.last_offer_at)) : null;\nconst age = offeredAt && offeredAt.isValid ? DateTime.utc().diff(offeredAt, 'minutes').minutes : Infinity;\nconst fresh = age >= -1 && age <= ttl;   // -1: a minute of clock skew between Airtable and n8n\nif (!fresh || !offered.includes(start.toMillis())) return reject('SLOT_NOT_OFFERED');\nconst end = start.plus({ minutes: dur });\nconst appt_id = 'A-' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 5).toUpperCase();\nconst iso = (t) => t.setZone(tz).toISO({ suppressMilliseconds: true });\n// The name is written only when the row has none (a name the client gave earlier, or the owner typed, is kept).\nconst cleanName = String(inp.name || '').replace(/[\\u0000-\\u001f\\u007f-\\u009f\\u200b-\\u200f\\u2028-\\u202e\\u2066-\\u2069\\ufeff]/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, 80);\nconst channel = String(inp.channel || '').trim().toLowerCase();\nreturn [{ json: {\n  ok: true, client_id: c.client_id, set_name: (!String(c.name || '').trim() && cleanName) ? cleanName : '',\n  fields: {\n    appt_id, client: [cr.id], client_id: c.client_id, service: [svc.rec_id], service_id: svc.service_id,\n    start_iso: iso(start), end_iso: iso(end), start_dt: start.toUTC().toISO(),\n    status: 'pending', created_via: ['tg', 'wa', 'test', 'owner'].includes(channel) ? channel : 'tg',\n    pending_expires_at: DateTime.utc().plus({ minutes: ttl }).toISO(),\n    replaces_appt_id: String(inp.replaces_appt_id || '').trim().slice(0, 40)\n  }\n} }];"
+      }
+    },
+    {
+      "id": "9b0c0001-0007-4c00-8000-000000000007",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [1320, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "9b0c0001-1001-4c00-8000-000000000001",
+              "leftValue": "={{ $json.ok === true }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9b0c0001-0008-4c00-8000-000000000008",
+      "name": "Result Reject",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [1540, 520],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9b0c0001-2001-4c00-8000-000000000001",
+              "name": "verdict",
+              "value": "={{ $json.verdict }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9b0c0001-0009-4c00-8000-000000000009",
+      "name": "Old Pending",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [1540, 200],
+      "alwaysOutputData": true,
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
+        "filterByFormula": "={{ \"AND({client_id}='\" + $json.client_id + \"',{status}='pending')\" }}",
+        "returnAll": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "9b0c0001-0010-4c00-8000-000000000010",
+      "name": "Has Id?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [1760, 200],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "9b0c0001-1002-4c00-8000-000000000002",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "exists", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9b0c0001-0011-4c00-8000-000000000011",
+      "name": "Cancel Old",
+      "notes": "One update per earlier pending row of this client: a client has at most one live proposal.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [1980, 100],
+      "alwaysOutputData": true,
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "update",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $json.id }}",
+            "status": "cancelled"
+          },
+          "matchingColumns": ["id"],
+          "schema": [
+            { "id": "id", "displayName": "id", "required": false, "defaultMatch": true, "display": true, "type": "string", "readOnly": true, "removed": false },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "options",
+              "options": [
+                { "name": "pending", "value": "pending" },
+                { "name": "booked", "value": "booked" },
+                { "name": "reminded", "value": "reminded" },
+                { "name": "confirmed", "value": "confirmed" },
+                { "name": "cancelled", "value": "cancelled" },
+                { "name": "late_cancel", "value": "late_cancel" },
+                { "name": "no_show", "value": "no_show" },
+                { "name": "done", "value": "done" }
+              ],
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9b0c0001-0012-4c00-8000-000000000012",
+      "name": "Set Name?",
+      "notes": "executeOnce: Cancel Old hands over one item per cancelled row; everything from here on must run once, or the client would get one new pending row per old one.",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [2200, 300],
+      "executeOnce": true,
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "9b0c0001-1003-4c00-8000-000000000003",
+              "leftValue": "={{ !!$('Validate').first().json.set_name }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9b0c0001-0013-4c00-8000-000000000013",
+      "name": "Update Name",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [2420, 200],
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "update",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Clients", "mode": "id" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $('Client').first().json.id }}",
+            "name": "={{ $('Validate').first().json.set_name }}"
+          },
+          "matchingColumns": ["id"],
+          "schema": [
+            { "id": "id", "displayName": "id", "required": false, "defaultMatch": true, "display": true, "type": "string", "readOnly": true, "removed": false },
+            { "id": "name", "displayName": "name", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "string", "removed": false }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9b0c0001-0014-4c00-8000-000000000014",
+      "name": "Appt Fields",
+      "notes": "Create Appt maps its input item automatically, so the item must be exactly the Appointments columns (Validate.fields), one item.",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2640, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "return [{ json: $('Validate').first().json.fields }];"
+      }
+    },
+    {
+      "id": "9b0c0001-0015-4c00-8000-000000000015",
+      "name": "Create Appt",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [2860, 300],
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "create",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9b0c0001-0016-4c00-8000-000000000016",
+      "name": "Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [3080, 300],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9b0c0001-2002-4c00-8000-000000000002",
+              "name": "verdict",
+              "value": "={{ 'PENDING ' + $json.fields.appt_id }}",
+              "type": "string"
+            },
+            {
+              "id": "9b0c0001-2003-4c00-8000-000000000003",
+              "name": "appt_id",
+              "value": "={{ $json.fields.appt_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Trigger": { "main": [[{ "node": "Settings", "type": "main", "index": 0 }]] },
+    "Settings": { "main": [[{ "node": "Client Formula", "type": "main", "index": 0 }]] },
+    "Client Formula": { "main": [[{ "node": "Client", "type": "main", "index": 0 }]] },
+    "Client": { "main": [[{ "node": "Services", "type": "main", "index": 0 }]] },
+    "Services": { "main": [[{ "node": "Validate", "type": "main", "index": 0 }]] },
+    "Validate": { "main": [[{ "node": "Valid?", "type": "main", "index": 0 }]] },
+    "Valid?": {
+      "main": [
+        [{ "node": "Old Pending", "type": "main", "index": 0 }],
+        [{ "node": "Result Reject", "type": "main", "index": 0 }]
+      ]
+    },
+    "Old Pending": { "main": [[{ "node": "Has Id?", "type": "main", "index": 0 }]] },
+    "Has Id?": {
+      "main": [
+        [{ "node": "Cancel Old", "type": "main", "index": 0 }],
+        [{ "node": "Set Name?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Cancel Old": { "main": [[{ "node": "Set Name?", "type": "main", "index": 0 }]] },
+    "Set Name?": {
+      "main": [
+        [{ "node": "Update Name", "type": "main", "index": 0 }],
+        [{ "node": "Appt Fields", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Name": { "main": [[{ "node": "Appt Fields", "type": "main", "index": 0 }]] },
+    "Appt Fields": { "main": [[{ "node": "Create Appt", "type": "main", "index": 0 }]] },
+    "Create Appt": { "main": [[{ "node": "Result", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "errorWorkflow": "WFID:wf6-error-handler" }
+}
