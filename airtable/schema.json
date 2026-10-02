@@ -36,7 +36,8 @@
       { "name": "intake_completed", "type": "checkbox", "options": { "icon": "check", "color": "greenBright" } },
       { "name": "notes", "type": "multilineText" },
       { "name": "last_offer_json", "type": "multilineText" },
-      { "name": "last_offer_at", "type": "dateTime", "options": { "timeZone": "utc", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } }
+      { "name": "last_offer_at", "type": "dateTime", "options": { "timeZone": "utc", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } },
+      { "name": "last_agent_reply_at", "type": "dateTime", "options": { "timeZone": "utc", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } }
     ]},
     { "name": "Appointments", "fields": [
       { "name": "appt_id", "type": "singleLineText" },

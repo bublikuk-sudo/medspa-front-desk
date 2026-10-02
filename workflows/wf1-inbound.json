@@ -91,14 +91,24 @@
     {
       "id": "e1a10013-0005-4c00-8000-000000000005",
       "name": "Rate Limit",
-      "notes": "10-minute window, 20 messages per contact, kept in this workflow's static data (saved only by production runs of the active workflow). notify is true exactly once, on message 21.",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "notes": "One statement, atomic: INSERT ... ON CONFLICT DO UPDATE locks this contact's row, so concurrent messages of one contact are counted one after another (no lost hits). hits = messages in the last 10 minutes including this one; allowed = hits <= 20; notify is true for the first message over 20 and then not again for 10 minutes (notified_at). The CTE prunes other contacts whose last hit is older than 10 minutes. Table: deploy/postgres-init.sql.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
       "position": [660, 400],
+      "credentials": {
+        "postgres": { "id": "CRED", "name": "MedSpa Postgres" }
+      },
       "parameters": {
-        "mode": "runOnceForAllItems",
-        "language": "javaScript",
-        "jsCode": "const sd = $getWorkflowStaticData('global');\nsd.rl = sd.rl || {};\nconst j = $input.first().json;\nconst id = j.contact_id, now = Date.now(), WINDOW = 600000, LIMIT = 20;\nconst hits = (sd.rl[id] || []).filter(t => now - t < WINDOW);\nhits.push(now); sd.rl[id] = hits;\nif (Object.keys(sd.rl).length > 500) for (const k of Object.keys(sd.rl)) if (!sd.rl[k].some(t => now - t < WINDOW)) delete sd.rl[k];\nreturn [{ json: { ...j, allowed: hits.length <= LIMIT, notify: hits.length === LIMIT + 1 } }];"
+        "resource": "database",
+        "operation": "executeQuery",
+        "query": "WITH gc AS (DELETE FROM wf1_rate_limit WHERE contact_id <> $1 AND hits[cardinality(hits)] < now() - interval '10 minutes') INSERT INTO wf1_rate_limit AS r (contact_id, hits) VALUES ($1, ARRAY[now()]) ON CONFLICT (contact_id) DO UPDATE SET hits = array_append(ARRAY(SELECT h FROM unnest(r.hits) AS h WHERE h > now() - interval '10 minutes' ORDER BY h), now()), notified_at = CASE WHEN cardinality(ARRAY(SELECT h FROM unnest(r.hits) AS h WHERE h > now() - interval '10 minutes')) >= 20 AND (r.notified_at IS NULL OR r.notified_at <= now() - interval '10 minutes') THEN now() ELSE r.notified_at END RETURNING cardinality(hits) AS hits, cardinality(hits) <= 20 AS allowed, COALESCE(notified_at = now(), false) AS notify",
+        "options": {
+          "queryReplacement": "={{ [ $('Normalize').first().json.contact_id ] }}"
+        }
       }
     },
     {
@@ -126,6 +136,7 @@
     {
       "id": "e1a10013-0007-4c00-8000-000000000007",
       "name": "Notify Spam?",
+      "notes": "false: blocked silently (the client was told once, on the message that crossed the limit).",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [1100, 160],
@@ -159,7 +170,7 @@
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
-            "text": "={{ '⛔ Rate limit: ' + $json.contact_id + ' sent 21 messages in 10 minutes; paused' }}"
+            "text": "={{ '⛔ Rate limit: ' + $('Normalize').first().json.contact_id + ' sent 21 messages in 10 minutes; paused' }}"
           },
           "matchingColumns": [],
           "schema": [
@@ -209,34 +220,12 @@
       }
     },
     {
-      "id": "e1a10013-0010-4c00-8000-000000000010",
-      "name": "Settings",
-      "retryOnFail": true,
-      "maxTries": 2,
-      "waitBetweenTries": 5000,
-      "type": "n8n-nodes-base.airtable",
-      "typeVersion": 2.2,
-      "position": [1100, 400],
-      "alwaysOutputData": true,
-      "credentials": {
-        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
-      },
-      "parameters": {
-        "authentication": "airtableTokenApi",
-        "resource": "record",
-        "operation": "search",
-        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
-        "table": { "__rl": true, "value": "ATTBL:Settings", "mode": "id" },
-        "returnAll": true,
-        "options": {}
-      }
-    },
-    {
       "id": "e1a10013-0011-4c00-8000-000000000011",
       "name": "Client Formula",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1320, 400],
+      "position": [1100, 400],
+      "onError": "continueErrorOutput",
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
@@ -249,9 +238,10 @@
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
       "type": "n8n-nodes-base.airtable",
       "typeVersion": 2.2,
-      "position": [1540, 400],
+      "position": [1320, 400],
       "alwaysOutputData": true,
       "credentials": {
         "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
@@ -268,19 +258,19 @@
       }
     },
     {
-      "id": "e1a10013-0013-4c00-8000-000000000013",
-      "name": "New Client?",
-      "notes": "A new contact gets its Clients row here, on the first message, so every tool (propose_booking included) finds a client row.",
+      "id": "e1a10013-0052-4c00-8000-000000000052",
+      "name": "Lang Needed?",
+      "notes": "Detect the language only from a real message: a /command (Telegram's mandatory /start) says nothing about it. A client stored with an empty language (first message was a command, or detection failed) is detected on its next non-command text.",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [1760, 400],
+      "position": [1540, 400],
       "parameters": {
         "conditions": {
           "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
           "conditions": [
             {
-              "id": "e1a10013-1004-4c00-8000-000000000004",
-              "leftValue": "={{ !$json.id }}",
+              "id": "e1a10013-1020-4c00-8000-000000000020",
+              "leftValue": "={{ !String($('Client').first().json.fields?.language || '').trim() && !String($('Normalize').first().json.text || '').startsWith('/') }}",
               "rightValue": "",
               "operator": { "type": "boolean", "operation": "true", "singleValue": true }
             }
@@ -293,10 +283,10 @@
     {
       "id": "e1a10013-0014-4c00-8000-000000000014",
       "name": "Detect Language",
-      "notes": "Continue on error: a failed detection gives an item without text, and Create Client then stores language en.",
+      "notes": "Continue on error: a failed detection gives an item without text; Language then returns '' and the next message tries again.",
       "type": "@n8n/n8n-nodes-langchain.chainLlm",
       "typeVersion": 1.9,
-      "position": [1980, 280],
+      "position": [1760, 280],
       "onError": "continueRegularOutput",
       "retryOnFail": true,
       "maxTries": 2,
@@ -312,7 +302,7 @@
       "name": "Haiku",
       "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
       "typeVersion": 1.6,
-      "position": [1980, 500],
+      "position": [1760, 500],
       "credentials": {
         "anthropicApi": { "id": "CRED", "name": "MedSpa Anthropic" }
       },
@@ -325,14 +315,51 @@
       }
     },
     {
+      "id": "e1a10013-0053-4c00-8000-000000000053",
+      "name": "Language",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1980, 280],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// '' when the detection failed (error item, no answer): the client is stored without a language and detected again next time.\nconst L = ['en','de','es','fr','it','pt','ru','uk','pl','tr','nl','ar','he','zh','ja'];\nconst j = $input.first().json || {};\nconst a = String(j.text || j.output || '').trim().toLowerCase().slice(0, 2);\nreturn [{ json: { language: !a || j.error ? '' : (L.includes(a) ? a : 'en') } }];"
+      }
+    },
+    {
+      "id": "e1a10013-0013-4c00-8000-000000000013",
+      "name": "New Client?",
+      "notes": "A new contact gets its Clients row here, on the first text message, so every tool (propose_booking included) finds a client row.",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [2200, 400],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e1a10013-1004-4c00-8000-000000000004",
+              "leftValue": "={{ !$('Client').first().json.id }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
       "id": "e1a10013-0016-4c00-8000-000000000016",
       "name": "Create Client",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
       "type": "n8n-nodes-base.airtable",
       "typeVersion": 2.2,
-      "position": [2200, 280],
+      "position": [2420, 280],
       "credentials": {
         "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
       },
@@ -348,7 +375,7 @@
             "client_id": "={{ 'C-' + Date.now().toString(36).toUpperCase() }}",
             "telegram_chat_id": "={{ $('Normalize').first().json.channel === 'tg' ? $('Normalize').first().json.contact_id.slice(3) : '' }}",
             "phone": "={{ $('Normalize').first().json.channel === 'wa' ? $('Normalize').first().json.contact_id.slice(3) : '' }}",
-            "language": "={{ (['en','de','es','fr','it','pt','ru','uk','pl','tr','nl','ar','he','zh','ja'].includes(($json.text || $json.output || 'en').trim().toLowerCase().slice(0,2))) ? ($json.text || $json.output || 'en').trim().toLowerCase().slice(0,2) : 'en' }}",
+            "language": "={{ $('Language').isExecuted ? ($('Language').first().json.language || '') : '' }}",
             "first_seen": "={{ $now.toUTC().toISO() }}",
             "status": "new"
           },
@@ -375,26 +402,76 @@
       }
     },
     {
-      "id": "e1a10013-0017-4c00-8000-000000000017",
-      "name": "Client Data",
-      "notes": "Reached from New Client? false (the found Clients record) or from Create Client (the new record); both are {id, fields}.",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.5,
-      "position": [2420, 400],
+      "id": "e1a10013-0054-4c00-8000-000000000054",
+      "name": "Detected?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [2420, 520],
       "parameters": {
-        "assignments": {
-          "assignments": [
-            { "id": "e1a10013-2001-4c00-8000-000000000001", "name": "client_rec", "value": "={{ $json.id }}", "type": "string" },
-            { "id": "e1a10013-2002-4c00-8000-000000000002", "name": "client_id", "value": "={{ $json.fields?.client_id }}", "type": "string" },
-            { "id": "e1a10013-2003-4c00-8000-000000000003", "name": "client_name", "value": "={{ $json.fields?.name || '' }}", "type": "string" },
-            { "id": "e1a10013-2004-4c00-8000-000000000004", "name": "language", "value": "={{ $json.fields?.language || 'en' }}", "type": "string" },
-            { "id": "e1a10013-2005-4c00-8000-000000000005", "name": "client_status", "value": "={{ $json.fields?.status || 'new' }}", "type": "string" },
-            { "id": "e1a10013-2006-4c00-8000-000000000006", "name": "contact_id", "value": "={{ $('Normalize').first().json.contact_id }}", "type": "string" },
-            { "id": "e1a10013-2007-4c00-8000-000000000007", "name": "channel", "value": "={{ $('Normalize').first().json.channel }}", "type": "string" },
-            { "id": "e1a10013-2008-4c00-8000-000000000008", "name": "text", "value": "={{ $('Normalize').first().json.text }}", "type": "string" }
-          ]
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e1a10013-1021-4c00-8000-000000000021",
+              "leftValue": "={{ $('Language').isExecuted === true && !!$('Language').first().json.language }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
         },
         "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0055-4c00-8000-000000000055",
+      "name": "Update Language",
+      "notes": "Existing client whose language was empty. Continue on error: the reply does not depend on it (Client Data uses the detected language for this run) and the next message detects again.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [2640, 460],
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "update",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Clients", "mode": "id" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $('Client').first().json.id }}",
+            "language": "={{ $('Language').first().json.language }}"
+          },
+          "matchingColumns": ["id"],
+          "schema": [
+            { "id": "id", "displayName": "id", "required": false, "defaultMatch": true, "display": true, "type": "string", "readOnly": true, "removed": false },
+            { "id": "language", "displayName": "language", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "string", "removed": false }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0017-4c00-8000-000000000017",
+      "name": "Client Data",
+      "notes": "Reached from Create Client, Update Language or Detected? false. Reads the newest record by name instead of $json, because the input item differs per path. Throws (-> Notify Failure -> ERROR) when there is no client row to work with.",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2860, 400],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const n = $('Normalize').first().json;\nconst ran = name => { try { return $(name).isExecuted === true; } catch (e) { return false; } };\nlet rec = $('Client').first().json || {};\nif (ran('Create Client')) rec = $('Create Client').first().json || {};\nelse if (ran('Update Language')) { const u = $('Update Language').first().json || {}; if (u.id && u.fields) rec = u; }\nconst f = rec.fields || {};\nif (!rec.id || !f.client_id) throw new Error('wf1-inbound: no Clients row with a client_id for ' + n.contact_id);\nconst detected = ran('Language') ? String($('Language').first().json.language || '') : '';\nreturn [{ json: {\n  client_rec: rec.id, client_id: String(f.client_id), client_name: f.name || '', language: f.language || detected || 'en',\n  client_status: f.status || 'new', last_agent_reply_at: f.last_agent_reply_at || '',\n  contact_id: n.contact_id, channel: n.channel, text: n.text\n} }];"
       }
     },
     {
@@ -402,7 +479,7 @@
       "name": "Escalated?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [2640, 400],
+      "position": [3080, 400],
       "parameters": {
         "conditions": {
           "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
@@ -424,7 +501,7 @@
       "name": "Send Hold",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [2860, 200],
+      "position": [3300, 200],
       "onError": "continueErrorOutput",
       "parameters": {
         "source": "database",
@@ -458,14 +535,15 @@
     {
       "id": "e1a10013-0020-4c00-8000-000000000020",
       "name": "Classify",
-      "notes": "Deterministic: kind is yes or no only when the WHOLE short message (up to 3 words, please removed) is a known yes/no word.",
+      "notes": "Deterministic: kind is yes or no only when the WHOLE short message (up to 3 words, please removed) is a known yes/no word. Word boundaries are Unicode-aware; curly apostrophes count as '.",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2860, 400],
+      "position": [3300, 400],
+      "onError": "continueErrorOutput",
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const YES = ['yes','yeah','yep','yup','ok','okay','sure','confirm','confirmed','correct','right','да','ага','подтверждаю','ок','давай','хорошо','верно','ja','jawohl','genau','passt','bestätige','bestätigen','sí','si','vale','claro','confirmo','correcto','oui','d\\'accord','je confirme','exact','va bene','confermo','sim','так','добре','підтверджую','evet','tamam','onaylıyorum','tak','potwierdzam','oké','prima','نعم','تمام','כן','是','好','确认','はい'];\nconst NO = ['no','nope','cancel','not now','нет','отмена','не надо','отмени','nein','nee','abbrechen','stornieren','cancelar','cancela','non','annuler','annulla','não','nao','ні','скасувати','hayır','iptal','nie','anuluj','annuleren','لا','לא','不','取消','いいえ'];\nconst j = $input.first().json;\nconst raw = (j.text || '').toLowerCase();\nconst norm = raw.replace(/[^\\p{L}\\p{N}\\s']/gu, ' ').replace(/\\s+/g, ' ').trim().replace(/\\b(please|пожалуйста|bitte|por favor|s'il vous plaît)\\b/g, '').replace(/\\s+/g, ' ').trim();\nconst words = norm ? norm.split(' ') : [];\nconst is_short = words.length > 0 && words.length <= 3;\nlet kind = 'other';\nif (is_short && YES.includes(norm)) kind = 'yes';\nelse if (is_short && NO.includes(norm)) kind = 'no';\nreturn [{ json: { ...j, kind, is_short } }];"
+        "jsCode": "const YES = ['yes','yeah','yep','yup','ok','okay','sure','confirm','confirmed','correct','right','да','ага','подтверждаю','ок','давай','хорошо','верно','ja','jawohl','genau','passt','bestätige','bestätigen','sí','si','vale','claro','confirmo','correcto','oui','d\\'accord','je confirme','exact','va bene','confermo','sim','так','добре','підтверджую','evet','tamam','onaylıyorum','tak','potwierdzam','oké','prima','نعم','تمام','כן','是','好','确认','はい'];\nconst NO = ['no','nope','cancel','not now','нет','отмена','не надо','отмени','nein','nee','abbrechen','stornieren','cancelar','cancela','non','annuler','annulla','não','nao','ні','скасувати','hayır','iptal','nie','anuluj','annuleren','لا','לא','不','取消','いいえ'];\nconst j = $input.first().json;\nconst raw = (j.text || '').toLowerCase().replace(/[\\u2018\\u2019\\u02bc]/g, \"'\");\n// \\b is ASCII-only in JS, so the boundaries are written out: no letter, digit or apostrophe on either side.\nconst norm = raw.replace(/[^\\p{L}\\p{N}\\s']/gu, ' ').replace(/\\s+/g, ' ').trim()\n  .replace(/(?<![\\p{L}\\p{N}'])(please|пожалуйста|bitte|por favor|s'il vous plaît)(?![\\p{L}\\p{N}'])/gu, '').replace(/\\s+/g, ' ').trim();\nconst words = norm ? norm.split(' ') : [];\nconst is_short = words.length > 0 && words.length <= 3;\nlet kind = 'other';\nif (is_short && YES.includes(norm)) kind = 'yes';\nelse if (is_short && NO.includes(norm)) kind = 'no';\nreturn [{ json: { ...j, kind, is_short } }];"
       }
     },
     {
@@ -474,9 +552,10 @@
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
       "type": "n8n-nodes-base.airtable",
       "typeVersion": 2.2,
-      "position": [3080, 400],
+      "position": [3520, 400],
       "alwaysOutputData": true,
       "credentials": {
         "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
@@ -495,14 +574,15 @@
     {
       "id": "e1a10013-0022-4c00-8000-000000000022",
       "name": "Gate",
-      "notes": "confirm: a bare YES with a pending proposal. llm: a short non-yes/no message with a pending proposal (Haiku decides). reminder: everything else goes through Reminder Check first, so a YES/NO to a reminder reaches reminder_reply; a bare YES with no reminder then goes to Confirm (ALREADY_BOOKED or NO_PENDING -> Agent).",
+      "notes": "confirm: a bare YES with a pending proposal. llm: a short non-yes/no message with a pending proposal (Haiku decides). reminder: any other bare YES/NO (Reminder Gate decides whether it answers a reminder; if not, the agent). agent: everything else.",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [3300, 400],
+      "position": [3740, 400],
+      "onError": "continueErrorOutput",
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const c = $('Classify').first().json;\nconst pending = ($('Pending').first().json.fields || {});\nlet route = 'reminder';\n// A bare YES confirms a waiting proposal. Without one it goes through Reminder Check first: a YES to a reminder must reach\n// reminder_reply (CONFIRMED); confirm_booking would answer ALREADY_BOOKED for the reminded visit. Bare Yes? sends it to Confirm afterwards.\nif (c.kind === 'yes' && pending.appt_id) route = 'confirm';\nelse if (pending.appt_id && c.kind === 'other' && c.is_short) route = 'llm';\nreturn [{ json: { route } }];"
+        "jsCode": "const c = $('Classify').first().json;\nconst pending = ($('Pending').first().json.fields || {});\nlet route = 'agent';\nif (c.kind === 'yes' && pending.appt_id) route = 'confirm';\nelse if (c.kind === 'other' && c.is_short && pending.appt_id) route = 'llm';\nelse if (c.kind === 'yes' || c.kind === 'no') route = 'reminder';\nreturn [{ json: { route } }];"
       }
     },
     {
@@ -510,7 +590,7 @@
       "name": "Route",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
-      "position": [3520, 400],
+      "position": [3960, 400],
       "parameters": {
         "rules": {
           "values": [
@@ -561,6 +641,22 @@
               },
               "renameOutput": true,
               "outputKey": "reminder"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [
+                  {
+                    "id": "e1a10013-1022-4c00-8000-000000000022",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "agent",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "agent"
             }
           ]
         },
@@ -570,10 +666,10 @@
     {
       "id": "e1a10013-0024-4c00-8000-000000000024",
       "name": "LLM Affirmative",
-      "notes": "Continue on error: a failed call gives an item without text, Affirmative? is false and the message goes on to Reminder Check and the agent.",
+      "notes": "Continue on error: a failed call gives an item without text, Affirmative? is false and the message goes to the agent.",
       "type": "@n8n/n8n-nodes-langchain.chainLlm",
       "typeVersion": 1.9,
-      "position": [3740, 500],
+      "position": [4180, 500],
       "onError": "continueRegularOutput",
       "retryOnFail": true,
       "maxTries": 2,
@@ -589,7 +685,7 @@
       "name": "Haiku YES",
       "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
       "typeVersion": 1.6,
-      "position": [3740, 720],
+      "position": [4180, 720],
       "credentials": {
         "anthropicApi": { "id": "CRED", "name": "MedSpa Anthropic" }
       },
@@ -606,7 +702,7 @@
       "name": "Affirmative?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [3960, 500],
+      "position": [4400, 500],
       "parameters": {
         "conditions": {
           "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
@@ -629,7 +725,7 @@
       "notes": "confirm_booking writes the calendar. Error output (it throws on a real calendar failure) -> Notify Failure -> Send Error.",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [4400, 200],
+      "position": [4620, 200],
       "onError": "continueErrorOutput",
       "parameters": {
         "source": "database",
@@ -656,7 +752,7 @@
       "notes": "Fallback (NO_PENDING or anything unexpected) -> Agent.",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.4,
-      "position": [4620, 200],
+      "position": [4840, 200],
       "parameters": {
         "rules": {
           "values": [
@@ -736,7 +832,7 @@
       "name": "Send Booked",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [4840, -40],
+      "position": [5060, -40],
       "onError": "continueErrorOutput",
       "parameters": {
         "source": "database",
@@ -772,7 +868,7 @@
       "name": "First Visit?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [5060, -120],
+      "position": [5280, -120],
       "parameters": {
         "conditions": {
           "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
@@ -794,7 +890,7 @@
       "name": "Send Intake",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [5280, -200],
+      "position": [5500, -200],
       "onError": "continueErrorOutput",
       "parameters": {
         "source": "database",
@@ -830,7 +926,7 @@
       "name": "Send Slot Taken",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [4840, 120],
+      "position": [5060, 120],
       "onError": "continueErrorOutput",
       "parameters": {
         "source": "database",
@@ -866,7 +962,7 @@
       "name": "Send Expired",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [4840, 280],
+      "position": [5060, 280],
       "onError": "continueErrorOutput",
       "parameters": {
         "source": "database",
@@ -902,7 +998,7 @@
       "name": "Send Already Booked",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [4840, 440],
+      "position": [5060, 440],
       "onError": "continueErrorOutput",
       "parameters": {
         "source": "database",
@@ -936,12 +1032,14 @@
     {
       "id": "e1a10013-0035-4c00-8000-000000000035",
       "name": "Reminder Check",
+      "notes": "All reminded visits of the client (Reminder Gate needs the latest reminder_sent_at).",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
       "type": "n8n-nodes-base.airtable",
       "typeVersion": 2.2,
-      "position": [4180, 760],
+      "position": [4180, 860],
       "alwaysOutputData": true,
       "credentials": {
         "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
@@ -953,8 +1051,22 @@
         "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
         "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
         "filterByFormula": "={{ \"AND({client_id}='\" + (/^[A-Za-z0-9_-]{1,64}$/.test(String($('Client Data').first().json.client_id || '')) ? $('Client Data').first().json.client_id : '__no_such_client__') + \"',{status}='reminded')\" }}",
-        "limit": 1,
+        "returnAll": true,
         "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0056-4c00-8000-000000000056",
+      "name": "Reminder Gate",
+      "notes": "A bare yes/no answers a reminder only when the reminder is the last thing the bot said: a reminded visit exists AND Clients.last_agent_reply_at is blank or earlier than the latest reminder_sent_at. Otherwise (it answered the agent) the agent gets it.",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4400, 860],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const kind = $('Classify').first().json.kind;\nconst last = String($('Client Data').first().json.last_agent_reply_at || '').trim();\nconst rows = $input.all().map(i => (i.json || {}).fields || {}).filter(f => f.appt_id);\nlet answer = false;\nif (['yes', 'no'].includes(kind) && rows.length) {\n  if (!last) answer = true;\n  else {\n    const l = DateTime.fromISO(last);\n    const sent = rows.map(f => DateTime.fromISO(String(f.reminder_sent_at || ''))).filter(d => d.isValid).map(d => d.toMillis());\n    answer = l.isValid && sent.length > 0 && Math.max(...sent) > l.toMillis();\n  }\n}\nreturn [{ json: { answer, reminded: rows.length } }];"
       }
     },
     {
@@ -962,14 +1074,14 @@
       "name": "Reminder Answer?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [4400, 760],
+      "position": [4620, 860],
       "parameters": {
         "conditions": {
           "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
           "conditions": [
             {
               "id": "e1a10013-1015-4c00-8000-000000000015",
-              "leftValue": "={{ !!$json.fields?.appt_id && ['yes','no'].includes($('Classify').first().json.kind) }}",
+              "leftValue": "={{ $json.answer === true }}",
               "rightValue": "",
               "operator": { "type": "boolean", "operation": "true", "singleValue": true }
             }
@@ -984,7 +1096,7 @@
       "name": "Reminder Reply",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [4620, 660],
+      "position": [4840, 760],
       "onError": "continueErrorOutput",
       "parameters": {
         "source": "database",
@@ -1013,7 +1125,7 @@
       "notes": "NO_REMINDED has no visit, so the template would have nothing to fill and send_message would throw: the message is an ordinary one for the agent.",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [4840, 660],
+      "position": [5060, 760],
       "parameters": {
         "conditions": {
           "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
@@ -1035,7 +1147,7 @@
       "name": "Send Reminder Result",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [5060, 600],
+      "position": [5280, 700],
       "onError": "continueErrorOutput",
       "parameters": {
         "source": "database",
@@ -1067,35 +1179,12 @@
       }
     },
     {
-      "id": "e1a10013-0040-4c00-8000-000000000040",
-      "name": "Bare Yes?",
-      "notes": "A bare YES with no pending proposal and no reminder to answer: confirm_booking decides (ALREADY_BOOKED for a booked visit, NO_PENDING -> Agent).",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [4620, 880],
-      "parameters": {
-        "conditions": {
-          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
-          "conditions": [
-            {
-              "id": "e1a10013-1017-4c00-8000-000000000017",
-              "leftValue": "={{ $('Classify').first().json.kind === 'yes' }}",
-              "rightValue": "",
-              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      }
-    },
-    {
       "id": "e1a10013-0041-4c00-8000-000000000041",
       "name": "Agent",
       "notes": "Error output -> Notify Failure -> Send Error: the client always gets an answer.",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [5280, 880],
+      "position": [5500, 980],
       "onError": "continueErrorOutput",
       "parameters": {
         "source": "database",
@@ -1129,10 +1218,10 @@
     {
       "id": "e1a10013-0042-4c00-8000-000000000042",
       "name": "Notify Failure",
-      "notes": "Reached from the error output of Confirm, Reminder Reply or Agent. Both outputs go to Send Error: the client is answered even if the owner alert failed.",
+      "notes": "Reached from the error output of every client-path step that can fail (Rate Limit, Client Formula, Client, Language, Create Client, Client Data, Classify, Pending, Gate, Confirm, Reminder Check, Reminder Gate, Reminder Reply, Agent, Fresh Pending). Exactly one of them fails per run. Both outputs go to Send Error: the client is answered even if the owner alert failed.",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [5500, 1160],
+      "position": [5720, 1300],
       "onError": "continueErrorOutput",
       "parameters": {
         "source": "database",
@@ -1140,7 +1229,7 @@
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
-            "text": "={{ '❌ Reply failed for ' + $('Client Data').first().json.contact_id + ': ' + String(($json.error && ($json.error.message || $json.error)) || 'see WF-6').slice(0, 300) + ' (step: ' + $prevNode.name + '; the client got the ERROR message)' }}"
+            "text": "={{ '❌ Reply failed for ' + $('Normalize').first().json.contact_id + ': ' + String(($json.error && ($json.error.message || $json.error)) || 'see WF-6').slice(0, 300) + ' (step: ' + $prevNode.name + '; the client got the ERROR message)' }}"
           },
           "matchingColumns": [],
           "schema": [
@@ -1158,7 +1247,7 @@
       "name": "Send Error",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [5720, 1160],
+      "position": [5940, 1300],
       "onError": "continueErrorOutput",
       "parameters": {
         "source": "database",
@@ -1192,14 +1281,14 @@
     {
       "id": "e1a10013-0044-4c00-8000-000000000044",
       "name": "Fresh Pending",
-      "notes": "A pending row whose summary was not sent yet = the agent just proposed a booking. Continue on error: a failed read sends the agent's own reply instead of nothing.",
+      "notes": "A pending row whose summary was not sent yet. Error output -> Notify Failure -> ERROR.",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
-      "onError": "continueRegularOutput",
+      "onError": "continueErrorOutput",
       "type": "n8n-nodes-base.airtable",
       "typeVersion": 2.2,
-      "position": [5500, 880],
+      "position": [5720, 980],
       "alwaysOutputData": true,
       "credentials": {
         "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
@@ -1218,16 +1307,17 @@
     {
       "id": "e1a10013-0045-4c00-8000-000000000045",
       "name": "Summary?",
+      "notes": "Summary only when THIS agent turn called propose_booking and the pending row is still valid; otherwise the agent's own reply goes out.",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [5720, 880],
+      "position": [5940, 980],
       "parameters": {
         "conditions": {
           "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
           "conditions": [
             {
               "id": "e1a10013-1018-4c00-8000-000000000018",
-              "leftValue": "={{ !!$json.fields?.appt_id }}",
+              "leftValue": "={{ !!$json.fields?.appt_id && [].concat($('Agent').first().json.tools_used || []).includes('propose_booking') && DateTime.fromISO(String($json.fields?.pending_expires_at || '')).toMillis() > $now.toMillis() }}",
               "rightValue": "",
               "operator": { "type": "boolean", "operation": "true", "singleValue": true }
             }
@@ -1243,7 +1333,7 @@
       "notes": "The summary is built from the Appointments row (service, duration, time), not from the agent's text.",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [5940, 760],
+      "position": [6160, 860],
       "onError": "continueErrorOutput",
       "parameters": {
         "source": "database",
@@ -1277,12 +1367,13 @@
     {
       "id": "e1a10013-0047-4c00-8000-000000000047",
       "name": "Mark Summary Sent",
+      "notes": "After the client already got the summary: a failure here is not answered with ERROR; it fails the run, so WF-6 tells the owner.",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
       "type": "n8n-nodes-base.airtable",
       "typeVersion": 2.2,
-      "position": [6160, 760],
+      "position": [6380, 860],
       "credentials": {
         "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
       },
@@ -1314,7 +1405,7 @@
       "name": "Template?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
-      "position": [5940, 1000],
+      "position": [6160, 1100],
       "parameters": {
         "conditions": {
           "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
@@ -1336,7 +1427,7 @@
       "name": "Send Template",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [6160, 940],
+      "position": [6380, 1040],
       "onError": "continueErrorOutput",
       "parameters": {
         "source": "database",
@@ -1372,7 +1463,7 @@
       "name": "Send Reply",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [6160, 1080],
+      "position": [6380, 1180],
       "onError": "continueErrorOutput",
       "parameters": {
         "source": "database",
@@ -1404,12 +1495,48 @@
       }
     },
     {
+      "id": "e1a10013-0057-4c00-8000-000000000057",
+      "name": "Mark Replied",
+      "notes": "Clients.last_agent_reply_at = now after every agent reply that went out (Send Reply, Send Template, Send Summary). Reminder Gate compares it with reminder_sent_at. Runs after the client got the reply, so a failure fails the run (WF-6 tells the owner) instead of sending ERROR.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [6600, 1040],
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "update",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Clients", "mode": "id" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $('Client Data').first().json.client_rec }}",
+            "last_agent_reply_at": "={{ $now.toUTC().toISO() }}"
+          },
+          "matchingColumns": ["id"],
+          "schema": [
+            { "id": "id", "displayName": "id", "required": false, "defaultMatch": true, "display": true, "type": "string", "readOnly": true, "removed": false },
+            { "id": "last_agent_reply_at", "displayName": "last_agent_reply_at", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "dateTime", "removed": false }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
       "id": "e1a10013-0051-4c00-8000-000000000051",
       "name": "Notify Send Failure",
-      "notes": "A send itself failed: only the owner can be told. Error output deliberately unconnected (nothing else left to try).",
+      "notes": "A send to the client failed: tell the owner, then try ONE separate ERROR send (Send Error Again, whose error output is unconnected: no loop).",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [6400, 1360],
+      "position": [6600, 1460],
       "onError": "continueErrorOutput",
       "parameters": {
         "source": "database",
@@ -1422,6 +1549,43 @@
           "matchingColumns": [],
           "schema": [
             { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0058-4c00-8000-000000000058",
+      "name": "Send Error Again",
+      "notes": "The one ERROR send after a failed client send. Its error output stays unconnected on purpose.",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [6820, 1460],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:send_message", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Normalize').first().json.contact_id }}",
+            "text": "",
+            "template_key": "ERROR",
+            "appt_id": "",
+            "vars_json": "",
+            "outside_window": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "template_key", "displayName": "template_key", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "vars_json", "displayName": "vars_json", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
           ],
           "attemptToConvertTypes": false,
           "convertFieldsToString": true
@@ -1446,10 +1610,15 @@
         [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
       ]
     },
-    "Rate Limit": { "main": [[{ "node": "Allowed?", "type": "main", "index": 0 }]] },
+    "Rate Limit": {
+      "main": [
+        [{ "node": "Allowed?", "type": "main", "index": 0 }],
+        [{ "node": "Notify Failure", "type": "main", "index": 0 }]
+      ]
+    },
     "Allowed?": {
       "main": [
-        [{ "node": "Settings", "type": "main", "index": 0 }],
+        [{ "node": "Client Formula", "type": "main", "index": 0 }],
         [{ "node": "Notify Spam?", "type": "main", "index": 0 }]
       ]
     },
@@ -1471,19 +1640,57 @@
         [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
       ]
     },
-    "Settings": { "main": [[{ "node": "Client Formula", "type": "main", "index": 0 }]] },
-    "Client Formula": { "main": [[{ "node": "Client", "type": "main", "index": 0 }]] },
-    "Client": { "main": [[{ "node": "New Client?", "type": "main", "index": 0 }]] },
-    "New Client?": {
+    "Client Formula": {
+      "main": [
+        [{ "node": "Client", "type": "main", "index": 0 }],
+        [{ "node": "Notify Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Client": {
+      "main": [
+        [{ "node": "Lang Needed?", "type": "main", "index": 0 }],
+        [{ "node": "Notify Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Lang Needed?": {
       "main": [
         [{ "node": "Detect Language", "type": "main", "index": 0 }],
-        [{ "node": "Client Data", "type": "main", "index": 0 }]
+        [{ "node": "New Client?", "type": "main", "index": 0 }]
       ]
     },
     "Haiku": { "ai_languageModel": [[{ "node": "Detect Language", "type": "ai_languageModel", "index": 0 }]] },
-    "Detect Language": { "main": [[{ "node": "Create Client", "type": "main", "index": 0 }]] },
-    "Create Client": { "main": [[{ "node": "Client Data", "type": "main", "index": 0 }]] },
-    "Client Data": { "main": [[{ "node": "Escalated?", "type": "main", "index": 0 }]] },
+    "Detect Language": { "main": [[{ "node": "Language", "type": "main", "index": 0 }]] },
+    "Language": {
+      "main": [
+        [{ "node": "New Client?", "type": "main", "index": 0 }],
+        [{ "node": "Notify Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "New Client?": {
+      "main": [
+        [{ "node": "Create Client", "type": "main", "index": 0 }],
+        [{ "node": "Detected?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Create Client": {
+      "main": [
+        [{ "node": "Client Data", "type": "main", "index": 0 }],
+        [{ "node": "Notify Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Detected?": {
+      "main": [
+        [{ "node": "Update Language", "type": "main", "index": 0 }],
+        [{ "node": "Client Data", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update Language": { "main": [[{ "node": "Client Data", "type": "main", "index": 0 }]] },
+    "Client Data": {
+      "main": [
+        [{ "node": "Escalated?", "type": "main", "index": 0 }],
+        [{ "node": "Notify Failure", "type": "main", "index": 0 }]
+      ]
+    },
     "Escalated?": {
       "main": [
         [{ "node": "Send Hold", "type": "main", "index": 0 }],
@@ -1496,14 +1703,30 @@
         [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
       ]
     },
-    "Classify": { "main": [[{ "node": "Pending", "type": "main", "index": 0 }]] },
-    "Pending": { "main": [[{ "node": "Gate", "type": "main", "index": 0 }]] },
-    "Gate": { "main": [[{ "node": "Route", "type": "main", "index": 0 }]] },
+    "Classify": {
+      "main": [
+        [{ "node": "Pending", "type": "main", "index": 0 }],
+        [{ "node": "Notify Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Pending": {
+      "main": [
+        [{ "node": "Gate", "type": "main", "index": 0 }],
+        [{ "node": "Notify Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Gate": {
+      "main": [
+        [{ "node": "Route", "type": "main", "index": 0 }],
+        [{ "node": "Notify Failure", "type": "main", "index": 0 }]
+      ]
+    },
     "Route": {
       "main": [
         [{ "node": "Confirm", "type": "main", "index": 0 }],
         [{ "node": "LLM Affirmative", "type": "main", "index": 0 }],
-        [{ "node": "Reminder Check", "type": "main", "index": 0 }]
+        [{ "node": "Reminder Check", "type": "main", "index": 0 }],
+        [{ "node": "Agent", "type": "main", "index": 0 }]
       ]
     },
     "Haiku YES": { "ai_languageModel": [[{ "node": "LLM Affirmative", "type": "ai_languageModel", "index": 0 }]] },
@@ -1511,7 +1734,7 @@
     "Affirmative?": {
       "main": [
         [{ "node": "Confirm", "type": "main", "index": 0 }],
-        [{ "node": "Reminder Check", "type": "main", "index": 0 }]
+        [{ "node": "Agent", "type": "main", "index": 0 }]
       ]
     },
     "Confirm": {
@@ -1565,11 +1788,22 @@
         [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
       ]
     },
-    "Reminder Check": { "main": [[{ "node": "Reminder Answer?", "type": "main", "index": 0 }]] },
+    "Reminder Check": {
+      "main": [
+        [{ "node": "Reminder Gate", "type": "main", "index": 0 }],
+        [{ "node": "Notify Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Reminder Gate": {
+      "main": [
+        [{ "node": "Reminder Answer?", "type": "main", "index": 0 }],
+        [{ "node": "Notify Failure", "type": "main", "index": 0 }]
+      ]
+    },
     "Reminder Answer?": {
       "main": [
         [{ "node": "Reminder Reply", "type": "main", "index": 0 }],
-        [{ "node": "Bare Yes?", "type": "main", "index": 0 }]
+        [{ "node": "Agent", "type": "main", "index": 0 }]
       ]
     },
     "Reminder Reply": {
@@ -1590,12 +1824,6 @@
         [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
       ]
     },
-    "Bare Yes?": {
-      "main": [
-        [{ "node": "Confirm", "type": "main", "index": 0 }],
-        [{ "node": "Agent", "type": "main", "index": 0 }]
-      ]
-    },
     "Agent": {
       "main": [
         [{ "node": "Fresh Pending", "type": "main", "index": 0 }],
@@ -1614,7 +1842,12 @@
         [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
       ]
     },
-    "Fresh Pending": { "main": [[{ "node": "Summary?", "type": "main", "index": 0 }]] },
+    "Fresh Pending": {
+      "main": [
+        [{ "node": "Summary?", "type": "main", "index": 0 }],
+        [{ "node": "Notify Failure", "type": "main", "index": 0 }]
+      ]
+    },
     "Summary?": {
       "main": [
         [{ "node": "Send Summary", "type": "main", "index": 0 }],
@@ -1627,6 +1860,7 @@
         [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
       ]
     },
+    "Mark Summary Sent": { "main": [[{ "node": "Mark Replied", "type": "main", "index": 0 }]] },
     "Template?": {
       "main": [
         [{ "node": "Send Template", "type": "main", "index": 0 }],
@@ -1635,14 +1869,20 @@
     },
     "Send Template": {
       "main": [
-        [],
+        [{ "node": "Mark Replied", "type": "main", "index": 0 }],
         [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
       ]
     },
     "Send Reply": {
       "main": [
-        [],
+        [{ "node": "Mark Replied", "type": "main", "index": 0 }],
         [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Notify Send Failure": {
+      "main": [
+        [{ "node": "Send Error Again", "type": "main", "index": 0 }],
+        [{ "node": "Send Error Again", "type": "main", "index": 0 }]
       ]
     }
   },
