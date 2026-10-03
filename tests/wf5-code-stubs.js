@@ -246,7 +246,7 @@ check('no unreachable node', unreachable.length === 0, unreachable);
 // ---------------------------------------------------------------- settings of every node
 check('errorWorkflow is WF-6', WF.settings.errorWorkflow === 'WFID:wf6-error-handler');
 check('Hourly: every hour at minute 5', same(node('Hourly').parameters.rule.interval, [{ field: 'hours', hoursInterval: 1, triggerAtMinute: 5 }]));
-check('Run Now: POST, Header Auth with MedSpa Test Key, path = workflow name, waits for the run', node('Run Now').parameters.httpMethod === 'POST' && node('Run Now').parameters.path === 'wf5-reminders' && node('Run Now').parameters.authentication === 'headerAuth' && node('Run Now').credentials.httpHeaderAuth.name === 'MedSpa Test Key' && node('Run Now').parameters.responseMode === 'lastNode');
+check('Run Now: POST, Header Auth with MedSpa Test Key, path = workflow name, answers at once (lastNode gave HTTP 500 when the last node had no item)', node('Run Now').parameters.httpMethod === 'POST' && node('Run Now').parameters.path === 'wf5-reminders' && node('Run Now').parameters.authentication === 'headerAuth' && node('Run Now').credentials.httpHeaderAuth.name === 'MedSpa Test Key' && node('Run Now').parameters.responseMode === 'onReceived');
 const noRetry = WF.nodes.filter((n) => n.type === 'n8n-nodes-base.airtable' && !(n.retryOnFail === true && n.maxTries === 2 && n.waitBetweenTries === 5000)).map((n) => n.name);
 check('every Airtable node: retryOnFail, maxTries 2, wait 5000', noRetry.length === 0, noRetry);
 const noErr = WF.nodes.filter((n) => n.type === 'n8n-nodes-base.executeWorkflow' && n.onError !== 'continueErrorOutput').map((n) => n.name);

@@ -30,7 +30,7 @@
         "httpMethod": "POST",
         "path": "wf5-reminders",
         "authentication": "headerAuth",
-        "responseMode": "lastNode",
+        "responseMode": "onReceived",
         "options": {}
       }
     },
