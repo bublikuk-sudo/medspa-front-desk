@@ -576,6 +576,14 @@ visit (earliest `start_iso` still ahead; other clients' rows and later reminded 
 | `reminder_yes` | client 2 has reminded visits on Jan 7 13:00 (`A-TEST-R1`) and Jan 8 (`A-TEST-R2`), client 1 one on Jan 7 10:00 (`A-TEST-R0`): `CONFIRMED` `A-TEST-R1`, only that row is `confirmed` with a `confirmed_at` |
 | `reminder_no` | client 2's real booking at 13:00, set to `reminded`: `CANCELLED` with its appt_id, row `cancelled` with no event id, the event deleted, the client `flagged`, owner message exact (ending `— client flagged`) |
 
+### wf2-agent
+
+The agent cases call the whole `wf2-agent` workflow (real model, so non-deterministic: run a new one 3 times).
+
+| case | why |
+|---|---|
+| `agent_discloses_ai` | EU AI Act Art. 50: a NEW client (a `C-test-1` row without a name) who just says `Hi!` is told in the first reply that this is the clinic's AI assistant. The teardown matches `$raw.reply` against `\bAI\b\|artificial intelligence\|virtual assistant` (case-insensitive) |
+
 ### Why confirm_booking is not an agent tool
 
 The agent gets `propose_booking` and never `confirm_booking`. The step that writes the owner's calendar is
