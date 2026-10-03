@@ -43,7 +43,80 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const j = $input.first().json;\nif (j.message) {  // Telegram update\n  const m = j.message;\n  // Private chats only: in a group chat.id is the group, not a client, and the bot must not answer there.\n  if (!m.chat || m.chat.type !== 'private') return [];\n  return [{ json: { channel: 'tg', contact_id: 'tg:' + m.chat.id, text: (m.text || '').trim(), raw_name: [m.from?.first_name, m.from?.last_name].filter(Boolean).join(' ') } }];\n}\n// Meta WhatsApp Cloud API (Task 15). WhatsApp Trigger emits one item per webhook change, shaped { ...change.value, field }\n// (messaging_product, metadata, contacts, messages, statuses, field): there is no entry[] level here.\nif (j.field === 'messages') {\n  const m = j.messages?.[0];\n  if (!m) return [];  // status callback (statuses: sent/delivered/read): start nothing\n  // Meta gives the number as E.164 digits without a plus. Anything else must not become a contact_id.\n  const from = typeof m.from === 'string' ? m.from : '';\n  if (!/^\\d{7,15}$/.test(from)) return [];\n  // Non-text (image, sticker, audio, ...) keeps the contact and gets text '': the same Send Non-Text path as a Telegram sticker.\n  const text = m.type === 'text' && typeof m.text?.body === 'string' ? m.text.body.trim() : '';\n  return [{ json: { channel: 'wa', contact_id: 'wa:+' + from, text, raw_name: String(j.contacts?.[0]?.profile?.name || '') } }];\n}\n// Any other WhatsApp field (template status, account update, ...) and any unknown body: end the run; an item with an empty contact_id must never go on.\nreturn [];"
+        "jsCode": "const all = $input.all();\nconst j = all[0].json;\nif (j.message) {  // Telegram update\n  const m = j.message;\n  // Private chats only: in a group chat.id is the group, not a client, and the bot must not answer there.\n  if (!m.chat || m.chat.type !== 'private') return [];\n  return [{ json: { channel: 'tg', contact_id: 'tg:' + m.chat.id, text: (m.text || '').trim(), raw_name: [m.from?.first_name, m.from?.last_name].filter(Boolean).join(' ') } }];\n}\n// Meta WhatsApp Cloud API (Task 15). WhatsApp Trigger emits one item per webhook change, shaped { ...change.value, field }\n// (messaging_product, metadata, contacts, messages, statuses, field): there is no entry[] level here.\n// One run handles ONE sender (everything downstream reads $('Normalize').first()). A Meta batch can hold several\n// changes and several messages, so: gather every message of every item, take the sender of the earliest one, join that\n// sender's texts in timestamp order, and report everything else as dropped (alert_text, sent to the owner by a side branch).\nconst IGNORED = ['reaction', 'unsupported', 'system'];  // not something the client said to the bot: no reply, no alert\nconst msgs = [];\nlet malformed = 0, seq = 0;\nfor (const it of all) {\n  const v = it.json || {};\n  if (v.field !== 'messages' || !Array.isArray(v.messages)) continue;  // statuses, template/account updates, ...\n  const contacts = Array.isArray(v.contacts) ? v.contacts : [];\n  for (const m of v.messages) {\n    if (!m || typeof m !== 'object' || IGNORED.includes(m.type)) continue;\n    // Meta gives the number as E.164 digits without a plus. Anything else must not become a contact_id, but must not vanish either.\n    const from = typeof m.from === 'string' ? m.from : '';\n    if (!/^\\d{7,15}$/.test(from)) { malformed++; continue; }\n    const c = contacts.find((x) => x && x.wa_id === from) || (contacts.length === 1 ? contacts[0] : null);\n    const ts = Number(m.timestamp);\n    msgs.push({\n      from, seq: seq++, ts: Number.isFinite(ts) ? ts : 0,\n      text: m.type === 'text' && typeof m.text?.body === 'string' ? m.text.body.trim() : '',\n      name: typeof c?.profile?.name === 'string' ? c.profile.name : '',\n    });\n  }\n}\nif (!msgs.length && !malformed) return [];  // only statuses / other fields / reactions: start nothing\nmsgs.sort((a, b) => a.ts - b.ts || a.seq - b.seq);\nconst first = msgs[0];\nconst counts = new Map();\nfor (const m of msgs) if (m.from !== first?.from) counts.set(m.from, (counts.get(m.from) || 0) + 1);\nconst dropped_senders = [...counts].map(([f, n]) => ({ contact_id: 'wa:+' + f, count: n }));\nconst lines = dropped_senders.map((d) => '⚠️ WhatsApp batch: ' + d.count + ' message(s) from ' + d.contact_id + ' were not processed — ask them to resend');\nif (malformed) lines.push('⚠️ WhatsApp batch: ' + malformed + ' message(s) with an unreadable sender number were not processed');\nconst alert_text = lines.join('\\n');\nif (!first) return [{ json: { channel: 'wa', contact_id: '', text: '', raw_name: '', dropped_senders, alert_text } }];  // alert only: Has Sender? stops the main path\n// Non-text (image, sticker, audio, ...) keeps the contact and gives text '': the same Send Non-Text path as a Telegram sticker.\nconst own = msgs.filter((m) => m.from === first.from);\nreturn [{ json: {\n  channel: 'wa', contact_id: 'wa:+' + first.from,\n  text: own.map((m) => m.text).filter(Boolean).join('\\n'),\n  raw_name: (own.find((m) => m.name) || first).name,\n  dropped_senders, alert_text,\n} }];"
+      }
+    },
+    {
+      "id": "e1a10015-0002-4c00-8000-000000000016",
+      "name": "Has Sender?",
+      "notes": "Normalize emits an item with an empty contact_id when a WhatsApp batch held only unreadable senders (it exists to carry the owner alert). Such an item must not reach Client Formula.",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [330, 400],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e1a10015-1001-4c00-8000-000000000001",
+              "leftValue": "={{ !!$json.contact_id }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10015-0003-4c00-8000-000000000017",
+      "name": "Dropped?",
+      "notes": "Side branch of Normalize, independent of the main path: true when a WhatsApp batch held messages that this run does not process (a second sender, or an unreadable sender number).",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [440, 700],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e1a10015-1002-4c00-8000-000000000002",
+              "leftValue": "={{ !!$json.alert_text }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10015-0004-4c00-8000-000000000018",
+      "name": "Notify Dropped",
+      "notes": "Owner alert for WhatsApp messages the run could not process. Nothing is connected after it, success or error: it never affects the main path.",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [660, 700],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:notify_owner", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "text": "={{ $json.alert_text }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
       }
     },
     {
@@ -1614,7 +1687,16 @@
   "connections": {
     "Telegram Trigger": { "main": [[{ "node": "Normalize", "type": "main", "index": 0 }]] },
     "WhatsApp Trigger": { "main": [[{ "node": "Normalize", "type": "main", "index": 0 }]] },
-    "Normalize": { "main": [[{ "node": "Has Text?", "type": "main", "index": 0 }]] },
+    "Normalize": {
+      "main": [
+        [
+          { "node": "Has Sender?", "type": "main", "index": 0 },
+          { "node": "Dropped?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Has Sender?": { "main": [[{ "node": "Has Text?", "type": "main", "index": 0 }], []] },
+    "Dropped?": { "main": [[{ "node": "Notify Dropped", "type": "main", "index": 0 }], []] },
     "Has Text?": {
       "main": [
         [{ "node": "Rate Limit", "type": "main", "index": 0 }],
