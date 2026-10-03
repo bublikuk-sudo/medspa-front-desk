@@ -115,6 +115,62 @@ written). It runs BEFORE `tests/cleanup.sh`, because it needs the rows: it takes
 by id (deleting them here first would make the cleanup's `DELETED n of m` fall short). Until Task 10 it picked every
 event of the day whose description looked like an appt_id, which could have reached a real booking on that date.
 
+## Index: which spec point each case closes
+
+Level 1 is "each tool on its own with fixed inputs" (spec, section Testing, point 1). The suite is 96 cases and is
+green twice in a row (log: `tests/dialog-runs/2026-10-03-level1.md`). Every case is self-sufficient: it builds its own
+state in `setup`, can be run alone (`tests/tool-cases.sh <name>`) and removes its test data in `teardown`. The last row,
+`final_cleanup`, leaves the base and the calendar empty of test data. The per-case details are in the tool sections
+below; this table only says which spec point the cases of a tool close.
+
+| tool | cases | spec point |
+|---|---|---|
+| `test-fixtures` | `fixtures_list_empty`, `fixtures_create_and_delete`, `fixtures_created_event_is_listed`, `fixtures_delete_removes_all`, `fixtures_delete_none`, `fixtures_by_id_skips_non_booking`, `final_cleanup` | The test harness itself: a busy block can be created, listed and removed; only `[TEST]` events and booking events of `C-test` rows are ever deleted ("never touch a real booking"); the suite leaves nothing behind. |
+| `find_client` | `find_client_unknown`, `find_client_no_name` | Unknown contact, or a row without a name, is `NEW` (the agent asks for the name). |
+| | `find_client_known`, `find_client_no_appts`, `find_client_no_next_visit`, `find_client_owner_notes` | The returning-client card: last visit, `upcoming=[...]` (the only source of `appt_id` for cancel), owner notes. |
+| | `find_client_empty_id`, `find_client_malformed_id`, `find_client_bare_wa_prefix`, `find_client_whitespace_name`, `find_client_name_quote` | Hostile or malformed input never returns another client's card and a client-controlled name cannot forge card fields. |
+| `search_knowledge` | `kb_hours`, `kb_botox_prep`, `kb_paraphrase_shave`, `kb_found_location`, `kb_found_german`, `kb_strips_topic_line`, `kb_output_only_verdict` | A question the base answers returns `FOUND` with the right paragraph first, in any phrasing or language. |
+| | `kb_out_of_base`, `kb_not_found_service`, `kb_empty_question` | "Question outside the base gives NOT_FOUND" (the agent then escalates, never invents). |
+| | `kb_not_found_medical`, `kb_not_found_aspirin`, `kb_not_found_symptom`, `kb_not_found_compound` | Medical, drug, symptom and half-answered compound questions are `NOT_FOUND`: the first guardrail layer (a FOUND must never disarm the second one in WF-2). |
+| `escalate` | `escalate_ok`, `escalate_whatsapp_client`, `escalate_unknown_contact` | A client is flagged `escalated` (found by Telegram id or phone) and the owner is notified; an unknown contact still notifies and creates no row. |
+| | `escalate_malformed_id`, `escalate_empty_id`, `escalate_bare_wa_prefix`, `escalate_tg_no_digits`, `escalate_quote_id`, `escalate_long_digits` | Invalid ids flag nobody (no bystander with a blank phone or chat id is hit). |
+| | `escalate_hostile_reason` | The owner message survives HTML, `&`, newlines, NUL and a forged `Status:` line. |
+| | `escalate_history_present`, `escalate_history_none`, `escalate_history_unreadable` | The owner gets the recent conversation (client/bot lines in order, no tool noise, nothing from another session). |
+| `check_availability` | `avail_busy_excluded` | "An occupied slot does not get into FREE" (a real calendar event, boundaries exact). |
+| | `avail_morning_only`, `avail_pod_anytime`, `avail_pod_invalid` | `part_of_day` filters (a morning visit ends by 12:00), a loosely typed value is normalised, an invalid one is `NONE invalid part_of_day`. |
+| | `avail_closed_day` | "A day without windows gives NONE" plus the next three open days. |
+| | `avail_unknown_service` | An unknown service is `UNKNOWN_SERVICE` with the list of real ones. |
+| | `avail_saves_offer` | The offered slots are stored on the client row (`last_offer_json`): the only slots `propose_booking` accepts. |
+| `propose_booking` | `propose_not_offered`, `propose_stale_offer`, `propose_old_format_offer`, `propose_other_service` | "A slot that was not offered gives SLOT_NOT_OFFERED" (never offered, offer too old, old offer format, offered for another service). |
+| | `propose_no_client`, `propose_unknown_service` | `NO_CLIENT_ROW` and `UNKNOWN_SERVICE` write nothing. |
+| | `propose_ok`, `propose_after_real_offer` | A valid slot becomes a `pending` row with a TTL, the name is stored for a nameless client; works with the real `check_availability`. |
+| | `propose_replaces_pending` | A new proposal cancels the client's older pending rows and nobody else's. |
+| | `propose_replaces_own`, `propose_replaces_foreign`, `propose_replaces_past` | Reschedule: `replaces_appt_id` is kept only for the client's own future visit. |
+| `confirm_booking` | `confirm_no_pending`, `confirm_other_client_pending` | "YES without a pending visit goes to the agent, not into a booking" (`NO_PENDING`; another client's pending row is not touched). |
+| | `confirm_expired` | "YES after the TTL gives EXPIRED" (row cancelled, no event). |
+| | `confirm_ok`, `confirm_returning_client` | The booking: row `booked`, exactly one calendar event (title, times, description), client `active` on a first visit, owner notified. |
+| | `confirm_again`, `confirm_stray_pending`, `confirm_repair`, `confirm_concurrent` | Idempotence: a second YES, a stray pending row, a crash between event and row, two simultaneous YES all end with one event and one notification. |
+| | `confirm_slot_taken` | Two clients, one slot: the second gets `SLOT_TAKEN` with alternatives and a fresh offer. |
+| | `confirm_replaces_old`, `confirm_reschedule_late`, `confirm_repair_replaces`, `confirm_replace_failed` | Reschedule through confirm: the old visit is cancelled (never `late_cancel`, client not flagged), the repair path also cancels the old visit, a failed cancel of the old one still books the new one and warns the owner. |
+| `cancel_booking` | `cancel_ok`, `cancel_already_gone` | A cancel more than 24 h ahead gives `CANCELLED`, deletes the calendar event, tells the owner (also when Google says the event is gone). |
+| | `cancel_late`, `cancel_late_escalated` | "A cancel 3 hours before gives LATE_CANCEL": row `late_cancel`, client `flagged` (an escalated client stays escalated). |
+| | `cancel_reschedule_reason`, `cancel_forged_reschedule` | A late cancel with a real replacement is a reschedule, not a penalty; a forged `reschedule` reason is treated as a late cancel. |
+| | `cancel_not_found`, `cancel_invalid_id`, `cancel_not_yours`, `cancel_past`, `cancel_already_cancelled` | `NOT_FOUND` / `NOT_YOURS`: unknown, malformed, someone else's, past and already cancelled ids change nothing. |
+| | `cancel_pending_in_window` | A pending proposal is cancelled without penalty. |
+| `reminder_reply` | `reminder_none`, `reminder_yes`, `reminder_no` | The answer to the reminder: no reminded visit is `NO_REMINDED`; YES confirms exactly the nearest reminded visit; NO cancels it, deletes the event, flags the client and tells the owner. |
+| `wf2-agent` | `agent_books_flow` | The agent really calls `check_availability` for a booking request and the offer is saved. This case is non-deterministic (an LLM). |
+| | `agent_medical_escalates` | "A medical question goes to the owner": client `escalated`, empty reply (the fixed template is sent), exactly one owner notification. |
+| | `agent_discloses_ai` | EU AI Act Art. 50: a new client is told in the first reply that the assistant is an AI. |
+
+Not in this suite. WF-5 is a scheduled workflow, not a sub-workflow tool the harness can call, so its behaviour is
+tested separately (`tests/wf5-live.sh`, `tests/wf5-live-markfail.sh`, Code-node stubs in `tests/wf5-code-stubs.sh`):
+the reminder and its gate (who is reminded and when), revisit invitations, the cleanup of expired `pending` rows, and
+the orphan-pending alert (an expired pending row that already has a calendar event is reported to the owner, not
+cancelled). In this suite the TTL rule is covered only on the tool side (`confirm_expired`) and the reminder answer
+only on the `reminder_reply` side. The WF-2 guardrail layer (drug names escalate when no knowledge passage is in
+context) and the full agent dialogs belong to level 2 (`tests/dialogs/`); here only the three `agent_*` cases touch
+the agent.
+
 ## Cases
 
 Cases are appended to the tsv together with the tools they test (tasks 7-12).
