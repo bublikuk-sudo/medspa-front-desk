@@ -108,7 +108,7 @@
     {
       "id": "5a0e0017-0006-4c00-8000-000000000006",
       "name": "Client",
-      "notes": "A visit whose client link is missing or whose client row is gone goes to Report Client Failure; the run goes on with the other rows.",
+      "notes": "A visit whose client link is missing or whose client row is gone goes to Alert Client (-> Dedupe Alerts -> Alert Owner); the run goes on with the other rows.",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
@@ -609,13 +609,13 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const sd = $getWorkflowStaticData('global');\nconst now = Date.now(), DAY = 24 * 3600 * 1000;\nconst seen = sd.alertSeen || {};\nfor (const k of Object.keys(seen)) if (!(now - seen[k] < DAY)) delete seen[k];\nconst out = [];\nfor (const it of $input.all()) {\n  const { key, text } = it.json || {};\n  if (!key || !text || seen[key]) continue;\n  seen[key] = now;\n  out.push({ json: { text } });\n}\nsd.alertSeen = seen;\nreturn out;"
+        "jsCode": "const sd = $getWorkflowStaticData('global');\nconst now = Date.now(), DAY = 24 * 3600 * 1000;\nconst seen = sd.alertSeen || {};\nfor (const k of Object.keys(seen)) if (!(now - seen[k] < DAY)) delete seen[k];\nconst out = [];\nfor (const it of $input.all()) {\n  const { key, text } = it.json || {};\n  if (!key || !text || seen[key]) continue;\n  seen[key] = now;\n  out.push({ json: { text, key } });\n}\nsd.alertSeen = seen;\nreturn out;"
       }
     },
     {
       "id": "5a0e0017-0033-4c00-8000-000000000033",
       "name": "Alert Owner",
-      "notes": "Nothing is connected after it, success or error.",
+      "notes": "Nothing is connected to the success output. The error output goes to Forget Alert Keys.",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
       "position": [2220, 500],
@@ -637,6 +637,19 @@
         },
         "mode": "each",
         "options": {}
+      }
+    },
+    {
+      "id": "5a0e0017-0034-4c00-8000-000000000034",
+      "name": "Forget Alert Keys",
+      "notes": "Alert Owner error output: notify_owner failed, so the alert never reached the owner. Remove the dedupe keys Dedupe Alerts stamped for it, so it is tried again next hour instead of being silenced for 24 h. Lost pairing -> forget every key of this run. Nothing is connected after it.",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2440, 600],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const sd = $getWorkflowStaticData('global');\nconst seen = sd.alertSeen || {};\nconst keys = $input.all().map((it, i) => { try { return $('Dedupe Alerts').itemMatching(i).json.key; } catch (e) { return undefined; } });\nconst forget = keys.some(k => !k) ? $('Dedupe Alerts').all(0).map(i => (i.json || {}).key) : keys;\nfor (const k of forget) if (k) delete seen[k];\nsd.alertSeen = seen;\nreturn [];"
       }
     }
   ],
@@ -697,7 +710,8 @@
     "Alert Expiry Mark": { "main": [[{ "node": "Dedupe Alerts", "type": "main", "index": 0 }]] },
     "Alert Client": { "main": [[{ "node": "Dedupe Alerts", "type": "main", "index": 0 }]] },
     "Alert Client 2": { "main": [[{ "node": "Dedupe Alerts", "type": "main", "index": 0 }]] },
-    "Dedupe Alerts": { "main": [[{ "node": "Alert Owner", "type": "main", "index": 0 }]] }
+    "Dedupe Alerts": { "main": [[{ "node": "Alert Owner", "type": "main", "index": 0 }]] },
+    "Alert Owner": { "main": [[], [{ "node": "Forget Alert Keys", "type": "main", "index": 0 }]] }
   },
   "settings": { "executionOrder": "v1", "saveManualExecutions": true, "errorWorkflow": "WFID:wf6-error-handler" }
 }

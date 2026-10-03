@@ -173,14 +173,14 @@ const dd = (items, sd) => runAll('Dedupe Alerts', items, {}, sd);
 {
   const sd = {};
   let x = dd([{ key: 'k1', text: 't1' }, { key: 'k2', text: 't2' }, { key: 'k1', text: 't1 again' }], sd).map((i) => i.json);
-  check('Dedupe Alerts: two keys pass, the repeat of k1 in the same run is dropped', same(x, [{ text: 't1' }, { text: 't2' }]), x);
+  check('Dedupe Alerts: two keys pass, the repeat of k1 in the same run is dropped', same(x, [{ text: 't1', key: 'k1' }, { text: 't2', key: 'k2' }]), x);
   check('Dedupe Alerts: keys are remembered in the workflow static data', Object.keys(sd.alertSeen || {}).sort().join() === 'k1,k2', sd);
   x = dd([{ key: 'k1', text: 't1' }, { key: 'k3', text: 't3' }], sd).map((i) => i.json);
-  check('Dedupe Alerts: next run (hour later) - k1 is throttled, new k3 passes', same(x, [{ text: 't3' }]), x);
+  check('Dedupe Alerts: next run (hour later) - k1 is throttled, new k3 passes', same(x, [{ text: 't3', key: 'k3' }]), x);
   sd.alertSeen.k1 = Date.now() - 25 * 3600 * 1000;
   sd.alertSeen.old = Date.now() - 48 * 3600 * 1000;
   x = dd([{ key: 'k1', text: 't1' }], sd).map((i) => i.json);
-  check('Dedupe Alerts: after 24 h the same key alerts again', same(x, [{ text: 't1' }]), x);
+  check('Dedupe Alerts: after 24 h the same key alerts again', same(x, [{ text: 't1', key: 'k1' }]), x);
   check('Dedupe Alerts: keys older than 24 h are pruned, the fresh ones kept', !('old' in sd.alertSeen) && 'k1' in sd.alertSeen && 'k3' in sd.alertSeen, Object.keys(sd.alertSeen));
   sd.alertSeen.k2 = Date.now() - 23 * 3600 * 1000;
   check('Dedupe Alerts: 23 h is still inside the window', same(dd([{ key: 'k2', text: 't2' }], sd), []));
@@ -191,6 +191,25 @@ const dd = (items, sd) => runAll('Dedupe Alerts', items, {}, sd);
 {
   const p = node('Alert Owner').parameters;
   check('Alert Owner: notify_owner, once per surviving alert, text from the item, error output on', p.workflowId.value === 'WFID:notify_owner' && p.mode === 'each' && expr(p.workflowInputs.value.text, { text: 'hello' }) === 'hello' && node('Alert Owner').onError === 'continueErrorOutput');
+}
+// Alert Owner failed -> Forget Alert Keys removes the keys Dedupe Alerts stamped, so the alert is retried next hour
+{
+  const forget = (errItems, dedupeOut, sd) => runAll('Forget Alert Keys', errItems, { 'Dedupe Alerts': dedupeOut }, sd);
+  const sd = { alertSeen: { a: 1, b: 2, c: 3 } };
+  let x = forget([{ error: 'boom' }], [{ text: 'ta', key: 'a' }, { text: 'tb', key: 'b' }], sd);
+  check('Forget Alert Keys: the failed alert (item 0 of the alerts) gets its key removed, the others stay stamped', same(x, []) && !('a' in sd.alertSeen) && 'b' in sd.alertSeen && 'c' in sd.alertSeen, sd);
+  const sd2 = { alertSeen: { a: 1, b: 2, c: 3 } };
+  forget([{ error: 'x' }, { error: 'y' }], [{ text: 'ta', key: 'a' }, { text: 'tb', key: 'b' }], sd2);
+  check('Forget Alert Keys: two failures -> both keys removed', !('a' in sd2.alertSeen) && !('b' in sd2.alertSeen) && 'c' in sd2.alertSeen, sd2);
+  const sd3 = { alertSeen: { a: 1, b: 2, c: 3 } };
+  forget([{ error: 'x' }, { error: 'y' }, { error: 'z' }], [{ text: 'ta', key: 'a' }, { text: 'tb', key: 'b' }], sd3);
+  check('Forget Alert Keys: lost pairing -> every key of this run is forgotten (a repeated alert beats a lost one), older keys stay', !('a' in sd3.alertSeen) && !('b' in sd3.alertSeen) && 'c' in sd3.alertSeen, sd3);
+  const sd4 = {};
+  x = forget([{ error: 'x' }], [{ text: 'ta', key: 'a' }], sd4);
+  check('Forget Alert Keys: empty static data -> no throw, returns no item', same(x, []));
+  check('Forget Alert Keys: Alert Owner error output -> Forget Alert Keys, and it is terminal', same((WF.connections['Alert Owner'].main[1] || []).map((c) => c.node), ['Forget Alert Keys']) && !WF.connections['Forget Alert Keys'] && WF.connections['Alert Owner'].main[0].length === 0);
+  check('Forget Alert Keys: all-items Code node', node('Forget Alert Keys').parameters.mode === 'runOnceForAllItems');
+  check('Client note no longer names a node that does not exist', !JSON.stringify(WF).includes('Report Client Failure'));
 }
 check('the old per-source Report nodes are gone (every alert goes through the dedupe)', ['Report Reminder Failure', 'Report Revisit Failure', 'Report Client Failure', 'Report Orphans'].every((n) => !(n in Object.fromEntries(WF.nodes.map((x) => [x.name, 1])))));
 const execNodes = WF.nodes.filter((n) => n.type === 'n8n-nodes-base.executeWorkflow' && n.parameters.workflowId.value === 'WFID:notify_owner').map((n) => n.name);
@@ -220,7 +239,7 @@ check('Mark nodes success outputs go nowhere', ['Mark Reminded', 'Mark Invited',
 check('orphan chain: Orphan Pending -> Orphan Alert -> Dedupe Alerts', same(targets('Orphan Pending'), ['Orphan Alert']) && same(targets('Orphan Alert'), ['Dedupe Alerts']));
 const shapes = ['Alert Reminder Send', 'Alert Revisit Send', 'Alert Reminder Mark', 'Alert Revisit Mark', 'Alert Expiry Mark', 'Alert Client', 'Alert Client 2'];
 check('every shape node -> Dedupe Alerts (the only way to the owner)', shapes.every((n) => same(targets(n), ['Dedupe Alerts'])), shapes.map((n) => targets(n)));
-check('Dedupe Alerts -> Alert Owner, which is terminal', same(targets('Dedupe Alerts'), ['Alert Owner']) && !WF.connections['Alert Owner']);
+check('Dedupe Alerts -> Alert Owner (no success output)', same(targets('Dedupe Alerts'), ['Alert Owner']) && targets('Alert Owner', 0).length === 0);
 const unreachable = WF.nodes.map((n) => n.name).filter((n) => !['Hourly', 'Run Now'].includes(n) && !Object.values(WF.connections).some((c) => c.main.some((o) => o.some((t) => t.node === n))));
 check('no unreachable node', unreachable.length === 0, unreachable);
 
