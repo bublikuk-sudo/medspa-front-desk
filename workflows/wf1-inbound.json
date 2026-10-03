@@ -36,7 +36,7 @@
     {
       "id": "e1a10013-0002-4c00-8000-000000000002",
       "name": "Normalize",
-      "notes": "Returns [] (the run ends) for anything that is not a private Telegram chat or a WhatsApp message: groups, WhatsApp status callbacks and other fields, a sender that is not 7-15 digits, unknown bodies. A non-text WhatsApp message keeps its contact with text empty (Send Non-Text, like a Telegram sticker). WhatsApp Trigger items are {...change.value, field}; only the first item of a run is read. Never emits an empty contact_id.",
+      "notes": "Returns [] (the run ends) for anything that is not a private Telegram chat or a WhatsApp message: groups, WhatsApp status callbacks and other fields, reactions/unsupported/system messages, unknown bodies. WhatsApp Trigger items are {...change.value, field}; ALL items of a run are read: the sender of the earliest message is the one this run answers (their texts joined with a newline, a non-text-only sender gets text empty = Send Non-Text like a Telegram sticker). Other senders and unreadable sender numbers do not vanish: they go into alert_text, which the Dropped? side branch sends to the owner. When a batch holds ONLY unreadable senders the item has an empty contact_id and exists only to carry alert_text: Has Sender? stops it. Every item that passes Has Sender? has a non-empty contact_id.",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [220, 400],
