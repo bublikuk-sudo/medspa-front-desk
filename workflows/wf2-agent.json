@@ -253,7 +253,7 @@
         560
       ],
       "parameters": {
-        "description": "Free slots for a service on a date. Returns FREE with ISO timestamps (the only times you may offer), NONE with the nearest alternatives, or UNKNOWN_SERVICE with the list of services.",
+        "description": "Free slots for a service on a date. Returns FREE with ISO timestamps (the only times you may offer), NONE with the nearest alternatives, or UNKNOWN_SERVICE with the list of services. slots_local gives the same slots, in the same order, with the weekday, date and local time already computed: show the client those (translated if needed), never work out a weekday yourself.",
         "source": "database",
         "workflowId": {
           "__rl": true,
