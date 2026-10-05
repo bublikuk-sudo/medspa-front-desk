@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# usage: tests/dialogs.sh [--log <file.md>] [--label <text>] [NN ...]   (on the VPS, cwd /opt/medspa; long: run detached)
+# usage: tests/dialogs.sh [--log <file.md>] [--label <text>] [--note <text>]... [NN ...]   (on the VPS, cwd /opt/medspa; long: run detached)
 # Runs the Task 20 dialogs with tests/dialog.sh: the given numbers in the given order, or all 12 in the plan's order
 # (01 02 03 04 05 06 07 08 12 11 10 09). Each dialog runs in the channels named by its file's `channels:` line inside the
 # ```dialog block (default "tg wa"; 09 and 10 run once, as the plan says), with tests/cleanup.sh before each run and once
@@ -9,11 +9,12 @@
 # (restore failed) or a changed value stops the whole run (exit 4).
 set -uo pipefail
 cd "$(dirname "$0")/.."
-logf=""; label="dialog run"
+logf=""; label="dialog run"; notes=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --log) logf="$2"; shift 2 ;;
     --label) label="$2"; shift 2 ;;
+    --note) notes+=("$2"); shift 2 ;;   # repeatable; each becomes a bullet under the log's header table
     *) break ;;
   esac
 done
@@ -61,6 +62,8 @@ final=$(tests/cleanup.sh 2>&1) && final="ok: $(printf '%s' "$final" | tail -1)" 
   printf '# %s\n\n' "$label"
   printf '| | |\n|---|---|\n| Started | %s |\n| Finished | %s |\n| Dialogs | %s |\n| Result | passed %s, failed %s |\n| Final cleanup | %s |\n\n' \
     "$t0" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${order[*]}" "$pass" "$failn" "$final"
+  for n in "${notes[@]}"; do printf -- '- %s\n' "$n"; done
+  [ ${#notes[@]} -eq 0 ] || printf '\n'
   printf '| dialog | channel | result | state | notes |\n|---|---|---|---|---|\n'
   cat "$rows"
   printf '\n## Raw output\n'

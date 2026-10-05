@@ -39,6 +39,7 @@ expect templates: reply
 expect lang: en
 expect tool: check_availability
 expect regex: \b\d{1,2}:\d{2}\b
+expect no-regex: \b(Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*\.?,? (Jan(uary)?\.? )?7\b
 send: The earliest one, please.
 expect templates: PENDING_SUMMARY
 expect lang: en
