@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stub test of the WF-1 Code nodes Normalize and Client Formula, the Create Client id expressions and the wiring of the
+# Stub test of the WF-1 Code nodes Normalize (with the Task 20 Test Inbound unwrapping) and Client Formula, the Create Client id expressions and the wiring of the
 # Normalize side branch (Has Sender?, Dropped?, Notify Dropped).
 # Runs ON THE VPS, in the n8n container's Node: no network, no workflow run, nothing is written.
 #   scripts/remote.sh 'tests/wf1-code-stubs.sh'
@@ -23,7 +23,9 @@ wf="${1:-/opt/medspa/workflows/wf1-inbound.json}"
       normalizeTargets: [.connections["Normalize"].main[0][]?.node],
       hasSenderTarget: target("Has Sender?"),
       droppedTarget: target("Dropped?"),
-      afterNotify: (if (.connections["Notify Dropped"] // null) == null then "none" else "wired" end)
+      afterNotify: (if (.connections["Notify Dropped"] // null) == null then "none" else "wired" end),
+      testInbound: (node("Test Inbound") | {method: .parameters.httpMethod, path: .parameters.path, auth: .parameters.authentication, mode: .parameters.responseMode, cred: .credentials.httpHeaderAuth.name}),
+      testTarget: target("Test Inbound")
     }' "$wf"
   printf ';\n'
   cat "$here/wf1-code-stubs.js"

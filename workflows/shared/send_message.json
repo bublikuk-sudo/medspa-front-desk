@@ -336,7 +336,70 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// Approved WhatsApp templates (Task 15 Step 6 table). The names are PLACEHOLDERS until Meta approves the templates; params are in Meta's {{1}}, {{2}}... order.\nconst WA_TPL = {\n  REMINDER: { name: 'medspa_reminder', lang: 'en', params: ['service', 'when', 'business_name'] },\n  REVISIT: { name: 'medspa_revisit', lang: 'en', params: ['name', 'days', 'service', 'business_name'] }\n};\nconst inp = $('Trigger').first().json;\nconst client = ($('Client').first().json.fields || {});\nconst raw = String(inp.contact_id || '').trim();\nconst isTg = /^tg:\\d+$/.test(raw);\nconst isWa = /^wa:\\+\\d+$/.test(raw);\nif (!isTg && !isWa) throw new Error('send_message: contact_id must be tg:<digits> or wa:+<digits>, got \"' + raw + '\"');\nconst channel = isTg ? 'tg' : 'wa';\nlet text = ($json.text || '').toString().trim();\nif (!text) throw new Error('send_message: nothing to send (empty text)');\nconst outside = String(inp.outside_window || '').toLowerCase() === 'true';\nlet wa_template = '';\nlet wa_key = '';\nlet wa_params = [];\nif (channel === 'tg') {\n  // Trim the raw text first, then escape: Telegram's 4096 limit counts parsed characters, not the escaped request text, and escaping first could cut inside an entity (&amp;) or tag.\n  // Escape & < > BEFORE inserting tags, or the escaping would eat them.\n  text = text.slice(0, 4000).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\\*\\*(.+?)\\*\\*/g, '<b>$1</b>');\n} else {\n  text = text.replace(/\\*\\*(.+?)\\*\\*/g, '$1').slice(0, 1500);\n  if (outside) {\n    const spec = WA_TPL[inp.template_key];\n    if (!spec) throw new Error('send_message: outside_window=true needs template_key REMINDER or REVISIT, got \"' + (inp.template_key || '') + '\"');\n    const vars = $('Render').first().json.vars || {};\n    wa_template = spec.name + '|' + spec.lang;\n    wa_key = inp.template_key;\n    wa_params = spec.params.map(k => String(vars[k] ?? '').trim() || '-');\n  }\n}\nreturn [{ json: { text, channel, chat_id: channel === 'tg' ? raw.slice(3) : '', phone: channel === 'wa' ? (client.phone || raw.slice(3)) : '', outside_window: outside, wa_key, wa_template, wa_params } }];"
+        "jsCode": "// Approved WhatsApp templates (Task 15 Step 6 table). The names are PLACEHOLDERS until Meta approves the templates; params are in Meta's {{1}}, {{2}}... order.\nconst WA_TPL = {\n  REMINDER: { name: 'medspa_reminder', lang: 'en', params: ['service', 'when', 'business_name'] },\n  REVISIT: { name: 'medspa_revisit', lang: 'en', params: ['name', 'days', 'service', 'business_name'] }\n};\nconst inp = $('Trigger').first().json;\nconst client = ($('Client').first().json.fields || {});\nconst raw = String(inp.contact_id || '').trim();\nconst isTg = /^tg:\\d+$/.test(raw);\nconst isWa = /^wa:\\+\\d+$/.test(raw);\nif (!isTg && !isWa) throw new Error('send_message: contact_id must be tg:<digits> or wa:+<digits>, got \"' + raw + '\"');\nconst channel = isTg ? 'tg' : 'wa';\nlet text = ($json.text || '').toString().trim();\nif (!text) throw new Error('send_message: nothing to send (empty text)');\nconst outside = String(inp.outside_window || '').toLowerCase() === 'true';\nlet wa_template = '';\nlet wa_key = '';\nlet wa_params = [];\nif (channel === 'tg') {\n  // Trim the raw text first, then escape: Telegram's 4096 limit counts parsed characters, not the escaped request text, and escaping first could cut inside an entity (&amp;) or tag.\n  // Escape & < > BEFORE inserting tags, or the escaping would eat them.\n  text = text.slice(0, 4000).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\\*\\*(.+?)\\*\\*/g, '<b>$1</b>');\n} else {\n  text = text.replace(/\\*\\*(.+?)\\*\\*/g, '$1').slice(0, 1500);\n  if (outside) {\n    const spec = WA_TPL[inp.template_key];\n    if (!spec) throw new Error('send_message: outside_window=true needs template_key REMINDER or REVISIT, got \"' + (inp.template_key || '') + '\"');\n    const vars = $('Render').first().json.vars || {};\n    wa_template = spec.name + '|' + spec.lang;\n    wa_key = inp.template_key;\n    wa_params = spec.params.map(k => String(vars[k] ?? '').trim() || '-');\n  }\n}\n// Task 20: the automated dialog tests' contacts (tg:9000000NNN, wa:+1555000NNNN) are never sent to: Test Contact? routes them to Capture (a test_outbox row) after all the work above.\nconst test = /^(tg:9000000\\d{3}|wa:\\+1555000\\d{4})$/.test(raw);\nreturn [{ json: { text, channel, chat_id: channel === 'tg' ? raw.slice(3) : '', phone: channel === 'wa' ? (client.phone || raw.slice(3)) : '', outside_window: outside, wa_key, wa_template, wa_params, test, contact_id: raw, template_key: String(inp.template_key || '') } }];"
+      }
+    },
+    {
+      "id": "5e5d0001-0021-4c00-8000-000000000021",
+      "name": "Test Contact?",
+      "notes": "Task 20: true only for the automated dialog tests' contact ranges (tg:9000000NNN, wa:+1555000NNNN, decided in Format). Those messages go to Capture instead of Telegram/WhatsApp; every real contact takes the false branch to Channel? exactly as before.",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2420,
+        700
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "5e5d0001-1005-4c00-8000-000000000005",
+              "leftValue": "={{ $json.test === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "5e5d0001-0022-4c00-8000-000000000022",
+      "name": "Capture",
+      "notes": "Task 20: the outbound message of a test contact, recorded instead of sent: one test_outbox row (deploy/postgres-init.sql) with the final text after translation, formatting and trimming, the template_key, and wa_template (non-empty = the WhatsApp template path was chosen, outside_window true). Result then answers 'SENT <channel>' as after a real send. tests/dialog.sh reads the rows.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        2640,
+        760
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "CRED",
+          "name": "MedSpa Postgres"
+        }
+      },
+      "parameters": {
+        "resource": "database",
+        "operation": "executeQuery",
+        "query": "INSERT INTO test_outbox (contact_id, channel, template_key, wa_template, text) VALUES ($1, $2, COALESCE($3, ''), COALESCE($4, ''), $5) RETURNING id",
+        "options": {
+          "queryReplacement": "={{ [ $json.contact_id, $json.channel, $json.template_key, $json.wa_template, $json.text ] }}"
+        }
       }
     },
     {
@@ -757,7 +820,36 @@
       "main": [
         [
           {
+            "node": "Test Contact?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test Contact?": {
+      "main": [
+        [
+          {
+            "node": "Capture",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Channel?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Capture": {
+      "main": [
+        [
+          {
+            "node": "Result",
             "type": "main",
             "index": 0
           }

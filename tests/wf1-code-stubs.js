@@ -135,6 +135,42 @@ T('Telegram output carries no alert_text (Dropped? false)', () => normalize(tgBa
 r = normalize(waValue({ messages: [{ from: '380501234567', type: 'text', text: { body: 'hi' } }] }));
 check('wa Ukrainian number', r.length === 1 && r[0].json.contact_id === 'wa:+380501234567', r);
 
+// ---- Task 20: Test Inbound (the webhook item's body is unwrapped; only the test contact ranges pass) ----
+const viaTest = (body) => runCode(CODE.normalize, { headers: { 'x-test-key': 'redacted' }, params: {}, query: {}, body, webhookUrl: 'https://h/webhook/wf1-test', executionMode: 'production' }, { 'Test Inbound': {} });
+const tgT = (id) => ({ update_id: 7, message: { message_id: 1, from: { id, is_bot: false, first_name: 'Dana', last_name: 'Test' }, chat: { id, first_name: 'Dana', type: 'private' }, date: 1, text: ' hi ' } });
+r = viaTest(tgT(9000000101));
+check('T20 test tg in range -> exactly what the Telegram Trigger item gives', same(r, normalize(tgT(9000000101))) && r[0].json.contact_id === 'tg:9000000101', r);
+for (const id of [4242, 900000010, 90000001011, 9000001101, '9000000101x', -9000000101, null]) {
+  r = viaTest(tgT(id));
+  check('T20 test tg chat ' + JSON.stringify(id) + ' out of range -> []', same(r, []), r);
+}
+r = viaTest({ ...tgT(9000000101), message: { ...tgT(9000000101).message, chat: { id: 9000000101, type: 'group' } } });
+check('T20 test tg group chat in range -> [] (same rule as the trigger)', same(r, []), r);
+const waT = (from, over = {}) => waValue({ contacts: [{ profile: { name: 'Dana Test' }, wa_id: from }], messages: [{ from, id: 'wamid.T', timestamp: '1', type: 'text', text: { body: ' hola ' } }], ...over });
+r = viaTest(waT('15550000101'));
+check('T20 test wa in range -> exactly what the WhatsApp Trigger item gives', same(r, normalize(waT('15550000101'))) && r[0].json.contact_id === 'wa:+15550000101' && r[0].json.text === 'hola', r);
+r = viaTest([waT('15550000101'), waT('15550000101', { messages: [wm('15550000101', 5, 'second')] })]);
+check('T20 test wa body as an array of items (a batch) -> same as the trigger batch', same(r, normalize([waT('15550000101'), waT('15550000101', { messages: [wm('15550000101', 5, 'second')] })])) && r[0].json.text === 'hola\nsecond', r);
+for (const f of ['491701234567', '1555000010', '155500001011', '25550000101', '+15550000101', 15550000101, '']) {
+  r = viaTest(waT(f));
+  check('T20 test wa from ' + JSON.stringify(f) + ' out of range -> [] (no reply, no alert)', same(r, []), r);
+}
+r = viaTest(waT('15550000101', { messages: [wm('15550000101', 1, 'a'), wm('491701234567', 2, 'b')] }));
+check('T20 test batch with one real sender -> [] (no owner alert naming a real number)', same(r, []), r);
+r = viaTest([waT('15550000101'), waT('491701234567')]);
+check('T20 test array with one real item -> []', same(r, []), r);
+r = viaTest(waT('15550000101', { messages: undefined, statuses: [{ status: 'read' }] }));
+check('T20 test status callback -> []', same(r, []), r);
+for (const b of [undefined, null, {}, [], 'str', 42, [[tgT(9000000101)]]]) {
+  r = viaTest(b);
+  check('T20 test body ' + JSON.stringify(b) + ' -> []', same(r, []), r);
+}
+r = normalize({ headers: {}, body: tgT(9000000101), webhookUrl: 'x' });
+check('T20 a webhook-shaped item NOT started by Test Inbound is not unwrapped -> []', same(r, []), r);
+T('T20 Test Inbound: POST wf1-test, header auth with the MedSpa Test Key, answers on receipt, feeds Normalize', () =>
+  CODE.testInbound.method === 'POST' && CODE.testInbound.path === 'wf1-test' && CODE.testInbound.auth === 'headerAuth' &&
+  CODE.testInbound.cred === 'MedSpa Test Key' && CODE.testInbound.mode === 'onReceived' && CODE.testTarget === 'Normalize' || [CODE.testInbound, CODE.testTarget]);
+
 // ---- Client Formula with what Normalize produced ----
 const formulaOf = (nj) => runCode(CODE.formula, {}, { Normalize: nj })[0].json.formula;
 check('formula tg', formulaOf({ contact_id: 'tg:4242' }) === "{telegram_chat_id}='4242'");
