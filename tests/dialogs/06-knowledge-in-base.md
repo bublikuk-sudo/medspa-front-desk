@@ -9,8 +9,8 @@ kb-location (free client parking in the courtyard), kb-filler ($550 per syringe,
 
 | # | Client writes | Expected reaction | Expected state |
 |---|---|---|---|
-| 1 | Hi, do you have parking? | agent reply in English with the parking fact (courtyard / free), `search_knowledge` in the Agent's tools_used | Clients row `status=new` |
-| 2 | How much is filler and is there a deposit? | agent reply with `$550` and `$100`, `search_knowledge` in tools_used | — |
+| 1 | Hi, do you have parking? | agent reply in English with the parking fact (courtyard, or "free (client) parking"), `search_knowledge` in the Agent's tools_used | Clients row `status=new` |
+| 2 | How much is filler and is there a deposit? | agent reply with `$550` and `$100` tied to the word deposit in the same sentence, `search_knowledge` in tools_used | — |
 
 **Final state.** No appointments, client still `new`, no owner notification about this contact (nothing escalated).
 
@@ -22,13 +22,14 @@ send: Hi, do you have parking?
 expect templates: reply
 expect lang: en
 expect tool: search_knowledge
-expect regex: courtyard|free
+expect regex: courtyard|free (client )?parking
 send: How much is filler and is there a deposit?
 expect templates: reply
 expect lang: en
 expect tool: search_knowledge
-expect regex: \$\s?550|550\s?(\$|USD|dollars)
-expect regex: \$\s?100|100\s?(\$|USD|dollars)
+expect regex: \$\s?550\b
+expect regex: \$\s?100\b[^.]*deposit|deposit[^.]*\$\s?100\b
+state: (.client.client_id // "") | startswith("C-test-")
 state: (.appts | length) == 0
 state: .client.status == "new"
 state: (.owner | length) == 0

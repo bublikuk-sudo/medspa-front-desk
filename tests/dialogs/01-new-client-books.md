@@ -18,7 +18,7 @@ test_outbox rows. 2030-01-07 (a Monday) has free morning slots. No real appointm
 | 6 | *(runner: `reminder_leg`)* the visit is moved to about an hour ahead in Airtable, `reminder_hours_before = 1` behind an EXIT trap, WF-5 Run Now | `REMINDER`; on WhatsApp through the template path `medspa_reminder` (wa_template), on Telegram free-form | `reminded`, `reminder_sent_at` set; Settings restored |
 | 7 | YES | `REMINDER_CONFIRMED`; Reminder Reply, no Agent | `confirmed` |
 
-**Final state.** Clients `status=active`, `language=en`, the name contains "Dana"; exactly one appointment, `confirmed`,
+**Final state.** Clients `client_id` starts with `C-test-` (WF-1 marks a client created through Test Inbound), `status=active`, `language=en`, the name contains "Dana"; exactly one appointment, `confirmed`,
 with `reminder_sent_at`; exactly one calendar event of the client, titled `Botox — <client name>` (it stays on
 2030-01-07: `reminder_leg` moves only the Airtable row); BOOKED_INTAKE and REMINDER were sent.
 
@@ -58,6 +58,7 @@ send: YES
 expect templates: REMINDER_CONFIRMED
 expect node: Reminder Reply
 expect no-node: Agent
+state: (.client.client_id // "") | startswith("C-test-")
 state: .client.status == "active"
 state: .client.language == "en"
 state: (.client.name // "") | test("Dana"; "i")

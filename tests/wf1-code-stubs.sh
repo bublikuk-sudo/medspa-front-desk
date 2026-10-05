@@ -16,6 +16,7 @@ wf="${1:-/opt/medspa/workflows/wf1-inbound.json}"
       normalize: (node("Normalize") | .parameters.jsCode),
       formula: (node("Client Formula") | .parameters.jsCode),
       phoneExpr: (node("Create Client") | .parameters.columns.value.phone),
+      idExpr: (node("Create Client") | .parameters.columns.value.client_id),
       chatExpr: (node("Create Client") | .parameters.columns.value.telegram_chat_id),
       hasSenderExpr: (node("Has Sender?") | .parameters.conditions.conditions[0].leftValue),
       droppedExpr: (node("Dropped?") | .parameters.conditions.conditions[0].leftValue),

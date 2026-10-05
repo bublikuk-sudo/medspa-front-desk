@@ -137,9 +137,10 @@ check('wa Ukrainian number', r.length === 1 && r[0].json.contact_id === 'wa:+380
 
 // ---- Task 20: Test Inbound (the webhook item's body is unwrapped; only the test contact ranges pass) ----
 const viaTest = (body) => runCode(CODE.normalize, { headers: { 'x-test-key': 'redacted' }, params: {}, query: {}, body, webhookUrl: 'https://h/webhook/wf1-test', executionMode: 'production' }, { 'Test Inbound': {} });
+const marked = (items) => items.map((i) => ({ json: { ...i.json, test: true } }));
 const tgT = (id) => ({ update_id: 7, message: { message_id: 1, from: { id, is_bot: false, first_name: 'Dana', last_name: 'Test' }, chat: { id, first_name: 'Dana', type: 'private' }, date: 1, text: ' hi ' } });
 r = viaTest(tgT(9000000101));
-check('T20 test tg in range -> exactly what the Telegram Trigger item gives', same(r, normalize(tgT(9000000101))) && r[0].json.contact_id === 'tg:9000000101', r);
+check('T20 test tg in range -> exactly what the Telegram Trigger item gives, plus test: true', same(r, marked(normalize(tgT(9000000101)))) && r[0].json.contact_id === 'tg:9000000101', r);
 for (const id of [4242, 900000010, 90000001011, 9000001101, '9000000101x', -9000000101, null]) {
   r = viaTest(tgT(id));
   check('T20 test tg chat ' + JSON.stringify(id) + ' out of range -> []', same(r, []), r);
@@ -148,9 +149,9 @@ r = viaTest({ ...tgT(9000000101), message: { ...tgT(9000000101).message, chat: {
 check('T20 test tg group chat in range -> [] (same rule as the trigger)', same(r, []), r);
 const waT = (from, over = {}) => waValue({ contacts: [{ profile: { name: 'Dana Test' }, wa_id: from }], messages: [{ from, id: 'wamid.T', timestamp: '1', type: 'text', text: { body: ' hola ' } }], ...over });
 r = viaTest(waT('15550000101'));
-check('T20 test wa in range -> exactly what the WhatsApp Trigger item gives', same(r, normalize(waT('15550000101'))) && r[0].json.contact_id === 'wa:+15550000101' && r[0].json.text === 'hola', r);
+check('T20 test wa in range -> exactly what the WhatsApp Trigger item gives, plus test: true', same(r, marked(normalize(waT("15550000101")))) && r[0].json.contact_id === 'wa:+15550000101' && r[0].json.text === 'hola', r);
 r = viaTest([waT('15550000101'), waT('15550000101', { messages: [wm('15550000101', 5, 'second')] })]);
-check('T20 test wa body as an array of items (a batch) -> same as the trigger batch', same(r, normalize([waT('15550000101'), waT('15550000101', { messages: [wm('15550000101', 5, 'second')] })])) && r[0].json.text === 'hola\nsecond', r);
+check('T20 test wa body as an array of items (a batch) -> same as the trigger batch', same(r, marked(normalize([waT('15550000101'), waT('15550000101', { messages: [wm('15550000101', 5, 'second')] })]))) && r[0].json.text === 'hola\nsecond', r);
 for (const f of ['491701234567', '1555000010', '155500001011', '25550000101', '+15550000101', 15550000101, '']) {
   r = viaTest(waT(f));
   check('T20 test wa from ' + JSON.stringify(f) + ' out of range -> [] (no reply, no alert)', same(r, []), r);
@@ -167,6 +168,16 @@ for (const b of [undefined, null, {}, [], 'str', 42, [[tgT(9000000101)]]]) {
 }
 r = normalize({ headers: {}, body: tgT(9000000101), webhookUrl: 'x' });
 check('T20 a webhook-shaped item NOT started by Test Inbound is not unwrapped -> []', same(r, []), r);
+// fix round 1 (I1): only a test run is marked; a real user whose id falls in the test range is an ordinary client
+r = normalize(tgT(9000000101));
+check('T20 real Telegram item in the test range -> no test field', r.length === 1 && !('test' in r[0].json), r);
+r = normalize(waT('15550000101'));
+check('T20 real WhatsApp item in the test range -> no test field', r.length === 1 && !('test' in r[0].json), r);
+check('T20 real Telegram item outside the range -> no test field', !('test' in normalize(tgBase)[0].json));
+const idOf = (nj) => expr(CODE.idExpr, { Normalize: nj });
+T('T20 Create Client id for a test run starts with C-test-', () => /^C-test-[0-9A-Z]+$/.test(idOf(viaTest(tgT(9000000101))[0].json)) && /^C-test-[0-9A-Z]+$/.test(idOf(viaTest(waT('15550000101'))[0].json)) || [idOf(viaTest(tgT(9000000101))[0].json)]);
+T('T20 Create Client id for a real item (in range or not) is C-<base36>, never C-test', () =>
+  [normalize(tgT(9000000101)), normalize(waT('15550000101')), normalize(tgBase), normalize(waValue())].every((x) => /^C-[0-9A-Z]+$/.test(idOf(x[0].json))) || 'wrong');
 T('T20 Test Inbound: POST wf1-test, header auth with the MedSpa Test Key, answers on receipt, feeds Normalize', () =>
   CODE.testInbound.method === 'POST' && CODE.testInbound.path === 'wf1-test' && CODE.testInbound.auth === 'headerAuth' &&
   CODE.testInbound.cred === 'MedSpa Test Key' && CODE.testInbound.mode === 'onReceived' && CODE.testTarget === 'Normalize' || [CODE.testInbound, CODE.testTarget]);

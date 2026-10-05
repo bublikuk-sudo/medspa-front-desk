@@ -17,7 +17,8 @@ rc=0
 tg=$(curl -fsS --max-time 20 "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getWebhookInfo" | jq -c '.result | {url, pending_update_count, last_error_message}')
 echo "telegram: $tg"
 [ "$(jq -r .url <<< "$tg")" = "$tg_want" ] || { echo "telegram: webhook is NOT this instance's Telegram Trigger" >&2; rc=1; }
-wa=$(curl -fsS --max-time 20 -G "https://graph.facebook.com/v19.0/$META_APP_ID/subscriptions" --data-urlencode "access_token=$META_APP_ID|$META_APP_SECRET" |
+# The app access token (APP_ID|APP_SECRET) goes in the Authorization header, never in the query string (URLs end up in logs).
+wa=$(curl -fsS --max-time 20 -H "Authorization: Bearer $META_APP_ID|$META_APP_SECRET" "https://graph.facebook.com/v19.0/$META_APP_ID/subscriptions" |
   jq -c '[.data[] | {object, active, callback_url, fields: [.fields[]?.name]}]')
 echo "whatsapp: $wa"
 jq -e --arg u "$wa_want" 'any(.[]; .object == "whatsapp_business_account" and .active == true and .callback_url == $u and (.fields | index("messages")))' <<< "$wa" > /dev/null ||

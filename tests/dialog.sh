@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # usage: tests/dialog.sh <tests/dialogs/NN-name.md> <tg|wa> [NNN]   (on the VPS, cwd /opt/medspa; see tests/dialogs.sh)
-# Plays one Task 20 dialog end to end in one channel format and checks it. Exit 0 = PASS.
+# Plays one Task 20 dialog end to end in one channel format and checks it. Exit 0 = PASS, 1 = FAIL, 2 = usage error or
+# not a clean start (a Clients row or test_outbox rows of the contact exist), 4 = Settings.reminder_hours_before could not
+# be restored (tests/dialogs.sh stops the whole run on 4).
 #
 # The client is a test contact: tg:9000000NNN or wa:+1555000 0NNN, NNN = 1<dialog number> unless given (dialog 07 -> 107).
 # Each `send:` builds the channel-native payload (a Telegram update as Telegram Trigger emits it, or a WhatsApp Trigger
@@ -44,17 +46,26 @@ num="${3:-1$nn}"
 if [ "$ch" = tg ]; then CID="tg:9000000$num"; else CID="wa:+15550000$num"; fi
 WF1=$(jq -er '."wf1-inbound"' deploy/workflow-ids.json) || { echo "wf1-inbound not deployed" >&2; exit 2; }
 TMP=$(mktemp -d)
-SETTINGS_REC=""; SETTINGS_ORIG=""
+# Settings.reminder_hours_before is changed only by reminder_leg. restore_settings writes the original back and READS IT
+# BACK, up to 5 attempts; only a read-back equal to the original counts. A failed restore is RESTORE_FAILED=1: the dialog
+# FAILs and the script exits 4 (also from the EXIT trap), which makes tests/dialogs.sh stop the whole run.
+SETTINGS_REC=""; SETTINGS_ORIG=""; RESTORE_FAILED=0
 restore_settings() {
   [ -n "$SETTINGS_ORIG" ] || return 0
-  if at_update Settings "$SETTINGS_REC" "{\"reminder_hours_before\": $SETTINGS_ORIG}" > /dev/null; then
-    echo "  settings: reminder_hours_before restored to $(at_list Settings 1 | jq -r '.records[0].fields.reminder_hours_before')"
-    SETTINGS_ORIG=""
-  else
-    echo "RESTORE FAILED: Settings.reminder_hours_before is still 1 - set it back to $SETTINGS_ORIG by hand" >&2
-  fi
+  local i got=""
+  for i in 1 2 3 4 5; do
+    at_update Settings "$SETTINGS_REC" "{\"reminder_hours_before\": $SETTINGS_ORIG}" > /dev/null 2>&1
+    got=$(at_list Settings 1 2> /dev/null | jq -r '.records[0].fields.reminder_hours_before' 2> /dev/null)
+    if [ "$got" = "$SETTINGS_ORIG" ]; then
+      echo "  settings: reminder_hours_before restored to $got (read back, attempt $i)"; SETTINGS_ORIG=""; return 0
+    fi
+    sleep $((i * 3))
+  done
+  RESTORE_FAILED=1
+  echo "  RESTORE FAILED: Settings.reminder_hours_before reads '${got:-unreadable}', must be $SETTINGS_ORIG - set it back by hand" | tee /dev/stderr
+  return 1
 }
-on_exit() { restore_settings; rm -rf "$TMP"; }
+on_exit() { local rc=$?; restore_settings; [ "$RESTORE_FAILED" -eq 0 ] || rc=4; rm -rf "$TMP"; exit "$rc"; }
 trap on_exit EXIT
 trap 'exit 130' INT TERM
 
@@ -68,9 +79,10 @@ state_json() { tests/state.sh "$CID" --json; }
 client_rec() { local f v; f=$([[ "$CID" == tg:* ]] && echo telegram_chat_id || echo phone); v="${CID#*:}"; at_rec_id Clients "{$f}='$v'"; }
 # client_set <field> <value>: sets one text/select field of this contact's Clients row (e.g. client_set status active)
 client_set() { local r; r=$(client_rec) || { echo "no Clients row for $CID" >&2; return 1; }; at_update Clients "$r" "$(jq -nc --arg k "$1" --arg v "$2" '{($k): $v}')" > /dev/null; }
-# test_client_ids: client_ids of every test client (C-test* and the dialog clients found by contact), one per line
+# test_client_ids: client_ids of every test client, one per line (C-test*, which includes the dialog clients: WF-1 gives
+# a client created through Test Inbound the prefix C-test-)
 test_client_ids() {
-  at_list Clients 'OR(REGEX_MATCH({client_id}, "^C-test"), REGEX_MATCH({telegram_chat_id}, "^9000000[0-9]{3}$"), REGEX_MATCH({phone}, "^[+]1555000[0-9]{4}$"))' | jq -r '.records[].fields.client_id // empty'
+  at_list Clients "REGEX_MATCH({client_id}, '^C-test')" | jq -r '.records[].fields.client_id // empty'
 }
 # reminder_leg: the Task 17 trick, for the client's one booked visit. Waits until the hourly WF-5 run (:05) is far away,
 # refuses when a non-test row would be touched by WF-5, sets Settings.reminder_hours_before = 1 (always restored: right
@@ -99,6 +111,11 @@ reminder_leg() {
   [ -z "$bad" ] || { echo "reminder_leg: refusing, real rows would be touched by WF-5: $bad" >&2; return 1; }
   sid=$(at_list Settings 1 | jq -r '.records[0].id'); orig=$(at_list Settings 1 | jq -r '.records[0].fields.reminder_hours_before')
   [[ -n "$sid" && "$orig" =~ ^[0-9]+$ ]] || { echo "reminder_leg: cannot read Settings" >&2; return 1; }
+  # An original below 2 is most likely a 1 left behind by an earlier leg: never treat it as the value to restore.
+  [ "$orig" -ge 2 ] || { echo "reminder_leg: refusing, reminder_hours_before is $orig (< 2: an earlier leg did not restore it?)" >&2; return 1; }
+  if [ -n "${DIALOGS_PINNED_HOURS:-}" ] && [ "$orig" != "$DIALOGS_PINNED_HOURS" ]; then
+    echo "reminder_leg: refusing, reminder_hours_before is $orig but tests/dialogs.sh pinned $DIALOGS_PINNED_HOURS at its start" >&2; return 1
+  fi
   SETTINGS_REC=$sid; SETTINGS_ORIG=$orig
   at_update Settings "$sid" '{"reminder_hours_before": 1}' > /dev/null || { echo "reminder_leg: cannot set Settings" >&2; return 1; }
   log "  reminder_leg: reminder_hours_before $orig -> 1"
@@ -106,16 +123,16 @@ reminder_leg() {
   # skips visits booked inside the window)
   s=$(( $(date +%s) + 57 * 60 )); [ "$s" -ge $((created + 62 * 60)) ] || s=$((created + 62 * 60))
   e=$((s + dur))
-  at_update Appointments "$rec" "$(jq -nc --arg s "$(date -u -d "@$s" +%Y-%m-%dT%H:%M:00.000Z)" --arg e "$(date -u -d "@$e" +%Y-%m-%dT%H:%M:00.000Z)" '{start_iso: $s, end_iso: $e, start_dt: $s}')" > /dev/null || return 1
+  at_update Appointments "$rec" "$(jq -nc --arg s "$(date -u -d "@$s" +%Y-%m-%dT%H:%M:00.000Z)" --arg e "$(date -u -d "@$e" +%Y-%m-%dT%H:%M:00.000Z)" '{start_iso: $s, end_iso: $e, start_dt: $s}')" > /dev/null || { restore_settings; return 1; }
   log "  reminder_leg: $appt moved to $(date -u -d "@$s" +%H:%M)Z today"
   due="AND({appt_id}='$appt',{status}='booked',IS_AFTER({start_dt},NOW()),IS_BEFORE({start_dt},DATEADD(NOW(),1,'hours')),DATETIME_DIFF({start_dt},CREATED_TIME(),'hours')>=1)"
   for _ in $(seq 1 40); do
     n=$(at_list Appointments "$due" | jq '.records | length'); [ "$n" = 1 ] && break; sleep 15
   done
-  [ "$n" = 1 ] || { echo "reminder_leg: $appt never became due" >&2; return 1; }
+  [ "$n" = 1 ] || { echo "reminder_leg: $appt never became due" >&2; restore_settings; return 1; }
   scripts/n8n-run.sh wf5-reminders | sed 's/^/  /'
   local rc=${PIPESTATUS[0]}
-  restore_settings
+  restore_settings || return 1
   return "$rc"
 }
 
@@ -162,6 +179,12 @@ owner_texts() {
   local id; id=$(jq -r '.notify_owner' deploy/workflow-ids.json)
   curl -fsS -H "X-N8N-API-KEY: $N8N_API_KEY" "$API/executions?workflowId=$id&limit=50&includeData=true" |
     jq -c --arg t "$1" --arg c "$CID" '[.data[] | select(.startedAt >= $t) | .data.resultData.runData.Trigger[0].data.main[0][0].json.text // empty | select(contains($c))] | reverse'
+}
+# build_ctx -> $TMP/ctx.json: tests/state.sh --json plus outbox (this dialog's rows so far) and owner (notifications about
+# this contact since the dialog started). Both `expect state:` and the final `state:` lines are evaluated against it.
+build_ctx() {
+  state_json > "$TMP/state.json" && out_rows "$START_OUT" > "$TMP/all.json" && owner_texts "$T0" > "$TMP/ownerall.json" &&
+    jq -c --slurpfile o "$TMP/all.json" --slurpfile w "$TMP/ownerall.json" '. + {outbox: $o[0], owner: $w[0]}' "$TMP/state.json" > "$TMP/ctx.json"
 }
 STEP=0; STEP_KIND=""; STEP_T=""
 do_send() {
@@ -210,7 +233,7 @@ check() {
     wa_template)
       if [ "$v" = none ]; then jq -e 'all(.[]; .wa_template == "")' "$TMP/rows.json" > /dev/null || ok=0
       else jq -e --arg w "$v" 'length > 0 and all(.[]; .wa_template == $w or (.wa_template | startswith($w + "|")))' "$TMP/rows.json" > /dev/null || ok=0; fi ;;
-    state) state_json > "$TMP/st.json" && jq -e "$v" "$TMP/st.json" > /dev/null 2>&1 || ok=0 ;;
+    state) build_ctx && jq -e "$v" "$TMP/ctx.json" > /dev/null 2>&1 || ok=0 ;;
     *) ok=0; v="$v (unknown check '$kind')" ;;
   esac
   if [ "$ok" -eq 1 ]; then log "  ok   $1: $2"; else fail "$1: $v"; fi
@@ -222,7 +245,15 @@ block=$(sed -n '/^```dialog[[:space:]]*$/,/^```[[:space:]]*$/p' "$file" | sed '1
 T0=$(now_iso)
 START_OUT=$(pg_sql "SELECT coalesce(max(id), 0) FROM test_outbox") || { echo "test_outbox is not readable" >&2; exit 2; }
 LAST_OUT=$START_OUT
-log "DIALOG $(basename "$file") channel=$ch contact=$CID started $T0"
+# Clean start (before any setup: line): no Clients row and no test_outbox rows for this contact - otherwise the run would
+# assert on leftovers of an earlier one. tests/cleanup.sh (tests/dialogs.sh runs it before each dialog) provides it.
+pre_client=$(state_json | jq -c '.client') || { echo "cannot read the state of $CID" >&2; exit 2; }
+pre_out=$(pg_sql "SELECT count(*) FROM test_outbox WHERE contact_id = '$CID'") || { echo "test_outbox is not readable" >&2; exit 2; }
+if [ "$pre_client" != "{}" ] || [ "$pre_out" != 0 ]; then
+  echo "not a clean start for $CID (Clients row: $([ "$pre_client" = "{}" ] && echo none || echo present), test_outbox rows: $pre_out) - run tests/cleanup.sh first" >&2
+  exit 2
+fi
+log "DIALOG $(basename "$file") channel=$ch contact=$CID started $T0 (clean start checked)"
 STATES=()
 while IFS= read -r line <&3; do
   [[ -z "${line// }" || "$line" == \#* ]] && continue
@@ -242,8 +273,7 @@ done 3<<< "$block"
 # ---- final state ------------------------------------------------------------------------------------------------------
 log "STATE"
 tests/state.sh "$CID" | sed 's/^/  /'
-if state_json > "$TMP/state.json" && out_rows "$START_OUT" > "$TMP/all.json" && owner_texts "$T0" > "$TMP/owner.json"; then
-  jq -c --slurpfile o "$TMP/all.json" --slurpfile w "$TMP/owner.json" '. + {outbox: $o[0], owner: $w[0]}' "$TMP/state.json" > "$TMP/ctx.json"
+if build_ctx; then
   jq -r '.owner[] | "  OWNER: " + (gsub("\\s+"; " ") | .[0:300])' "$TMP/ctx.json"
   if [ "$ABORT" -eq 0 ]; then
     for s in "${STATES[@]}"; do
@@ -254,5 +284,7 @@ if state_json > "$TMP/state.json" && out_rows "$START_OUT" > "$TMP/all.json" && 
 else
   fail "could not read the final state"
 fi
+restore_settings || true
+if [ "$RESTORE_FAILED" -eq 1 ]; then log "RESULT FAIL $(basename "$file") $ch (Settings.reminder_hours_before NOT restored - exit 4)"; exit 4; fi
 if [ "$FAILS" -eq 0 ]; then log "RESULT PASS $(basename "$file") $ch"; exit 0; fi
 log "RESULT FAIL $(basename "$file") $ch ($FAILS failed)"; exit 1

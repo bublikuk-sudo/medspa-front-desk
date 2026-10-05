@@ -41,6 +41,7 @@ send: Hi again, what are your opening hours on Saturday?
 expect templates: reply
 expect lang: en
 expect node: Agent
+state: (.client.client_id // "") | startswith("C-test-")
 state: .client.status == "active"
 state: [.owner[] | select(test("Escalation —"))] | length == 1
 state: (.appts | length) == 0
