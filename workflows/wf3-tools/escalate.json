@@ -117,6 +117,29 @@
       }
     },
     {
+      "id": "e5ca1a7e-0013-4c00-8000-000000000013",
+      "name": "Already Escalated?",
+      "notes": "Task 20 (dialog 09): two agent runs of one client that overlap (a client sending messages a few seconds apart) can both call escalate; the second found the row already escalated by the first and still sent the owner a second 🚨 Escalation. A client whose row is already escalated is not reported again: true -> Result (ESCALATED), no owner message, nothing written. WF-1 stops escalated clients before the agent, so only such overlapping runs get here. A failed Client lookup has no fields and takes the normal path.",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [440, 500],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e5ca1a7e-1003-4c00-8000-000000000003",
+              "leftValue": "={{ String((($('Client').first().json || {}).fields || {}).status || '') === 'escalated' }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
       "id": "e5ca1a7e-0005-4c00-8000-000000000005",
       "name": "Has Client?",
       "type": "n8n-nodes-base.if",
@@ -261,7 +284,8 @@
   "connections": {
     "Trigger": { "main": [[{ "node": "Client Formula", "type": "main", "index": 0 }]] },
     "Client Formula": { "main": [[{ "node": "Client", "type": "main", "index": 0 }]] },
-    "Client": { "main": [[{ "node": "History", "type": "main", "index": 0 }]] },
+    "Client": { "main": [[{ "node": "Already Escalated?", "type": "main", "index": 0 }]] },
+    "Already Escalated?": { "main": [[{ "node": "Result", "type": "main", "index": 0 }], [{ "node": "History", "type": "main", "index": 0 }]] },
     "History": { "main": [[{ "node": "Compose", "type": "main", "index": 0 }]] },
     "Compose": { "main": [[{ "node": "Notify", "type": "main", "index": 0 }]] },
     "Notify": { "main": [[{ "node": "Has Client?", "type": "main", "index": 0 }]] },

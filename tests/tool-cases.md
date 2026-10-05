@@ -117,7 +117,7 @@ event of the day whose description looked like an appt_id, which could have reac
 
 ## Index: which spec point each case closes
 
-Level 1 is "each tool on its own with fixed inputs" (spec, section Testing, point 1). The suite is 96 cases and is
+Level 1 is "each tool on its own with fixed inputs" (spec, section Testing, point 1). The suite is 97 cases and is
 green twice in a row (log: `tests/dialog-runs/2026-10-03-level1.md`). Every case is self-sufficient: it builds its own
 state in `setup`, can be run alone (`tests/tool-cases.sh <name>`) and removes its test data in `teardown`. The last row,
 `final_cleanup`, leaves the base and the calendar empty of test data. The per-case details are in the tool sections
@@ -136,6 +136,7 @@ below; this table only says which spec point the cases of a tool close.
 | | `escalate_malformed_id`, `escalate_empty_id`, `escalate_bare_wa_prefix`, `escalate_tg_no_digits`, `escalate_quote_id`, `escalate_long_digits` | Invalid ids flag nobody (no bystander with a blank phone or chat id is hit). |
 | | `escalate_hostile_reason` | The owner message survives HTML, `&`, newlines, NUL and a forged `Status:` line. |
 | | `escalate_history_present`, `escalate_history_none`, `escalate_history_unreadable` | The owner gets the recent conversation (client/bot lines in order, no tool noise, nothing from another session). |
+| | `escalate_already_escalated` | A client already `escalated` is not reported to the owner a second time (two overlapping agent runs, Task 20 dialog 09). |
 | `check_availability` | `avail_busy_excluded` | "An occupied slot does not get into FREE" (a real calendar event, boundaries exact). |
 | | `avail_morning_only`, `avail_pod_anytime`, `avail_pod_invalid` | `part_of_day` filters (a morning visit ends by 12:00), a loosely typed value is normalised, an invalid one is `NONE invalid part_of_day`. |
 | | `avail_closed_day` | "A day without windows gives NONE" plus the next three open days. |
@@ -367,6 +368,7 @@ Every test escalation is a real Telegram message to the owner; the reasons start
 | `escalate_history_present` | the history path with a real table: seeded rows (human, junk string, tool row, ai, plus a row of ANOTHER session) give `Client: ...` then `Bot: ...` in conversation order, with no junk, no tool noise and nothing from the other session |
 | `escalate_history_none` | table present, no rows for the contact (a row of another session exists): `(no conversation history yet)` |
 | `escalate_history_unreadable` | 3 rows present but none readable: `(history rows present but unreadable: 3)` |
+| `escalate_already_escalated` | (Task 20, dialog 09) a client whose row is already `escalated` (an overlapping agent run escalated it a moment earlier) gets `ESCALATED` without a second owner message: no notify_owner run, the row stays `escalated` |
 
 The history cases need the table, which the Postgres Chat Memory node (Task 12) normally creates. `tests/lib/pg.sh` creates it with the node's own DDL
 (`CREATE TABLE IF NOT EXISTS n8n_chat_histories (id SERIAL PRIMARY KEY, session_id VARCHAR(255) NOT NULL, message JSONB NOT NULL)`), seeds rows under
