@@ -13,7 +13,7 @@ notifies the owner.
 | # | Client writes | Expected reaction | Expected state |
 |---|---|---|---|
 | 1 | Hi, I need to cancel my appointment today, sorry. | agent reply (asks which/confirms, or cancels) | — |
-| 2 | Yes, please cancel it. | agent reply (late cancellation recorded) | `late_cancel` |
+| 2 | Yes, please cancel it. | agent reply (late cancellation recorded; the 24-hour policy stated, as the plan says the client is told the policy on cancellation) | `late_cancel` |
 | 3 | What is your cancellation policy? | agent reply with the 24-hour rule from `search_knowledge` | — |
 
 **Final state.** The appointment `late_cancel`; Clients `flagged`; no calendar event of the client left; exactly one
@@ -32,6 +32,7 @@ expect lang: en
 send: Yes, please cancel it.
 expect templates: reply
 expect lang: en
+expect regex: \b24\b
 expect state: [.appts[].status] == ["late_cancel"]
 send: What is your cancellation policy?
 expect templates: reply
