@@ -9,12 +9,13 @@
 # (restore failed) or a changed value stops the whole run (exit 4).
 set -uo pipefail
 cd "$(dirname "$0")/.."
-logf=""; label="dialog run"; notes=()
+logf=""; label="dialog run"; lognotes=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --log) logf="$2"; shift 2 ;;
     --label) label="$2"; shift 2 ;;
-    --note) notes+=("$2"); shift 2 ;;   # repeatable; each becomes a bullet under the log's header table
+    --note) lognotes+=("$2"); shift 2 ;;   # repeatable; each becomes a bullet under the log's header table
+                                           # (not "notes": that name is the per-run FAIL summary below)
     *) break ;;
   esac
 done
@@ -62,8 +63,8 @@ final=$(tests/cleanup.sh 2>&1) && final="ok: $(printf '%s' "$final" | tail -1)" 
   printf '# %s\n\n' "$label"
   printf '| | |\n|---|---|\n| Started | %s |\n| Finished | %s |\n| Dialogs | %s |\n| Result | passed %s, failed %s |\n| Final cleanup | %s |\n\n' \
     "$t0" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${order[*]}" "$pass" "$failn" "$final"
-  for n in "${notes[@]}"; do printf -- '- %s\n' "$n"; done
-  [ ${#notes[@]} -eq 0 ] || printf '\n'
+  for n in ${lognotes[@]+"${lognotes[@]}"}; do printf -- '- %s\n' "$n"; done   # +: an empty array under set -u (bash < 4.4)
+  [ ${#lognotes[@]} -eq 0 ] || printf '\n'
   printf '| dialog | channel | result | state | notes |\n|---|---|---|---|---|\n'
   cat "$rows"
   printf '\n## Raw output\n'
