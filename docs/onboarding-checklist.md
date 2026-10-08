@@ -1,0 +1,168 @@
+# New client in 30 minutes
+
+Developer-facing checklist for deploying MedSpa Front Desk for a new clinic. The 30 minutes are the six timed steps
+below. They assume the accounts in "Before the 30 minutes" already exist; some of those take days. The timings are
+targets: a complete deployment on a fresh server has not been timed end to end yet.
+
+Conventions: the scripts in `scripts/` run on the server. `scripts/remote.sh '<command>'` copies the project folders to
+`/opt/medspa` on the server and runs the command there over SSH (it expects an SSH host alias `medspa`). Run it from
+the repository root as `medspa-front-desk/scripts/remote.sh`. Never put a secret value in a command line, a commit, a
+chat or a ticket; values go only into `deploy/.env` and `deploy/secrets.env` on the server.
+
+## Before the 30 minutes (lead-time items)
+
+Every account is the clinic's, registered on the clinic's card (see "Handover" below). The developer is invited.
+
+- [ ] **Server.** A Hetzner VPS (the demo runs on a CX23, Ubuntu 24.04) with Docker, `jq`, and your SSH key; a host
+      name for HTTPS (`<your-domain>`).
+- [ ] **Anthropic** and **OpenAI** API keys, each with a monthly spend limit set in the console.
+- [ ] **Airtable** workspace on a **paid plan**. The Free plan's 1,000 API calls per month per workspace are used up by
+      the hourly jobs alone, and interface-only sharing needs a paid plan. A personal access token with scopes
+      `data.records:read`, `data.records:write`, `schema.bases:read`, `schema.bases:write`, limited to this workspace.
+- [ ] **Google**: a calendar for the clinic, and a Google Cloud project with the Calendar API enabled, an OAuth consent
+      screen and a Web OAuth client whose redirect URI is the n8n OAuth callback on `<your-domain>`. **Publish the
+      app** (it needs a home page and a privacy policy on a domain the clinic owns); in Testing mode the token expires
+      every 7 days.
+- [ ] **Meta**: a Business account with a WhatsApp Business Account, a Meta app with the WhatsApp product, and a
+      permanent System User token with `whatsapp_business_messaging` and `whatsapp_business_management`. **Verify the
+      clinic's real business number**: the test number reaches at most 5 recipients and is for demos only.
+- [ ] **Meta templates**: create `medspa_reminder` (category UTILITY) and `medspa_revisit` (Meta may classify it
+      MARKETING), language English, bodies matching `REMINDER` and `REVISIT` in `templates/messages.en.json`, and wait
+      for approval. For the demo, approval took two days (submitted 2026-10-03, approved 2026-10-05).
+- [ ] **Telegram**: a new bot from @BotFather for the clinic. The owner opens the bot and presses Start once, so the bot
+      can message them; owner alerts arrive there.
+- [ ] **Contract** signed (see "Contract checklist for the developer" at the end).
+
+## The 30 minutes
+
+### 1. Accounts and base (5 min)
+
+- [ ] Collect, into `deploy/secrets.env` on the server (names in `deploy/secrets.env.example`): the Anthropic, OpenAI,
+      Airtable, Telegram and Meta values, `GOOGLE_CALENDAR_ID`, `OWNER_TELEGRAM_CHAT_ID`, `OWNER_WHATSAPP_NUMBER`,
+      `WHATSAPP_FROM_DISPLAY` in E.164 without spaces (`secrets.env` is sourced by bash; spaces or brackets break every
+      script), and a random `TEST_KEY`.
+- [ ] Airtable base, either way:
+  - scripted (the path the template is built on): leave `AIRTABLE_BASE_ID` empty and run
+    `scripts/airtable-schema.sh` in step 4; it creates the base and five tables and writes the ids;
+  - or **Duplicate base** of an existing deployment in the Airtable UI (without its client records), then run
+    `EXISTING_BASE=<new base id> scripts/airtable-schema.sh` in step 4 so it records the new table ids and adds
+    anything missing.
+- [ ] Confirm the calendar, the WhatsApp number (or the test number for a demo) and the Telegram bot are the clinic's.
+
+### 2. Server (5 min)
+
+- [ ] Copy `deploy/` to `/opt/medspa/deploy` on the server. Create `deploy/.env` from `deploy/.env.example`:
+      `N8N_HOST=<your-domain>`, `N8N_VERSION=2.41.5`, a generated `POSTGRES_PASSWORD` and `N8N_ENCRYPTION_KEY`,
+      `OWNER_TELEGRAM_CHAT_ID`. Create `deploy/secrets.env` (step 1). Both files mode 600, never in git.
+- [ ] `cd /opt/medspa/deploy && docker compose up -d`. Check `https://<your-domain>/healthz` answers ok.
+- [ ] In the n8n UI: create the owner account, then an API key (Settings → n8n API); put it in `secrets.env` as
+      `N8N_API_KEY`, and `N8N_HOST` there too.
+
+### 3. Credentials (5 min)
+
+- [ ] `medspa-front-desk/scripts/remote.sh 'scripts/n8n-credentials.sh'`: creates eight credentials (`MedSpa
+      Anthropic`, `MedSpa OpenAI`, `MedSpa Airtable`, `MedSpa Telegram`, `MedSpa WhatsApp`, `MedSpa WhatsApp Trigger`,
+      `MedSpa Postgres`, `MedSpa Test Key`) and records their ids in `deploy/credentials.map.json`. A credential with a
+      missing value prints `skipped (no value)`; fill it and re-run.
+- [ ] In the n8n UI: Credentials → Add → Google Calendar OAuth2 API, named exactly `MedSpa Google Calendar`, client id
+      and secret from the Google OAuth client, Sign in with Google with the clinic's account. Add its id (from the
+      credential's URL) to `deploy/credentials.map.json` as `"MedSpa Google Calendar": "<id>"`.
+
+### 4. Clinic data (5 min)
+
+- [ ] `medspa-front-desk/scripts/remote.sh 'scripts/airtable-schema.sh'` (scripted path; resumable, safe to re-run).
+- [ ] Edit `airtable/seed/settings.json`, `services.json` and `knowledge.json` for the clinic, then
+      `medspa-front-desk/scripts/remote.sh 'scripts/airtable-seed.sh'`. The seed fills `calendar_id`,
+      `owner_contact` and `whatsapp_number` from `secrets.env`. Settings is skipped when a row exists, so later changes
+      are made in Airtable.
+- [ ] **Settings**: `business_name`, `timezone`, `working_hours`, `calendar_id`, `owner_contact`, `whatsapp_number`,
+      `cancellation_hours`, `intake_form_url` (the clinic's own intake and consent form), and check
+      `reminder_hours_before`, `pending_ttl_min`, `slot_step_min`, `min_lead_min`.
+- [ ] **Services**: the clinic's price list (`service_id` lowercase, duration, price, `active`).
+- [ ] **Knowledge**: the clinic's document, one paragraph per row with a `topic`. No medical advice in it: the bot
+      answers only from these rows.
+
+### 5. Workflows and webhooks (5 min)
+
+- [ ] Commit or stash local changes first: `remote.sh` refuses to run `push-all.sh` when `workflows/` or `scripts/`
+      have uncommitted changes.
+- [ ] `medspa-front-desk/scripts/remote.sh 'scripts/push-all.sh'`: pushes every workflow in dependency order (two
+      passes), activates the triggers and WF-6, and verifies each workflow carries WF-6 as its error workflow. Expect
+      `push-all done`.
+- [ ] Brand-new instance only (not yet exercised): n8n 2.41.5 refuses to activate a workflow whose Execute Workflow
+      node or error workflow points at a workflow with no published version, and `push-all.sh` does not activate the
+      tool sub-workflows. If an activation fails with "references workflow ... which is not published" or "has no
+      published version", activate the called workflows first, in `push-all.sh`'s order up to `wf2-agent`:
+      `medspa-front-desk/scripts/remote.sh 'scripts/n8n-push.sh workflows/<path>.json --activate'` for each, then run
+      `push-all.sh` again.
+- [ ] Knowledge index: open `wf4-knowledge-ingest` in the n8n editor and run it once (Execute workflow). The owner gets
+      "Knowledge base re-indexed". Otherwise its hourly run rebuilds an index that does not match Airtable.
+- [ ] Telegram: activating `wf1-inbound` sets the bot's webhook; nothing else to do.
+- [ ] WhatsApp: activating `wf1-inbound` registers the Meta app's webhook subscription (field `messages`). Also
+      subscribe the app to the WhatsApp Business Account once: `POST /<WABA id>/subscribed_apps` with the System User
+      token (expected `{"success":true}`).
+
+### 6. Smoke test (5 min)
+
+From a phone, as a client, using the first messages of three dialog scripts:
+
+- [ ] `tests/dialogs/01-new-client-books.md`: "Hi! I'd like to book Botox." The bot says it is the clinic's AI
+      assistant and asks for the name; continue to the summary, reply YES, get the confirmation and the intake link;
+      the event appears in the calendar, the row in Airtable.
+- [ ] `tests/dialogs/06-knowledge-in-base.md`: a question the knowledge base answers (parking, hours, a price).
+- [ ] `tests/dialogs/08-talk-to-human.md`: ask for a person; the owner gets the escalation in Telegram, and the bot then
+      answers only that a team member will be in touch. Clear the client's `escalated` status in Airtable afterwards.
+- [ ] Cancel the test booking through the bot and delete the test client in Airtable.
+
+What changes per client: one Settings row, the Services and Knowledge tables, and the values in `deploy/.env` and
+`deploy/secrets.env`. What never changes: the workflows.
+
+## After the 30 minutes
+
+- [ ] **Airtable Interface** for the owner (about 10 minutes): follow [airtable-interface.md](airtable-interface.md),
+      including its **Step 0**, three Lookup fields in `Appointments` created by hand in the UI (the Airtable API cannot
+      create lookup fields, so `airtable-schema.sh` does not).
+- [ ] Optional full regression on the clinic's server: `medspa-front-desk/scripts/remote.sh 'tests/tool-cases.sh'`.
+      It uses test contacts and 2030 dates and cleans up after itself, but the owner receives real Telegram alerts
+      during the run.
+- [ ] Marketing consent: the clinic collects opt-in for revisit invitations at booking before revisits are relied on.
+- [ ] Spend limits confirmed on Anthropic and OpenAI; Airtable plan confirmed paid.
+
+## Handover (about 15 minutes, done by the clinic)
+
+At handover the clinic takes every key over. Names only; never send values.
+
+| Secret (`deploy/secrets.env`) | Where it is issued | Action |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | console.anthropic.com → API keys | create new, delete old |
+| `OPENAI_API_KEY` | platform.openai.com → API keys | create new, delete old |
+| `AIRTABLE_PAT` | airtable.com/create/tokens | create new (same four scopes), revoke old |
+| `TELEGRAM_BOT_TOKEN` | @BotFather → the bot → API token | revoke and re-issue |
+| `WHATSAPP_ACCESS_TOKEN` | Meta Business settings → System users | generate a new token, revoke old |
+| `META_APP_SECRET` | developers.facebook.com → the app → App settings | reset |
+| `N8N_API_KEY` | n8n → Settings → n8n API | create new, delete old |
+| `TEST_KEY` | any random string | replace |
+
+Then:
+
+- [ ] Re-run `scripts/n8n-credentials.sh` with the new values. It skips credentials already listed in
+      `deploy/credentials.map.json`, so remove their entries first (or edit the credentials in the n8n UI).
+- [ ] Re-authorise `MedSpa Google Calendar` in the n8n UI with the clinic's Google account.
+- [ ] Change the n8n owner password; remove the developer's n8n user, if any.
+- [ ] Remove the developer from Airtable, the Google Cloud project, Meta Business (system users and people), the
+      Hetzner project, and the developer's SSH key from the server.
+- [ ] Send one test message and check the owner alert arrives.
+
+`deploy/.env` (`POSTGRES_PASSWORD`, `N8N_ENCRYPTION_KEY`) is generated on the clinic's server; the developer keeps no
+copy. The encryption key protects the stored n8n credentials, so it is not rotated casually.
+
+## Contract checklist for the developer
+
+- [ ] **No non-compete.** Refuse any clause that forbids working for other clinics or competitors: the business is
+      selling this template to many clinics.
+- [ ] **IP.** The developer keeps the reusable template (workflows, scripts, prompts, tests) as background IP. The
+      clinic receives its own configuration (Settings, Services, Knowledge, credentials) and a licence to use the
+      template.
+- [ ] **DPA** (GDPR Art. 28) with technical and organisational measures, offered by the developer; Standard
+      Contractual Clauses if the developer works from outside the EU/EEA.
+- [ ] Accounts on the clinic's card, scoped invitations for the developer, handover as above.

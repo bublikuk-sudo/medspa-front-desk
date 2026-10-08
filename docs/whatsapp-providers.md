@@ -20,8 +20,12 @@ evaluated and why.
   `wa:+<digits>` and the number as `+<digits>` in `Clients.phone`.
 - **Status callbacks.** Meta posts `sent`, `delivered` and `read` to the same address. They start a run that
   ends in `Normalize`.
+- **WABA subscription.** The node does not subscribe the app to the WhatsApp Business Account. That is a one-time
+  `POST /<WABA id>/subscribed_apps` with the System User token (answer `{"success":true}`), done once per deployment.
 - **Non-text messages** (image, sticker, audio, ...) get the same "I can only read text" reply as a Telegram
-  sticker.
+  sticker. Reactions, `unsupported` and `system` messages are ignored without a reply.
+- **Batches.** If one webhook call carries several messages, the texts of the first sender are joined into one
+  request; messages from any other sender in the same call are not processed and the owner is alerted.
 - **Outbound.** `send_message` sends free-form text (no markup, up to 1500 characters) inside the 24-hour window
   and an approved template outside it.
 
