@@ -50,12 +50,14 @@ body=$(jq --argjson dropew "$drop_ew" --arg waid "${WHATSAPP_PHONE_NUMBER_ID:-}"
   | walk(if type=="string" then (wf(.) | waphone(.)) else . end)' "$f")
 id=$(api_call "$api/workflows?limit=250" | jq -r --arg n "$name" '.data[] | select(.name==$n) | .id' | head -1)
 if [ -z "$id" ]; then
-  resp=$(api_call -X POST "$api/workflows" -d "$body")
+  # The body goes in on stdin (--data-binary @-), not as an argument: Linux limits ONE argument to 128 KiB
+  # (MAX_ARG_STRLEN), and wf1-inbound's body passed that on 2026-10-08 ("curl: Argument list too long").
+  resp=$(printf '%s' "$body" | api_call -X POST "$api/workflows" --data-binary @-)
   id=$(printf '%s' "$resp" | jq -r '.id // empty')
   [ -n "$id" ] || { echo "POST /workflows returned no id: $resp" >&2; exit 1; }
   echo "created $name -> $id"
 else
-  api_call -X PUT "$api/workflows/$id" -d "$body" > /dev/null; echo "updated $name -> $id"
+  printf '%s' "$body" | api_call -X PUT "$api/workflows/$id" --data-binary @- > /dev/null; echo "updated $name -> $id"
 fi
 jq --arg n "$name" --arg id "$id" '.[$n] = $id' deploy/workflow-ids.json > deploy/.ids.tmp
 mv deploy/.ids.tmp deploy/workflow-ids.json
