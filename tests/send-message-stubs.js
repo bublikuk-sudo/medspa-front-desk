@@ -1,7 +1,17 @@
-// Stub test for send_message's capture decision (Task 20): the Format Code node's `test` field and the Test Contact? IF.
-// Runs inside the n8n container's Node (see tests/send-message-stubs.sh), which prepends:
-//   const CODE = { format, testExpr, formatTarget, trueTarget, falseTarget, captureTarget, captureQuery };
-// No network, no n8n runtime: $ and $json are stubbed.
+// Stub test for send_message's capture decision (Task 20): the Format Code node's `test` field and the Test Contact? IF;
+// and for the Render Code node (templates, REQ map, cancellation policy, cancel templates).
+// Runs in a Node (see tests/send-message-stubs.sh), which prepends:
+//   const WF = <workflows/shared/send_message.json>;  const TEMPLATES = <templates/messages.en.json>;
+// No network, no n8n runtime: $, $json and DateTime are stubbed.
+const node = (n) => WF.nodes.find((x) => x.name === n) || {};
+const out0 = (n, i = 0) => ((((WF.connections[n] || {}).main || [])[i] || []).map((x) => x.node)[0]) || 'none';
+const CODE = {
+  format: (node('Format').parameters || {}).jsCode,
+  render: (node('Render').parameters || {}).jsCode,
+  testExpr: ((((node('Test Contact?').parameters || {}).conditions || {}).conditions || [])[0] || {}).leftValue,
+  formatTarget: out0('Format'), trueTarget: out0('Test Contact?', 0), falseTarget: out0('Test Contact?', 1),
+  captureTarget: out0('Capture'), captureQuery: (node('Capture').parameters || {}).query,
+};
 let pass = 0, fail = 0;
 const check = (name, ok, detail) => {
   if (ok) { pass++; console.log('PASS ' + name); }
@@ -47,5 +57,37 @@ check('wiring: Format -> Test Contact?; true -> Capture -> Result; false -> Chan
   CODE.formatTarget === 'Test Contact?' && CODE.trueTarget === 'Capture' && CODE.falseTarget === 'Channel?' && CODE.captureTarget === 'Result',
   [CODE.formatTarget, CODE.trueTarget, CODE.falseTarget, CODE.captureTarget]);
 check('Capture inserts into test_outbox', /^INSERT INTO test_outbox \(contact_id, channel, template_key, wa_template, text\)/.test(CODE.captureQuery || ''), CODE.captureQuery);
+
+// ---- Render: templates, REQ map, the cancellation policy and the cancel templates (two-step cancel) ----
+const embedded = (() => { const m = /\/\*TEMPLATES\*\/ const T = (.*?); \/\*END\*\//s.exec(CODE.render || ''); try { return m ? JSON.parse(m[1]) : null; } catch (e) { return null; } })();
+check('Render embeds exactly templates/messages.en.json (same keys, order and text)', JSON.stringify(embedded) === JSON.stringify(TEMPLATES), embedded && Object.keys(embedded).filter((k) => embedded[k] !== TEMPLATES[k]));
+const SETTINGS = { timezone: 'Europe/Berlin', business_name: 'Glow Clinic', reminder_hours_before: 24, pending_ttl_min: 15, cancellation_hours: 24, intake_form_url: 'https://f' };
+// DateTime stub: only the `when` line uses it; the format string is checked, the result is fixed.
+const DateTimeStub = { fromISO: (s) => ({ setZone: (z) => ({ toFormat: (f) => (f === 'ccc, LLL d, h:mm a' && z === 'Europe/Berlin' && s === '2030-01-07T12:00:00+01:00' ? 'Mon, Jan 7, 12:00 PM' : 'BAD ' + s + ' ' + z + ' ' + f) }) }) };
+const render = (template_key, over = {}) => {
+  const nodes = {
+    Trigger: { contact_id: 'tg:9000000104', text: '', template_key, appt_id: 'A-1', vars_json: '', outside_window: '' },
+    Settings: { id: 'recS', fields: over.settings || SETTINGS },
+    Client: { id: 'recC', fields: { client_id: 'C-test-1', language: 'en', name: 'Carl' } },
+    Appointment: over.appt || { id: 'recA', fields: { appt_id: 'A-1', client_id: 'C-test-1', service_id: 'botox', start_iso: '2030-01-07T12:00:00+01:00' } },
+    Services: [{ id: 'recV', fields: { service_id: 'botox', name: 'Botox', duration_min: 30 } }],
+  };
+  const $ = (n) => { const v = nodes[n]; const arr = Array.isArray(v) ? v : [v]; return { first: () => ({ json: arr[0] }), all: () => arr.map((json) => ({ json })) }; };
+  return new Function('$', 'DateTime', CODE.render)($, DateTimeStub)[0].json.text;
+};
+const R = (name, key, want, over) => { try { const t = render(key, over); check(name, t === want, t); } catch (e) { check(name, false, String(e.message)); } };
+const THROWS = (name, key, re, over) => { try { const t = render(key, over); check(name, false, 'rendered: ' + t); } catch (e) { check(name, re.test(String(e.message)), String(e.message)); } };
+R('PENDING_SUMMARY states the cancellation policy before "Reply YES to confirm"', 'PENDING_SUMMARY', 'Botox (30 min) — Mon, Jan 7, 12:00 PM. Free cancellation up to 24 hours before. Reply YES to confirm.');
+THROWS('PENDING_SUMMARY without Settings.cancellation_hours throws (REQ)', 'PENDING_SUMMARY', /PENDING_SUMMARY needs "cancellation_hours"/, { settings: { ...SETTINGS, cancellation_hours: undefined } });
+R('PENDING_SUMMARY with cancellation_hours 0 still renders (0 is a value)', 'PENDING_SUMMARY', 'Botox (30 min) — Mon, Jan 7, 12:00 PM. Free cancellation up to 0 hours before. Reply YES to confirm.', { settings: { ...SETTINGS, cancellation_hours: 0 } });
+R('CANCEL_PENDING asks for YES, built from the row', 'CANCEL_PENDING', 'Cancel your Botox on Mon, Jan 7, 12:00 PM? Reply YES to cancel.');
+R('LATE_CANCEL_PENDING names the window and the late cancellation', 'LATE_CANCEL_PENDING', 'Cancel your Botox on Mon, Jan 7, 12:00 PM? This is less than 24 hours before your visit, so it will be recorded as a late cancellation. Reply YES to cancel.');
+THROWS('LATE_CANCEL_PENDING without cancellation_hours throws (REQ)', 'LATE_CANCEL_PENDING', /LATE_CANCEL_PENDING needs "cancellation_hours"/, { settings: { ...SETTINGS, cancellation_hours: null } });
+R('CANCELLED confirms the cancellation', 'CANCELLED', 'Your Botox on Mon, Jan 7, 12:00 PM has been cancelled. Message me any time to book again.');
+R('LATE_CANCEL confirms it and says it is recorded as late', 'LATE_CANCEL', 'Your Botox on Mon, Jan 7, 12:00 PM has been cancelled. It was less than 24 hours before the visit, so it is recorded as a late cancellation. Message me any time to book again.');
+THROWS('LATE_CANCEL without cancellation_hours throws (REQ)', 'LATE_CANCEL', /LATE_CANCEL needs "cancellation_hours"/, { settings: { ...SETTINGS, cancellation_hours: '' } });
+for (const k of ['CANCEL_PENDING', 'LATE_CANCEL_PENDING', 'CANCELLED', 'LATE_CANCEL']) {
+  THROWS(k + ' without a visit (no service, no time) throws instead of sending an empty question', k, /needs "(service|when)"/, { appt: {} });
+}
 console.log('\nSEND_MESSAGE_STUBS passed ' + pass + ', failed ' + fail);
 process.exit(fail ? 1 : 0);

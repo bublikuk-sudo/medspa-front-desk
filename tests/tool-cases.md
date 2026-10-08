@@ -117,8 +117,9 @@ event of the day whose description looked like an appt_id, which could have reac
 
 ## Index: which spec point each case closes
 
-Level 1 is "each tool on its own with fixed inputs" (spec, section Testing, point 1). The suite is 97 cases; its last
-full run, 2026-10-08, passed 97 of 97 (log: `tests/dialog-runs/2026-10-08-level1.md`). The 96 cases before
+Level 1 is "each tool on its own with fixed inputs" (spec, section Testing, point 1). The suite is 105 cases: the 97 of
+its last full run, 2026-10-08, which passed 97 of 97 (log: `tests/dialog-runs/2026-10-08-level1.md`), plus the eight
+`rcancel_*` cases of the two-step cancel (request_cancel), which have not run yet. The 96 cases before
 `escalate_already_escalated` were green twice in a row on 2026-10-03 (log: `tests/dialog-runs/2026-10-03-level1.md`). Every case is self-sufficient: it builds its own
 state in `setup`, can be run alone (`tests/tool-cases.sh <name>`) and removes its test data in `teardown`. The last row,
 `final_cleanup`, leaves the base and the calendar empty of test data. The per-case details are in the tool sections
@@ -159,6 +160,8 @@ below; this table only says which spec point the cases of a tool close.
 | | `cancel_reschedule_reason`, `cancel_forged_reschedule` | A late cancel with a real replacement is a reschedule, not a penalty; a forged `reschedule` reason is treated as a late cancel. |
 | | `cancel_not_found`, `cancel_invalid_id`, `cancel_not_yours`, `cancel_past`, `cancel_already_cancelled` | `NOT_FOUND` / `NOT_YOURS`: unknown, malformed, someone else's, past and already cancelled ids change nothing. |
 | | `cancel_pending_in_window` | A pending proposal is cancelled without penalty. |
+| `request_cancel` | `rcancel_free`, `rcancel_late` | Two-step cancel (owner decision 2026-10-08): the agent's cancel tool only records a pending cancellation and says whether it would be late; the status, the calendar event and the client stay untouched and nobody is notified, until the client's YES (WF-1). |
+| | `rcancel_not_found`, `rcancel_invalid_id`, `rcancel_not_yours`, `rcancel_past`, `rcancel_pending`, `rcancel_already_cancelled` | `NOT_FOUND` / `NOT_YOURS` record nothing: unknown, malformed, someone else's, past, merely proposed and already cancelled visits. |
 | `reminder_reply` | `reminder_none`, `reminder_yes`, `reminder_no` | The answer to the reminder: no reminded visit is `NO_REMINDED`; YES confirms exactly the nearest reminded visit; NO cancels it, deletes the event, flags the client and tells the owner. |
 | `wf2-agent` | `agent_books_flow` | The agent really calls `check_availability` for a booking request and the offer is saved. This case is non-deterministic (an LLM). |
 | | `agent_medical_escalates` | "A medical question goes to the owner": client `escalated`, empty reply (the fixed template is sent), exactly one owner notification. |
@@ -228,7 +231,7 @@ does not: a retry after a timed-out success would create a duplicate busy block 
 | `find_client_whitespace_name` | a whitespace-only `name` counts as no name: `NEW` |
 | `find_client_no_next_visit` | a `done` appointment without `next_visit_in` gives `last_service=botox upcoming=[...]` with no empty `next_visit_in=` token (optional tokens appear only when the data exists) |
 | `find_client_name_quote` | a client-controlled name containing `"` cannot forge a field: quotes become `'`, so `owner_notes=` stays inside `name="..."` and there is no second token |
-| `find_client_known` | the full card: last visit from the latest `done` appointment, plus `upcoming=[appt_id service_id start_iso; ...]` with only future `booked`/`reminded`/`confirmed` rows; this is the only place `cancel_booking` gets an `appt_id` from. No `owner_notes` is expected here because `Clients.notes` is empty |
+| `find_client_known` | the full card: last visit from the latest `done` appointment, plus `upcoming=[appt_id service_id start_iso; ...]` with only future `booked`/`reminded`/`confirmed` rows; this is the only place `request_cancel` gets an `appt_id` from. No `owner_notes` is expected here because `Clients.notes` is empty |
 | `find_client_no_appts` | a named client with no appointments gives `upcoming=[]` and no `last_visit` part, not an error |
 | `find_client_owner_notes` | non-empty `Clients.notes` is appended as `owner_notes="..."`, with double quotes turned into single quotes and whitespace collapsed |
 
@@ -555,8 +558,10 @@ at, and the cleanup by id cannot find it.
 
 ### cancel_booking
 
-`cancel_booking(contact_id, appt_id, reason?)` is the agent's cancel tool (the agent passes `contact_id` and an `appt_id`
-from find_client's `upcoming`; `reason` is only passed by confirm_booking's `Cancel Replaced`). Verdicts: `CANCELLED`,
+`cancel_booking(contact_id, appt_id, reason?)` is INTERNAL since the two-step cancel (owner decision 2026-10-08): WF-1's
+`Cancel Visit` calls it after the client's YES to the cancel question (with the visit request_cancel recorded and no
+`reason`), and confirm_booking's `Cancel Replaced` calls it with `reason = reschedule`. The agent has `request_cancel`
+instead (next section). Until 2026-10-08 it was the agent's cancel tool; the cases below are unchanged. Verdicts: `CANCELLED`,
 `LATE_CANCEL`, `NOT_YOURS`, `NOT_FOUND`, each with `appt_id` (`""` when the input was not a plain appt_id).
 
 - `appt_id` must match `^A-[0-9A-Z-]{1,40}$` (after trimming) before it goes into the `Appointment` formula; anything else
@@ -614,6 +619,44 @@ A non-404/410 error could not be produced without touching the shared Settings o
 `cancel_ok`, `cancel_not_yours` and `cancel_already_gone` book for real in the setup (owner messages) and end with the
 full cleanup and `EVENTS 0`; `cancel_already_gone` deletes its row before the cleanup, because its event is known to be
 gone and a leftover id would make the cleanup's `DELETED n of m` fail.
+
+### request_cancel
+
+`request_cancel(contact_id, appt_id)` is the agent's cancel tool since 2026-10-08 (owner decision: a cancellation
+happens only on the client's second message, after the bot has asked; free or late). `contact_id` comes from WF-1, never
+the model; `appt_id` from find_client's `upcoming`. It never cancels:
+
+- The same checks as cancel_booking, in the same order: `appt_id` must match `^A-[0-9A-Z-]{1,40}$` (else `NOT_FOUND`,
+  `appt_id` `""`); no row -> `NOT_FOUND`; not this client's row (or no client row) -> `NOT_YOURS`; a visit whose start is
+  now or past -> `NOT_FOUND`. One difference: only `booked` / `reminded` / `confirmed` visits; a `pending` proposal is
+  `NOT_FOUND` (it is not a booking and lapses by itself after `pending_ttl_min`; find_client never lists it).
+- Otherwise `Mark Requested` writes ONLY `Appointments.cancel_expires_at` = now + `Settings.pending_ttl_min`, and the
+  verdict is `CANCEL_PENDING <appt_id>`, or `LATE_CANCEL_PENDING <appt_id>` when the visit starts in fewer than
+  `Settings.cancellation_hours` hours (the rule cancel_booking applies). The status, `calendar_event_id`, the calendar
+  event and the client's status are untouched, and the owner is not notified.
+- `Decide` throws (-> WF-6) on a missing Settings row, a `cancellation_hours` that is not a number >= 0, a
+  `pending_ttl_min` that is not a positive number, and a row whose `start_iso` does not parse.
+
+What happens next is WF-1's (stub-tested in `tests/wf1-code-stubs.sh`, live in dialog 04): WF-2's Guardrail hands WF-1 the
+visit of the last `CANCEL_PENDING` / `LATE_CANCEL_PENDING` of the turn; WF-1 reads the row back (`Cancel Row`: this
+client's, live, request unexpired), sends the `CANCEL_PENDING` / `LATE_CANCEL_PENDING` template instead of the agent's
+text, writes `Clients.last_agent_reply_at` and then `Appointments.cancel_asked_at` = exactly that value. A bare YES (or a
+short phrase Haiku reads as YES) while that question is the bot's last message and the request is unexpired runs
+`cancel_booking` without the agent and sends the `CANCELLED` / `LATE_CANCEL` template.
+
+| case | why |
+|---|---|
+| `rcancel_free` | client 1's real booking at 12:00 on 2030-01-07: `CANCEL_PENDING <appt_id>`; the row is still `booked` with the same `calendar_event_id`, `cancel_expires_at` is set and in the future, `cancel_asked_at` empty, the event is still there (`EVENTS 1`), the client stays `active`, no owner message |
+| `rcancel_late` | a `confirmed` visit 3 hours ahead (no event): `LATE_CANCEL_PENDING A-TEST-LATE`; still `confirmed` with `cancel_expires_at` set, the client stays `new` (not flagged), no owner message |
+| `rcancel_not_yours` | client 2 asks for client 1's booked `A-TEST-RC1`: `NOT_YOURS`, the row has no cancel fields |
+| `rcancel_not_found` | `A-NOPE` does not exist: `NOT_FOUND` |
+| `rcancel_invalid_id` | `A-TEST-RC1'` is not a plain appt_id: `NOT_FOUND` with `appt_id` `""`, the client's own `A-TEST-RC1` untouched |
+| `rcancel_past` | a `booked` visit on 2026-01-05: `NOT_FOUND`, nothing recorded |
+| `rcancel_pending` | a `pending` proposal: `NOT_FOUND`, still `pending`, nothing recorded |
+| `rcancel_already_cancelled` | a `cancelled` row: `NOT_FOUND`, nothing recorded |
+
+`rcancel_free` books for real in the setup (confirm_booking notifies the owner BEFORE `t0`) and ends with the full
+cleanup and `EVENTS 0`; the others write rows only and use `--no-calendar`.
 
 ### reminder_reply
 

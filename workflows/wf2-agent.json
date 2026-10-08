@@ -147,7 +147,7 @@
         "text": "={{ $('Trigger').first().json.text }}",
         "hasOutputParser": false,
         "options": {
-          "systemMessage": "=You are the virtual front desk of a medical aesthetics clinic. You help clients book, reschedule and cancel appointments, answer questions from the clinic's knowledge base, and hand the conversation to a human when needed. You are warm, brief and precise.\n\nLANGUAGE\nReply in the language given as client_language in the context, whatever language the knowledge base or tool results are in. Translate knowledge-base passages yourself. Dates, times and service identifiers that you pass to tools are never translated: dates are YYYY-MM-DD, timestamps are ISO 8601 exactly as a tool returned them, services are service_id values from the context.\n\nSCOPE\nYou only talk about this clinic: its services, prices, availability, appointments, policies, location and hours. For anything else, say politely that you can only help with the clinic and offer to book or to connect a team member. Never give medical advice, diagnoses, dosages or drug recommendations from your own knowledge. If a question is medical and search_knowledge returns NOT_FOUND, say the team will answer it and call escalate.\n\nTOOLS AND PROCEDURE\n1. At the start of a conversation call find_client. NEW means we do not know this person: ask for their first and last name before proposing a booking. In your first reply to a NEW client, work one short sentence into the greeting saying that you are the clinic's AI assistant and that a team member can take over on request; do not repeat it in later replies, and do not volunteer it to a KNOWN client. KNOWN gives the name, the last service, next_visit_in, upcoming appointments with their appt_id and, when present, owner_notes written by the clinic about this client — follow them. Greet a known client by name; if they ask for \"the same as last time\", use last_service.\n2. To book: identify the service (only a service_id from the context; if unsure, list the services), then the day and part of day, then call check_availability. Offer at most 4 of the returned slots in the client's local time. FREE slots are the only times you may propose. NONE means offer the nearest alternatives the tool returned. UNKNOWN_SERVICE means ask the client to choose from the list in the tool result.\n3. When the client picks a slot, call propose_booking with the exact ISO timestamp from check_availability and the service_id (and the name, if the client is NEW). PENDING means the system will now send the client a summary and ask them to reply YES; your own text after PENDING is not shown, so reply with a single short sentence. You cannot confirm a booking yourself; only the client's YES does. SLOT_NOT_OFFERED means the time was not in the last availability check: run check_availability again. NO_CLIENT_ROW means the client is not registered yet: tell them a team member will finish the booking and call escalate.\n4. To cancel: only appointments listed in find_client's upcoming, by appt_id. Confirm which appointment the client means, then call cancel_booking. LATE_CANCEL means the cancellation is inside the clinic's cancellation window: tell the client it is recorded as a late cancellation and, if they ask about the policy, use search_knowledge. NOT_YOURS or NOT_FOUND: tell the client you cannot find that appointment under their contact.\n5. To reschedule: find the new slot as in step 2, then call propose_booking with replaces_appt_id set to the old appointment's appt_id. The old appointment is cancelled automatically once the client confirms the new one with YES.\n6. For questions about prices, durations, preparation, aftercare, contraindications, address, hours, parking, payment or policies: call search_knowledge and answer only from what it returns. If it returns NOT_FOUND, say so honestly and offer to pass the question to the team.\n7. Call escalate when the client asks for a human, complains, asks a medical question the knowledge base does not cover, asks you to compare or rank treatments (which is better, which lasts longer, which hurts less), or when you have not understood two consecutive messages. After ESCALATED, say a team member will contact them and stop offering actions.\n\nRULES\n- Never invent availability, prices, durations or policies. Everything comes from tools or the context.\n- Never ask for or record health information (allergies, medication, pregnancy, diagnoses). If the client volunteers it, thank them and say the practitioner will review it at the visit; do not repeat it back.\n- If a client asks whether they are talking to a bot, an AI or a human, answer truthfully that you are the clinic's AI assistant and offer to connect a team member. Never claim to be a human.\n- Never mention appt_id, service_id, contact_id or tool names to the client.\n- One question at a time. Keep replies to three sentences unless listing slots or services.\n\nFORMATTING\nPlain text only. Use **double asterisks** for emphasis and nothing else: no headings, no bullet symbols, no markdown links, no HTML. Show times as in \"Tue, Sep 22 at 2:00 PM\".\n\nCONTEXT\n{{ $('Context').first().json.block }}",
+          "systemMessage": "=You are the virtual front desk of a medical aesthetics clinic. You help clients book, reschedule and cancel appointments, answer questions from the clinic's knowledge base, and hand the conversation to a human when needed. You are warm, brief and precise.\n\nLANGUAGE\nReply in the language given as client_language in the context, whatever language the knowledge base or tool results are in. Translate knowledge-base passages yourself. Dates, times and service identifiers that you pass to tools are never translated: dates are YYYY-MM-DD, timestamps are ISO 8601 exactly as a tool returned them, services are service_id values from the context.\n\nSCOPE\nYou only talk about this clinic: its services, prices, availability, appointments, policies, location and hours. For anything else, say politely that you can only help with the clinic and offer to book or to connect a team member. Never give medical advice, diagnoses, dosages or drug recommendations from your own knowledge. If a question is medical and search_knowledge returns NOT_FOUND, say the team will answer it and call escalate.\n\nTOOLS AND PROCEDURE\n1. At the start of a conversation call find_client. NEW means we do not know this person: ask for their first and last name before proposing a booking. In your first reply to a NEW client, work one short sentence into the greeting saying that you are the clinic's AI assistant and that a team member can take over on request; do not repeat it in later replies, and do not volunteer it to a KNOWN client. KNOWN gives the name, the last service, next_visit_in, upcoming appointments with their appt_id and, when present, owner_notes written by the clinic about this client — follow them. Greet a known client by name; if they ask for \"the same as last time\", use last_service.\n2. To book: identify the service (only a service_id from the context; if unsure, list the services), then the day and part of day, then call check_availability. Offer at most 4 of the returned slots in the client's local time. FREE slots are the only times you may propose. NONE means offer the nearest alternatives the tool returned. UNKNOWN_SERVICE means ask the client to choose from the list in the tool result.\n3. When the client picks a slot, call propose_booking with the exact ISO timestamp from check_availability and the service_id (and the name, if the client is NEW). PENDING means the system will now send the client a summary and ask them to reply YES; your own text after PENDING is not shown, so reply with a single short sentence. You cannot confirm a booking yourself; only the client's YES does. SLOT_NOT_OFFERED means the time was not in the last availability check: run check_availability again. NO_CLIENT_ROW means the client is not registered yet: tell them a team member will finish the booking and call escalate.\n4. To cancel: only appointments listed in find_client's upcoming, by appt_id. Make sure which appointment the client means (if they have only one upcoming appointment, it is that one), then call request_cancel. It does not cancel anything: CANCEL_PENDING or LATE_CANCEL_PENDING means the system will now send the client the appointment details, with the late-cancellation notice when it applies, and ask them to reply YES; your own text after it is not shown, so reply with a single short sentence. You cannot cancel an appointment yourself and must never say it is cancelled; only the client's YES cancels it. If they ask about the cancellation policy, use search_knowledge. NOT_YOURS or NOT_FOUND: tell the client you cannot find that appointment under their contact.\n5. To reschedule: find the new slot as in step 2, then call propose_booking with replaces_appt_id set to the old appointment's appt_id. The old appointment is cancelled automatically once the client confirms the new one with YES.\n6. For questions about prices, durations, preparation, aftercare, contraindications, address, hours, parking, payment or policies: call search_knowledge and answer only from what it returns. If it returns NOT_FOUND, say so honestly and offer to pass the question to the team.\n7. Call escalate when the client asks for a human, complains, asks a medical question the knowledge base does not cover, asks you to compare or rank treatments (which is better, which lasts longer, which hurts less), or when you have not understood two consecutive messages. After ESCALATED, say a team member will contact them and stop offering actions.\n\nRULES\n- Never invent availability, prices, durations or policies. Everything comes from tools or the context.\n- Never ask for or record health information (allergies, medication, pregnancy, diagnoses). If the client volunteers it, thank them and say the practitioner will review it at the visit; do not repeat it back.\n- If a client asks whether they are talking to a bot, an AI or a human, answer truthfully that you are the clinic's AI assistant and offer to connect a team member. Never claim to be a human.\n- Never mention appt_id, service_id, contact_id or tool names to the client.\n- One question at a time. Keep replies to three sentences unless listing slots or services.\n\nFORMATTING\nPlain text only. Use **double asterisks** for emphasis and nothing else: no headings, no bullet symbols, no markdown links, no HTML. Show times as in \"Tue, Sep 22 at 2:00 PM\".\n\nCONTEXT\n{{ $('Context').first().json.block }}",
           "maxIterations": 8,
           "returnIntermediateSteps": true,
           "enableStreaming": false
@@ -412,9 +412,9 @@
       }
     },
     {
-      "id": "a9e20002-0011-4c00-8000-000000000011",
-      "name": "cancel_booking",
-      "notes": "reason is deliberately NOT mapped (removed): the model must never be able to claim a reschedule; without reason cancel_booking applies the late-cancel policy. Reschedules reach cancel_booking only from confirm_booking.",
+      "id": "a9e20002-0019-4c00-8000-000000000019",
+      "name": "request_cancel",
+      "notes": "Two-step cancel (owner decision 2026-10-08): the agent can only ASK for a cancellation. request_cancel records a pending cancellation and answers CANCEL_PENDING / LATE_CANCEL_PENDING; Guardrail hands that visit to WF-1, which sends the question built from the row, and only the client's YES makes WF-1 run cancel_booking. cancel_booking is internal (WF-1's YES path, confirm_booking's reschedule) and is not given to the agent, so the model can neither cancel nor claim a reschedule.",
       "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
       "typeVersion": 2.2,
       "position": [
@@ -422,11 +422,11 @@
         560
       ],
       "parameters": {
-        "description": "Cancel one of the client's own upcoming appointments by appt_id. Returns CANCELLED, LATE_CANCEL, NOT_YOURS or NOT_FOUND.",
+        "description": "Ask to cancel one of the client's own upcoming appointments, by appt_id. This does not cancel anything: the system then asks the client to reply YES, and only that YES cancels. Returns CANCEL_PENDING (the client will be asked to confirm), LATE_CANCEL_PENDING (the same, and the cancellation would be a late cancellation), NOT_YOURS or NOT_FOUND.",
         "source": "database",
         "workflowId": {
           "__rl": true,
-          "value": "WFID:cancel_booking",
+          "value": "WFID:request_cancel",
           "mode": "id"
         },
         "workflowInputs": {
@@ -456,16 +456,6 @@
               "canBeUsedToMatch": true,
               "type": "string",
               "removed": false
-            },
-            {
-              "id": "reason",
-              "displayName": "reason",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "canBeUsedToMatch": true,
-              "type": "string",
-              "removed": true
             }
           ],
           "attemptToConvertTypes": false,
@@ -567,7 +557,7 @@
     {
       "id": "a9e20002-0014-4c00-8000-000000000014",
       "name": "Guardrail",
-      "notes": "escalated = the agent called escalate and it answered ESCALATED. Then the reply becomes the ESCALATED_REPLY template (Result) and Escalate Medical is skipped, so the owner is not alerted twice.",
+      "notes": "escalated = the agent called escalate and it answered ESCALATED. Then the reply becomes the ESCALATED_REPLY template (Result) and Escalate Medical is skipped, so the owner is not alerted twice. cancel_appt_id / cancel_verdict = the visit the last request_cancel of this turn recorded (CANCEL_PENDING / LATE_CANCEL_PENDING); WF-1 asks the client about exactly that visit.",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -577,7 +567,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const j = $input.first().json;\nconst out = (j.output || '').toString();\nconst steps = Array.isArray(j.intermediateSteps) ? j.intermediateSteps : [];\nconst tools_used = steps.map(s => s.action && s.action.tool).filter(Boolean);\n// Positive matches only: an observation is the JSON of the tool's items, e.g. [{\"verdict\":\"FOUND\\n...\"}]. A tool error (\"There was an error: ...\") must neither count as a knowledge-base source nor as an escalation.\nconst kbUsed = steps.some(s => s.action && s.action.tool === 'search_knowledge' && /\"verdict\"\\s*:\\s*\"FOUND\\b/.test(String(s.observation || '')));\nconst escalated = steps.some(s => s.action && s.action.tool === 'escalate' && /\"verdict\"\\s*:\\s*\"ESCALATED\"/.test(String(s.observation || '')));\nconst medical = /\\b\\d+\\s?(units?|mg|ml|iu|cc)\\b|\\b(botulinum|hyaluron\\w*|lidocaine|tretinoin|retin-a|hydroquinone|isotretinoin|accutane|semaglutide|ozempic|antibiotic\\w*|steroid\\w*|dosage|dose)\\b/i;\nconst violation = medical.test(out) && !kbUsed;\nreturn [{ json: { reply: out, violation, escalated, tools_used } }];"
+        "jsCode": "const j = $input.first().json;\nconst out = (j.output || '').toString();\nconst steps = Array.isArray(j.intermediateSteps) ? j.intermediateSteps : [];\nconst tools_used = steps.map(s => s.action && s.action.tool).filter(Boolean);\n// Positive matches only: an observation is the JSON of the tool's items, e.g. [{\"verdict\":\"FOUND\\n...\"}]. A tool error (\"There was an error: ...\") must neither count as a knowledge-base source nor as an escalation.\nconst kbUsed = steps.some(s => s.action && s.action.tool === 'search_knowledge' && /\"verdict\"\\s*:\\s*\"FOUND\\b/.test(String(s.observation || '')));\nconst escalated = steps.some(s => s.action && s.action.tool === 'escalate' && /\"verdict\"\\s*:\\s*\"ESCALATED\"/.test(String(s.observation || '')));\nconst medical = /\\b\\d+\\s?(units?|mg|ml|iu|cc)\\b|\\b(botulinum|hyaluron\\w*|lidocaine|tretinoin|retin-a|hydroquinone|isotretinoin|accutane|semaglutide|ozempic|antibiotic\\w*|steroid\\w*|dosage|dose)\\b/i;\nconst violation = medical.test(out) && !kbUsed;\n// Two-step cancel: the visit the LAST request_cancel of this turn recorded (its verdict, not the model's text). WF-1 then sends\n// the CANCEL_PENDING / LATE_CANCEL_PENDING question built from that row instead of the agent's reply. A rejection or a tool\n// error records nothing and is not matched (the verdict must be the whole JSON string value).\nlet cancel_appt_id = '', cancel_verdict = '';\nfor (const s of steps) {\n  if (!(s.action && s.action.tool === 'request_cancel')) continue;\n  const m = /\"verdict\"\\s*:\\s*\"(CANCEL_PENDING|LATE_CANCEL_PENDING) (A-[0-9A-Z-]{1,40})\"/.exec(String(s.observation || ''));\n  if (m) { cancel_verdict = m[1]; cancel_appt_id = m[2]; }\n}\nreturn [{ json: { reply: out, violation, escalated, tools_used, cancel_appt_id, cancel_verdict } }];"
       }
     },
     {
@@ -693,6 +683,18 @@
               "name": "tools_used",
               "value": "={{ $('Guardrail').first().json.tools_used }}",
               "type": "array"
+            },
+            {
+              "id": "a9e20002-2007-4c00-8000-000000000007",
+              "name": "cancel_appt_id",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "a9e20002-2008-4c00-8000-000000000008",
+              "name": "cancel_verdict",
+              "value": "",
+              "type": "string"
             }
           ]
         },
@@ -728,6 +730,18 @@
               "name": "tools_used",
               "value": "={{ $json.tools_used }}",
               "type": "array"
+            },
+            {
+              "id": "a9e20002-2009-4c00-8000-000000000009",
+              "name": "cancel_appt_id",
+              "value": "={{ $json.escalated ? '' : ($json.cancel_appt_id || '') }}",
+              "type": "string"
+            },
+            {
+              "id": "a9e20002-2010-4c00-8000-000000000010",
+              "name": "cancel_verdict",
+              "value": "={{ $json.escalated ? '' : ($json.cancel_verdict || '') }}",
+              "type": "string"
             }
           ]
         },
@@ -835,7 +849,7 @@
         ]
       ]
     },
-    "cancel_booking": {
+    "request_cancel": {
       "ai_tool": [
         [
           {

@@ -1,8 +1,32 @@
-// Stub test for the WF-1 Code nodes that decide who a message is from (Normalize, Client Formula)
-// and for the Create Client expressions that turn contact_id into telegram_chat_id / phone.
-// Runs inside the n8n container's Node (see tests/wf1-code-stubs.sh), which prepends:
-//   const CODE = { normalize, formula, phoneExpr, chatExpr };   // taken from workflows/wf1-inbound.json
-// No network, no n8n runtime: $input / $ are stubbed.
+// Stub test for the WF-1 Code nodes that decide who a message is from (Normalize, Client Formula), the Create Client
+// expressions that turn contact_id into telegram_chat_id / phone, and the cancel confirmation (two-step cancel): WF-2's
+// Guardrail/Result hand WF-1 the visit request_cancel recorded, WF-1 asks the client, and Gate routes the client's YES.
+// Runs in a Node (see tests/wf1-code-stubs.sh), which prepends:
+//   const WF = <workflows/wf1-inbound.json>;  const WF2 = <workflows/wf2-agent.json>;
+// No network, no n8n runtime: $input / $ / $now are stubbed. No jq and no luxon needed, so it also runs offline.
+
+const nodeIn = (wf, n) => wf.nodes.find((x) => x.name === n) || {};
+const node = (n) => nodeIn(WF, n);
+const P = (n) => node(n).parameters || {};
+const outsIn = (wf, n, i = 0) => ((((wf.connections[n] || {}).main || [])[i]) || []).map((x) => x.node);
+const outs = (n, i = 0) => outsIn(WF, n, i);
+const target = (n, i = 0) => outs(n, i)[0] || 'none';
+const CODE = {
+  normalize: P('Normalize').jsCode,
+  formula: P('Client Formula').jsCode,
+  phoneExpr: ((P('Create Client').columns || {}).value || {}).phone,
+  idExpr: ((P('Create Client').columns || {}).value || {}).client_id,
+  chatExpr: ((P('Create Client').columns || {}).value || {}).telegram_chat_id,
+  hasSenderExpr: (((P('Has Sender?').conditions || {}).conditions || [])[0] || {}).leftValue,
+  droppedExpr: (((P('Dropped?').conditions || {}).conditions || [])[0] || {}).leftValue,
+  notifyTextExpr: ((P('Notify Dropped').workflowInputs || {}).value || {}).text,
+  normalizeTargets: outs('Normalize'),
+  hasSenderTarget: target('Has Sender?'),
+  droppedTarget: target('Dropped?'),
+  afterNotify: WF.connections['Notify Dropped'] == null ? 'none' : 'wired',
+  testInbound: { method: P('Test Inbound').httpMethod, path: P('Test Inbound').path, auth: P('Test Inbound').authentication, mode: P('Test Inbound').responseMode, cred: (((node('Test Inbound').credentials || {}).httpHeaderAuth) || {}).name },
+  testTarget: target('Test Inbound'),
+};
 
 let pass = 0, fail = 0;
 const check = (name, ok, detail) => {
@@ -213,6 +237,196 @@ T('Dropped? is true only when there is an alert text', () =>
 T('Notify Dropped sends exactly alert_text', () => jsonExpr(CODE.notifyTextExpr, normalize(two)[0].json) === normalize(two)[0].json.alert_text || 'wrong');
 T('Normalize feeds both Has Sender? and Dropped?; Has Sender? feeds Has Text?; Dropped? feeds Notify Dropped; nothing follows Notify Dropped',
   () => same((CODE.normalizeTargets || []).slice().sort(), ['Dropped?', 'Has Sender?']) && CODE.hasSenderTarget === 'Has Text?' && CODE.droppedTarget === 'Notify Dropped' && CODE.afterNotify === 'none' || [CODE.normalizeTargets, CODE.hasSenderTarget, CODE.droppedTarget, CODE.afterNotify]);
+
+// ==== Cancel confirmation (two-step cancel, owner decision 2026-10-08) ====================================================
+// $('Name') over a map name -> json or [json, ...]; first(), all(), isExecuted like n8n.
+const dollar = (nodes) => (name) => {
+  const v = nodes[name];
+  const arr = v === undefined ? [] : (Array.isArray(v) ? v : [v]);
+  return { first: () => ({ json: arr[0] }), all: () => arr.map((json) => ({ json })), isExecuted: name in nodes };
+};
+const NOW = Date.now();
+const $nowStub = { toUTC: () => ({ toISO: () => new Date().toISOString() }), toMillis: () => Date.now() };
+// luxon as the expressions use it: DateTime.fromISO(s).toMillis() is NaN for an unreadable value, like an invalid luxon DateTime
+const DateTimeStub = { fromISO: (s) => ({ toMillis: () => (/^\d{4}-\d\d-\d\dT/.test(String(s)) ? Date.parse(s) : NaN) }) };
+const strip = (e) => String(e).replace(/^=\{\{\s*/, '').replace(/\s*\}\}$/, '');
+// "={{ expr }}" against $json and named nodes
+const ev = (e, json, nodes = {}) => new Function('$json', '$', '$now', 'DateTime', 'return (' + strip(e) + ');')(json, dollar(nodes), $nowStub, DateTimeStub);
+// "=text {{ expr }} text": every {{ }} evaluated (an n8n text template)
+const tpl = (t, json, nodes = {}) => String(t).replace(/^=/, '').replace(/\{\{([\s\S]+?)\}\}/g, (_, x) => String(new Function('$json', '$', '$now', 'DateTime', 'return (' + x + ');')(json, dollar(nodes), $nowStub, DateTimeStub)));
+const iso = (msFromNow) => new Date(NOW + msFromNow).toISOString();
+const MIN = 60000;
+const leftOf = (n) => (((P(n).conditions || {}).conditions || [])[0] || {}).leftValue;
+const inputsOf = (n) => (P(n).workflowInputs || {}).value || {};
+
+// ---- WF-2: the agent-facing tool is request_cancel; cancel_booking is internal ----
+const w2node = (n) => nodeIn(WF2, n);
+const tools2 = WF2.nodes.filter((x) => x.type === '@n8n/n8n-nodes-langchain.toolWorkflow').map((x) => x.name).sort();
+T('WF-2 tools: request_cancel replaces cancel_booking (no agent tool reaches cancel_booking)', () =>
+  same(tools2, ['check_availability', 'escalate', 'find_client', 'propose_booking', 'request_cancel', 'search_knowledge']) &&
+  !JSON.stringify(WF2.nodes).includes('WFID:cancel_booking') || tools2);
+const rc = w2node('request_cancel').parameters || {};
+T('WF-2 request_cancel calls WFID:request_cancel; contact_id from the Trigger, appt_id from the model, nothing else', () =>
+  (rc.workflowId || {}).value === 'WFID:request_cancel' &&
+  ((rc.workflowInputs || {}).value || {}).contact_id === "={{ $('Trigger').first().json.contact_id }}" &&
+  /\$fromAI\('appt_id'/.test(((rc.workflowInputs || {}).value || {}).appt_id || '') &&
+  same(Object.keys((rc.workflowInputs || {}).value || {}).sort(), ['appt_id', 'contact_id']) || rc.workflowInputs);
+T('WF-2 request_cancel is wired to the Agent as a tool', () =>
+  same(((WF2.connections.request_cancel || {}).ai_tool || [[]])[0].map((x) => x.node), ['Agent']) && !WF2.connections.cancel_booking || WF2.connections.request_cancel);
+const sys = String((((w2node('Agent').parameters || {}).options) || {}).systemMessage || '');
+T('WF-2 system prompt: step 4 names request_cancel, never cancel_booking, and says only the client\'s YES cancels', () =>
+  /4\. To cancel:[^\n]*request_cancel/.test(sys) && !/cancel_booking/.test(sys) && /CANCEL_PENDING/.test(sys) && /LATE_CANCEL_PENDING/.test(sys) && /never say[^\n]*cancelled/i.test(sys) || 'step 4 not rewritten');
+
+// Guardrail: the last request_cancel that recorded a pending cancellation in this turn (a tool observation, not model text)
+const guard = (steps, output = 'ok') => new Function('$input', w2node('Guardrail').parameters.jsCode)({ first: () => ({ json: { output, intermediateSteps: steps } }) })[0].json;
+const obs = (verdict, appt = '') => JSON.stringify([{ verdict, appt_id: appt }]);
+const step = (tool, observation) => ({ action: { tool }, observation });
+let g = guard([step('find_client', obs('KNOWN name="A"')), step('request_cancel', obs('CANCEL_PENDING A-TEST-1', 'A-TEST-1'))]);
+T('Guardrail: CANCEL_PENDING -> cancel_appt_id + cancel_verdict', () => g.cancel_appt_id === 'A-TEST-1' && g.cancel_verdict === 'CANCEL_PENDING' || g);
+g = guard([step('request_cancel', '[{"verdict" : "CANCEL_PENDING A-TEST-SP", "appt_id": "A-TEST-SP"}]')]);
+T('Guardrail: whitespace around the colon of the observation JSON is allowed (as for FOUND / ESCALATED)', () => g.cancel_appt_id === 'A-TEST-SP' && g.cancel_verdict === 'CANCEL_PENDING' || g);
+g = guard([step('request_cancel', '[{"verdicts:"CANCEL_PENDING A-TEST-SS"}]')]);
+T('Guardrail: only a "verdict" key counts', () => g.cancel_appt_id === '' || g);
+g = guard([step('request_cancel', obs('LATE_CANCEL_PENDING A-TEST-LATE', 'A-TEST-LATE'))]);
+T('Guardrail: LATE_CANCEL_PENDING -> the late verdict', () => g.cancel_appt_id === 'A-TEST-LATE' && g.cancel_verdict === 'LATE_CANCEL_PENDING' || g);
+for (const v of ['NOT_FOUND', 'NOT_YOURS']) {
+  g = guard([step('request_cancel', obs(v))]);
+  T('Guardrail: ' + v + ' -> no cancel question', () => g.cancel_appt_id === '' && g.cancel_verdict === '' || g);
+}
+g = guard([step('request_cancel', 'There was an error: "CANCEL_PENDING A-TEST-1"')]);
+T('Guardrail: a tool error that quotes a verdict is not a recorded request', () => g.cancel_appt_id === '' || g);
+g = guard([step('search_knowledge', obs('CANCEL_PENDING A-TEST-1')), step('escalate', obs('CANCEL_PENDING A-TEST-2'))]);
+T('Guardrail: only request_cancel observations count', () => g.cancel_appt_id === '' || g);
+g = guard([step('request_cancel', obs('CANCEL_PENDING A-TEST-1', 'A-TEST-1')), step('request_cancel', obs('LATE_CANCEL_PENDING A-TEST-2', 'A-TEST-2'))]);
+T('Guardrail: two recorded requests in one turn -> the last one', () => g.cancel_appt_id === 'A-TEST-2' && g.cancel_verdict === 'LATE_CANCEL_PENDING' || g);
+g = guard([step('request_cancel', obs("CANCEL_PENDING A-TEST-1'}", ''))]);
+T('Guardrail: a malformed appt_id is not taken', () => g.cancel_appt_id === '' || g);
+g = guard([]);
+T('Guardrail: no tool call -> empty cancel fields, the old fields unchanged', () => g.cancel_appt_id === '' && g.cancel_verdict === '' && g.reply === 'ok' && g.violation === false && same(g.tools_used, []) || g);
+const res2 = (n, field) => ((((w2node(n).parameters || {}).assignments || {}).assignments) || []).find((a) => a.name === field) || {};
+T('WF-2 Result passes cancel_appt_id / cancel_verdict, blanked when the turn escalated', () =>
+  ev(res2('Result', 'cancel_appt_id').value, { escalated: false, cancel_appt_id: 'A-TEST-1' }) === 'A-TEST-1' &&
+  ev(res2('Result', 'cancel_verdict').value, { escalated: false, cancel_verdict: 'CANCEL_PENDING' }) === 'CANCEL_PENDING' &&
+  ev(res2('Result', 'cancel_appt_id').value, { escalated: true, cancel_appt_id: 'A-TEST-1' }) === '' &&
+  ev(res2('Result', 'cancel_verdict').value, { escalated: true, cancel_verdict: 'CANCEL_PENDING' }) === '' || 'wrong');
+T('WF-2 Result Escalated never asks to cancel', () => res2('Result Escalated', 'cancel_appt_id').value === '' && res2('Result Escalated', 'cancel_verdict').value === '' || 'wrong');
+
+// ---- WF-1 Pending search: the pending proposal, every reminded visit, and live visits with a cancel question ----
+T('Pending: one search, returnAll, formula for C-1', () => P('Pending').returnAll === true && P('Pending').limit === undefined &&
+  ev(P('Pending').filterByFormula, { client_id: 'C-1' }) === "AND({client_id}='C-1',OR({status}='pending',{status}='reminded',AND(OR({status}='booked',{status}='confirmed'),NOT({cancel_asked_at}=BLANK()))))" || ev(P('Pending').filterByFormula, { client_id: 'C-1' }));
+T('Pending: a hostile client_id matches nothing', () => ev(P('Pending').filterByFormula, { client_id: "C-1'" }).startsWith("AND({client_id}='__no_such_client__',") || 'wrong');
+
+// ---- WF-1 Gate: routing of a short reply ----
+const LAST = iso(-2 * MIN);   // the bot's last agent reply
+const gate = (kind, is_short, rows, last = LAST) => new Function('$input', '$', P('Gate').jsCode)({}, dollar({ Classify: { kind, is_short }, 'Client Data': { last_agent_reply_at: last }, Pending: rows.length ? rows.map((f, i) => ({ id: 'rec' + i, createdTime: '', fields: f })) : [{}] }))[0].json;
+const pend = { appt_id: 'A-P', status: 'pending', summary_sent_at: iso(-10 * MIN), pending_expires_at: iso(5 * MIN) };
+const ask = (over = {}) => ({ appt_id: 'A-C', status: 'confirmed', cancel_asked_at: LAST, cancel_expires_at: iso(13 * MIN), ...over });
+let gr = gate('yes', true, [pend]);
+T('Gate: YES with a pending booking only -> confirm', () => gr.route === 'confirm' && gr.cancel_appt_id === '' || gr);
+gr = gate('yes', true, [ask()]);
+T('Gate: YES with a cancel question that is the last bot message -> cancel that visit', () => gr.route === 'cancel' && gr.cancel_appt_id === 'A-C' || gr);
+gr = gate('yes', true, [pend, ask()]);
+T('Gate: both pending, the cancel question asked after the summary -> cancel (the latest question)', () => gr.route === 'cancel' && gr.cancel_appt_id === 'A-C' || gr);
+gr = gate('yes', true, [{ ...pend, summary_sent_at: iso(-1 * MIN) }, ask({ cancel_asked_at: iso(-5 * MIN) })], iso(-1 * MIN));
+T('Gate: both pending, the summary sent after the cancel question -> confirm the booking, never cancel', () => gr.route === 'confirm' && gr.cancel_appt_id === '' || gr);
+gr = gate('yes', true, [ask({ cancel_expires_at: iso(-1 * MIN) })]);
+T('Gate: YES to an expired cancel question -> agent, the visit stays', () => gr.route === 'agent' && gr.cancel_appt_id === '' || gr);
+gr = gate('yes', true, [pend, ask({ cancel_expires_at: iso(-1 * MIN) })]);
+T('Gate: YES to an expired cancel question that was the last one, with a pending booking -> agent (neither cancel nor booking)', () => gr.route === 'agent' || gr);
+gr = gate('yes', true, [ask({ cancel_asked_at: iso(-5 * MIN) })], iso(-1 * MIN));
+T('Gate: the agent replied after the cancel question -> YES does not cancel (reminder route as before)', () => gr.route === 'reminder' && gr.cancel_appt_id === '' || gr);
+gr = gate('yes', true, [ask(), { appt_id: 'A-R', status: 'reminded', reminder_sent_at: iso(-1 * MIN) }]);
+T('Gate: a reminder sent after the cancel question is the last message -> reminder route, not cancel', () => gr.route === 'reminder' && gr.cancel_appt_id === '' || gr);
+gr = gate('yes', true, [ask({ status: 'reminded', reminder_sent_at: iso(-1 * MIN) })]);
+T('Gate: the same visit reminded after the cancel question -> reminder route (the reminder flow stays)', () => gr.route === 'reminder' || gr);
+gr = gate('yes', true, [ask({ status: 'reminded', reminder_sent_at: iso(-60 * MIN) })]);
+T('Gate: a reminded visit whose reminder came BEFORE the cancel question -> cancel', () => gr.route === 'cancel' && gr.cancel_appt_id === 'A-C' || gr);
+gr = gate('no', true, [ask()]);
+T('Gate: NO to the cancel question -> agent, the visit stays', () => gr.route === 'agent' && gr.cancel_appt_id === '' || gr);
+gr = gate('other', true, [ask()]);
+T('Gate: a short other reply to the cancel question -> llm with yes_target cancel', () => gr.route === 'llm' && gr.yes_target === 'cancel' && gr.cancel_appt_id === 'A-C' || gr);
+gr = gate('other', true, [pend]);
+T('Gate: a short other reply with a pending booking -> llm with yes_target confirm', () => gr.route === 'llm' && gr.yes_target === 'confirm' && gr.cancel_appt_id === '' || gr);
+gr = gate('other', false, [ask()]);
+T('Gate: a long message after the cancel question -> agent', () => gr.route === 'agent' || gr);
+gr = gate('yes', true, [ask()], '');
+T('Gate: no last_agent_reply_at -> a cancel question cannot be proven last, YES does not cancel', () => gr.route !== 'cancel' && gr.cancel_appt_id === '' || gr);
+gr = gate('yes', true, [ask({ status: 'cancelled' })]);
+T('Gate: a cancel question on a visit that is no longer live is ignored', () => gr.route === 'reminder' || gr);
+gr = gate('yes', true, [ask({ appt_id: 'A-OLD', cancel_asked_at: iso(-30 * MIN) }), ask({ appt_id: 'A-NEW' })]);
+T('Gate: an older cancel question and the last one -> the last one', () => gr.route === 'cancel' && gr.cancel_appt_id === 'A-NEW' || gr);
+gr = gate('yes', true, []);
+T('Gate: YES with nothing pending -> reminder route (unchanged)', () => gr.route === 'reminder' || gr);
+gr = gate('other', false, [pend]);
+T('Gate: a long message with a pending booking -> agent (unchanged)', () => gr.route === 'agent' || gr);
+
+// ---- WF-1 Route and the YES-to-cancel path ----
+const routeKeys = ((P('Route').rules || {}).values || []).map((r) => r.outputKey);
+T('Route outputs: confirm, llm, reminder, agent, cancel (tests/dialog.sh log_execs maps them by index)', () => same(routeKeys, ['confirm', 'llm', 'reminder', 'agent', 'cancel']) || routeKeys);
+T('Route cancel -> Cancel Visit; agent -> Agent', () => target('Route', 4) === 'Cancel Visit' && target('Route', 3) === 'Agent' || [target('Route', 3), target('Route', 4)]);
+const lt = (yt) => tpl(P('LLM Affirmative').text, {}, { Gate: { yes_target: yt }, 'Client Data': { text: 'sure thing' } });
+T('LLM Affirmative names the question it checks (a booking or a cancellation)', () => /confirm a booking/.test(lt('confirm')) && /cancel/i.test(lt('cancel')) && !/booking/.test(lt('cancel')) && /Message: sure thing$/.test(lt('cancel')) || [lt('confirm'), lt('cancel')]);
+T('Affirmative? true -> Cancel Target?; false -> Agent', () => target('Affirmative?', 0) === 'Cancel Target?' && target('Affirmative?', 1) === 'Agent' || [target('Affirmative?', 0), target('Affirmative?', 1)]);
+T('Cancel Target? true -> Cancel Visit, false -> Confirm', () => ev(leftOf('Cancel Target?'), {}, { Gate: { yes_target: 'cancel' } }) === true &&
+  ev(leftOf('Cancel Target?'), {}, { Gate: { yes_target: 'confirm' } }) === false && target('Cancel Target?', 0) === 'Cancel Visit' && target('Cancel Target?', 1) === 'Confirm' || 'wrong');
+const cv = node('Cancel Visit');
+T('Cancel Visit calls cancel_booking with the client\'s contact_id and the visit Gate chose, reason empty (never reschedule)', () =>
+  cv.type === 'n8n-nodes-base.executeWorkflow' && (P('Cancel Visit').workflowId || {}).value === 'WFID:cancel_booking' &&
+  ev(inputsOf('Cancel Visit').contact_id, {}, { 'Client Data': { contact_id: 'tg:1' } }) === 'tg:1' &&
+  ev(inputsOf('Cancel Visit').appt_id, {}, { Gate: { cancel_appt_id: 'A-C' } }) === 'A-C' && inputsOf('Cancel Visit').reason === '' &&
+  cv.onError === 'continueErrorOutput' && target('Cancel Visit', 0) === 'Cancelled?' && target('Cancel Visit', 1) === 'Notify Failure' || [cv.type, inputsOf('Cancel Visit')]);
+T('Cancelled? true for CANCELLED / LATE_CANCEL only; true -> Send Cancel Result, false -> Agent', () =>
+  ev(leftOf('Cancelled?'), { verdict: 'CANCELLED' }) === true && ev(leftOf('Cancelled?'), { verdict: 'LATE_CANCEL' }) === true &&
+  ev(leftOf('Cancelled?'), { verdict: 'NOT_FOUND' }) === false && ev(leftOf('Cancelled?'), { verdict: 'NOT_YOURS' }) === false && ev(leftOf('Cancelled?'), {}) === false &&
+  target('Cancelled?', 0) === 'Send Cancel Result' && target('Cancelled?', 1) === 'Agent' || 'wrong');
+const scr = inputsOf('Send Cancel Result');
+T('Send Cancel Result: template = cancel_booking verdict (CANCELLED / LATE_CANCEL), the cancelled appt_id, errors -> Notify Send Failure', () =>
+  (P('Send Cancel Result').workflowId || {}).value === 'WFID:send_message' &&
+  ev(scr.template_key, {}, { 'Cancel Visit': { verdict: 'LATE_CANCEL', appt_id: 'A-C' } }) === 'LATE_CANCEL' &&
+  ev(scr.appt_id, {}, { 'Cancel Visit': { verdict: 'LATE_CANCEL', appt_id: 'A-C' } }) === 'A-C' && scr.text === '' &&
+  ev(scr.contact_id, {}, { Normalize: { contact_id: 'tg:1' } }) === 'tg:1' &&
+  target('Send Cancel Result', 1) === 'Notify Send Failure' && outs('Send Cancel Result', 0).length === 0 || scr);
+
+// ---- WF-1 after the agent: the cancel question replaces the agent's text ----
+T('Summary? false -> Cancel Ask?', () => target('Summary?', 1) === 'Cancel Ask?' || target('Summary?', 1));
+const agentOut = (id, v) => ({ Agent: { cancel_appt_id: id, cancel_verdict: v, reply: 'x', template_key: '' } });
+T('Cancel Ask? only for a recorded request (CANCEL_PENDING / LATE_CANCEL_PENDING with an appt_id)', () =>
+  ev(leftOf('Cancel Ask?'), {}, agentOut('A-C', 'CANCEL_PENDING')) === true && ev(leftOf('Cancel Ask?'), {}, agentOut('A-C', 'LATE_CANCEL_PENDING')) === true &&
+  ev(leftOf('Cancel Ask?'), {}, agentOut('', '')) === false && ev(leftOf('Cancel Ask?'), {}, agentOut('A-C', 'NOT_FOUND')) === false &&
+  ev(leftOf('Cancel Ask?'), {}, { Agent: { reply: 'x' } }) === false || 'wrong');
+T('Cancel Ask? true -> Cancel Row, false -> Template?', () => target('Cancel Ask?', 0) === 'Cancel Row' && target('Cancel Ask?', 1) === 'Template?' || [target('Cancel Ask?', 0), target('Cancel Ask?', 1)]);
+const crf = (id, cid) => ev(P('Cancel Row').filterByFormula, {}, { Agent: { cancel_appt_id: id }, 'Client Data': { client_id: cid } });
+T('Cancel Row: that visit of THIS client, live; hostile ids match nothing', () =>
+  crf('A-C', 'C-1') === "AND({appt_id}='A-C',{client_id}='C-1',OR({status}='booked',{status}='reminded',{status}='confirmed'))" &&
+  crf("A-C'", 'C-1').startsWith("AND({appt_id}='__no_such_appt__',") && crf('A-C', "C-1'").includes("{client_id}='__no_such_client__'") &&
+  node('Cancel Row').alwaysOutputData === true && target('Cancel Row', 0) === 'Ask Row?' && target('Cancel Row', 1) === 'Notify Failure' || crf('A-C', 'C-1'));
+const ar = (fields) => ev(leftOf('Ask Row?'), { id: 'rec1', fields }, agentOut('A-C', 'CANCEL_PENDING'));
+T('Ask Row? true only for the requested visit with an unexpired request', () =>
+  ar({ appt_id: 'A-C', cancel_expires_at: iso(10 * MIN) }) === true && ar({ appt_id: 'A-C', cancel_expires_at: iso(-1 * MIN) }) === false &&
+  ar({ appt_id: 'A-C' }) === false && ar({ appt_id: 'A-X', cancel_expires_at: iso(10 * MIN) }) === false && ev(leftOf('Ask Row?'), {}, agentOut('A-C', 'CANCEL_PENDING')) === false || 'wrong');
+T('Ask Row? true -> Send Cancel Ask, false -> Template? (the agent\'s own text)', () => target('Ask Row?', 0) === 'Send Cancel Ask' && target('Ask Row?', 1) === 'Template?' || 'wrong');
+const sca = inputsOf('Send Cancel Ask');
+T('Send Cancel Ask: template = request_cancel verdict, appt_id from the row, errors -> Notify Send Failure', () =>
+  ev(sca.template_key, {}, agentOut('A-C', 'LATE_CANCEL_PENDING')) === 'LATE_CANCEL_PENDING' &&
+  ev(sca.appt_id, {}, { 'Cancel Row': { id: 'rec1', fields: { appt_id: 'A-C' } } }) === 'A-C' && sca.text === '' &&
+  target('Send Cancel Ask', 0) === 'Mark Cancel Replied' && target('Send Cancel Ask', 1) === 'Notify Send Failure' || sca);
+const mcr = (P('Mark Cancel Replied').columns || {}).value || {};
+T('Mark Cancel Replied: Clients.last_agent_reply_at = now on the client row, then Mark Cancel Asked', () =>
+  (P('Mark Cancel Replied').table || {}).value === 'ATTBL:Clients' && P('Mark Cancel Replied').operation === 'update' &&
+  ev(mcr.id, {}, { 'Client Data': { client_rec: 'recC' } }) === 'recC' && /^\d{4}-\d\d-\d\dT/.test(ev(mcr.last_agent_reply_at, {})) &&
+  target('Mark Cancel Replied') === 'Mark Cancel Asked' || mcr);
+const mca = (P('Mark Cancel Asked').columns || {}).value || {};
+T('Mark Cancel Asked: the row\'s cancel_asked_at = exactly the last_agent_reply_at just written (so Gate sees asked >= last)', () =>
+  (P('Mark Cancel Asked').table || {}).value === 'ATTBL:Appointments' && P('Mark Cancel Asked').operation === 'update' &&
+  ev(mca.id, {}, { 'Cancel Row': { id: 'rec1', fields: {} } }) === 'rec1' &&
+  ev(mca.cancel_asked_at, {}, { 'Mark Cancel Replied': { id: 'recC', fields: { last_agent_reply_at: '2030-01-01T10:00:00.000Z' } } }) === '2030-01-01T10:00:00.000Z' &&
+  outs('Mark Cancel Asked').length === 0 || mca);
+// End to end through Gate: what Mark Cancel Replied / Mark Cancel Asked write makes the next YES a cancel.
+const written = '2030-01-01T10:00:00.000Z';
+gr = new Function('$input', '$', P('Gate').jsCode)({}, dollar({ Classify: { kind: 'yes', is_short: true }, 'Client Data': { last_agent_reply_at: written },
+  Pending: [{ fields: { appt_id: 'A-C', status: 'booked', cancel_asked_at: ev(mca.cancel_asked_at, {}, { 'Mark Cancel Replied': { fields: { last_agent_reply_at: written } } }), cancel_expires_at: iso(10 * MIN) } }] }))[0].json;
+T('the markers the ask path writes make the next bare YES cancel that visit', () => gr.route === 'cancel' && gr.cancel_appt_id === 'A-C' || gr);
+T('Notify Failure is reached from Cancel Visit and Cancel Row errors (the client gets ERROR)', () => outs('Cancel Visit', 1).includes('Notify Failure') && outs('Cancel Row', 1).includes('Notify Failure') || 'wrong');
 
 console.log('\nWF1_STUBS passed ' + pass + ', failed ' + fail);
 process.exit(fail ? 1 : 0);

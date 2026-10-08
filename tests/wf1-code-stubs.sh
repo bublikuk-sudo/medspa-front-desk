@@ -1,33 +1,21 @@
 #!/usr/bin/env bash
 # Stub test of the WF-1 Code nodes Normalize (with the Task 20 Test Inbound unwrapping) and Client Formula, the Create Client id expressions and the wiring of the
-# Normalize side branch (Has Sender?, Dropped?, Notify Dropped).
+# Normalize side branch (Has Sender?, Dropped?, Notify Dropped), and of the cancel confirmation (two-step cancel): WF-2's request_cancel tool, Guardrail and
+# Result, and WF-1's Pending search, Gate, the YES-to-cancel path and the cancel question after the agent.
 # Runs ON THE VPS, in the n8n container's Node: no network, no workflow run, nothing is written.
 #   scripts/remote.sh 'tests/wf1-code-stubs.sh'
-# Optional first argument: another workflow file (default /opt/medspa/workflows/wf1-inbound.json).
+# Optional arguments: other workflow files (default /opt/medspa/workflows/wf1-inbound.json and /opt/medspa/workflows/wf2-agent.json).
+# The workflow JSON is piped in whole (no jq), so the same test also runs offline with any Node, from medspa-front-desk/:
+#   { printf 'const WF = '; cat workflows/wf1-inbound.json; printf ';\nconst WF2 = '; cat workflows/wf2-agent.json; printf ';\n'; cat tests/wf1-code-stubs.js; } | node -
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 wf="${1:-/opt/medspa/workflows/wf1-inbound.json}"
+wf2="${2:-/opt/medspa/workflows/wf2-agent.json}"
 {
-  printf 'const CODE = '
-  jq -c '
-    def node($n): (first(.nodes[] | select(.name==$n)) // {});
-    def target($n): ([.connections[$n].main[0][]?.node][0]) // "none";
-    {
-      normalize: (node("Normalize") | .parameters.jsCode),
-      formula: (node("Client Formula") | .parameters.jsCode),
-      phoneExpr: (node("Create Client") | .parameters.columns.value.phone),
-      idExpr: (node("Create Client") | .parameters.columns.value.client_id),
-      chatExpr: (node("Create Client") | .parameters.columns.value.telegram_chat_id),
-      hasSenderExpr: (node("Has Sender?") | .parameters.conditions.conditions[0].leftValue),
-      droppedExpr: (node("Dropped?") | .parameters.conditions.conditions[0].leftValue),
-      notifyTextExpr: (node("Notify Dropped") | .parameters.workflowInputs.value.text),
-      normalizeTargets: [.connections["Normalize"].main[0][]?.node],
-      hasSenderTarget: target("Has Sender?"),
-      droppedTarget: target("Dropped?"),
-      afterNotify: (if (.connections["Notify Dropped"] // null) == null then "none" else "wired" end),
-      testInbound: (node("Test Inbound") | {method: .parameters.httpMethod, path: .parameters.path, auth: .parameters.authentication, mode: .parameters.responseMode, cred: .credentials.httpHeaderAuth.name}),
-      testTarget: target("Test Inbound")
-    }' "$wf"
+  printf 'const WF = '
+  cat "$wf"
+  printf ';\nconst WF2 = '
+  cat "$wf2"
   printf ';\n'
   cat "$here/wf1-code-stubs.js"
 } | (cd /opt/medspa/deploy && docker compose exec -T n8n node -)

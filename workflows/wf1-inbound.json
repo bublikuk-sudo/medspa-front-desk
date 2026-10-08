@@ -657,6 +657,7 @@
     {
       "id": "e1a10013-0021-4c00-8000-000000000021",
       "name": "Pending",
+      "notes": "Every row Gate needs, in one search: the client's pending proposal, every reminded visit (reminder_sent_at: was a reminder sent after the cancel question?) and every live visit with a cancel question (cancel_asked_at). returnAll; alwaysOutputData gives one empty item when there is none.",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
@@ -674,15 +675,15 @@
         "operation": "search",
         "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
         "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
-        "filterByFormula": "={{ \"AND({client_id}='\" + (/^[A-Za-z0-9_-]{1,64}$/.test(String($json.client_id || '')) ? $json.client_id : '__no_such_client__') + \"',{status}='pending')\" }}",
-        "limit": 1,
+        "filterByFormula": "={{ \"AND({client_id}='\" + (/^[A-Za-z0-9_-]{1,64}$/.test(String($json.client_id || '')) ? $json.client_id : '__no_such_client__') + \"',OR({status}='pending',{status}='reminded',AND(OR({status}='booked',{status}='confirmed'),NOT({cancel_asked_at}=BLANK()))))\" }}",
+        "returnAll": true,
         "options": {}
       }
     },
     {
       "id": "e1a10013-0022-4c00-8000-000000000022",
       "name": "Gate",
-      "notes": "confirm: a bare YES with a pending proposal. llm: a short non-yes/no message with a pending proposal (Haiku decides). reminder: any other bare YES/NO (Reminder Gate decides whether it answers a reminder; if not, the agent). agent: everything else.",
+      "notes": "cancel: a bare YES while the bot's last message is an unexpired cancel question (request_cancel + Send Cancel Ask) -> Cancel Visit (cancel_booking), no agent. confirm: a bare YES with a pending proposal (when no cancel question is the last message). llm: a short non-yes/no message with either of them (Haiku decides; yes_target says which). reminder: any other bare YES/NO (Reminder Gate decides whether it answers a reminder; if not, the agent). agent: everything else, including NO or an expired request after a cancel question (the visit stays booked). A pending proposal and a cancel question can coexist: the one asked LAST wins (cancel_asked_at >= last_agent_reply_at means the cancel question was last; a summary sent after it moves last_agent_reply_at past it).",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [3740, 400],
@@ -690,7 +691,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const c = $('Classify').first().json;\nconst pending = ($('Pending').first().json.fields || {});\nlet route = 'agent';\nif (c.kind === 'yes' && pending.appt_id) route = 'confirm';\nelse if (c.kind === 'other' && c.is_short && pending.appt_id) route = 'llm';\nelse if (c.kind === 'yes' || c.kind === 'no') route = 'reminder';\nreturn [{ json: { route } }];"
+        "jsCode": "// Which bot question does a short reply answer? Only the LAST one: a YES must never cancel a visit the bot did not just ask about.\n// A cancel question is the last one when it was asked at or after the client's last agent reply (WF-1 writes cancel_asked_at =\n// exactly the last_agent_reply_at it just wrote; any later agent reply is later) and no reminder went out after it.\nconst c = $('Classify').first().json;\nconst cd = $('Client Data').first().json;\nconst ms = (v) => { const t = Date.parse(String(v || '')); return Number.isFinite(t) ? t : NaN; };\nconst rows = $('Pending').all().map(i => (i.json || {}).fields || {}).filter(f => f.appt_id);\nconst pending = rows.find(f => f.status === 'pending') || {};\nconst last = ms(cd.last_agent_reply_at);\nconst sent = rows.map(f => ms(f.reminder_sent_at)).filter(Number.isFinite);\nconst lastReminder = sent.length ? Math.max(...sent) : -Infinity;\nconst ask = rows.filter(f => ['booked', 'reminded', 'confirmed'].includes(f.status) && Number.isFinite(last) && ms(f.cancel_asked_at) >= last && !(lastReminder > ms(f.cancel_asked_at)))\n  .sort((a, b) => ms(b.cancel_asked_at) - ms(a.cancel_asked_at))[0];\nlet route = 'agent', yes_target = '', cancel_appt_id = '';\nif (ask) {\n  // The cancel question is the bot's last message. YES (a known word, or a short phrase Haiku reads as YES) cancels that visit\n  // while the request is unexpired; NO, anything else or an expired request goes to the agent and the visit stays booked.\n  const fresh = ms(ask.cancel_expires_at) > Date.now();\n  if (fresh && c.kind === 'yes') { route = 'cancel'; cancel_appt_id = ask.appt_id; }\n  else if (fresh && c.kind === 'other' && c.is_short) { route = 'llm'; yes_target = 'cancel'; cancel_appt_id = ask.appt_id; }\n} else if (c.kind === 'yes' && pending.appt_id) route = 'confirm';\nelse if (c.kind === 'other' && c.is_short && pending.appt_id) { route = 'llm'; yes_target = 'confirm'; }\nelse if (c.kind === 'yes' || c.kind === 'no') route = 'reminder';\nreturn [{ json: { route, yes_target, cancel_appt_id } }];"
       }
     },
     {
@@ -765,6 +766,22 @@
               },
               "renameOutput": true,
               "outputKey": "agent"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+                "conditions": [
+                  {
+                    "id": "e1a10013-1023-4c00-8000-000000000023",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "cancel",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "cancel"
             }
           ]
         },
@@ -784,7 +801,7 @@
       "waitBetweenTries": 5000,
       "parameters": {
         "promptType": "define",
-        "text": "=The assistant asked the user to reply YES to confirm a booking. Does the following user message mean agreement or confirmation? Reply with exactly YES or NO.\n\nMessage: {{ $('Client Data').first().json.text }}",
+        "text": "=The assistant asked the user to reply YES to {{ $('Gate').first().json.yes_target === 'cancel' ? 'confirm that their appointment should be cancelled' : 'confirm a booking' }}. Does the following user message mean agreement or confirmation? Reply with exactly YES or NO.\n\nMessage: {{ $('Client Data').first().json.text }}",
         "hasOutputParser": false
       }
     },
@@ -1326,7 +1343,7 @@
     {
       "id": "e1a10013-0042-4c00-8000-000000000042",
       "name": "Notify Failure",
-      "notes": "Reached from the error output of every client-path step that can fail (Rate Limit, Client Formula, Client, Language, Create Client, Client Data, Classify, Pending, Gate, Confirm, Reminder Check, Reminder Gate, Reminder Reply, Agent, Fresh Pending). Exactly one of them fails per run. Both outputs go to Send Error: the client is answered even if the owner alert failed.",
+      "notes": "Reached from the error output of every client-path step that can fail (Rate Limit, Client Formula, Client, Language, Create Client, Client Data, Classify, Pending, Gate, Confirm, Cancel Visit, Reminder Check, Reminder Gate, Reminder Reply, Agent, Fresh Pending, Cancel Row). Exactly one of them fails per run. Both outputs go to Send Error: the client is answered even if the owner alert failed.",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
       "position": [5720, 1300],
@@ -1605,7 +1622,7 @@
     {
       "id": "e1a10013-0057-4c00-8000-000000000057",
       "name": "Mark Replied",
-      "notes": "Clients.last_agent_reply_at = now after every agent reply that went out (Send Reply, Send Template, Send Summary). Reminder Gate compares it with reminder_sent_at. Runs after the client got the reply, so a failure fails the run (WF-6 tells the owner) instead of sending ERROR.",
+      "notes": "Clients.last_agent_reply_at = now after every agent reply that went out (Send Reply, Send Template, Send Summary; after Send Cancel Ask it is Mark Cancel Replied). Reminder Gate compares it with reminder_sent_at. Runs after the client got the reply, so a failure fails the run (WF-6 tells the owner) instead of sending ERROR.",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
@@ -1699,6 +1716,301 @@
           "convertFieldsToString": true
         },
         "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0059-4c00-8000-000000000059",
+      "name": "Cancel Target?",
+      "notes": "After Haiku read a short reply as YES: which question it answered (Gate's yes_target). cancel -> Cancel Visit, otherwise -> Confirm (the booking, as before).",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [4620, 500],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e1a10013-1024-4c00-8000-000000000024",
+              "leftValue": "={{ $('Gate').first().json.yes_target === 'cancel' }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0060-4c00-8000-000000000060",
+      "name": "Cancel Visit",
+      "notes": "The client's YES to the cancel question: cancel_booking (internal) cancels the visit Gate chose, with the client's own contact_id and no reason (= cancel: the late-cancel policy applies; a reschedule comes only from confirm_booking). It deletes the event, marks cancelled / late_cancel, flags a late canceller and tells the owner. Error output (it throws on a real calendar failure) -> Notify Failure -> Send Error.",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [4840, 600],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:cancel_booking", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Client Data').first().json.contact_id }}",
+            "appt_id": "={{ $('Gate').first().json.cancel_appt_id }}",
+            "reason": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "reason", "displayName": "reason", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0061-4c00-8000-000000000061",
+      "name": "Cancelled?",
+      "notes": "CANCELLED / LATE_CANCEL -> Send Cancel Result. NOT_FOUND / NOT_YOURS (the visit was cancelled or changed meanwhile) -> the message is an ordinary one for the agent.",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [5060, 600],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e1a10013-1025-4c00-8000-000000000025",
+              "leftValue": "={{ ['CANCELLED', 'LATE_CANCEL'].includes(String($json.verdict || '')) }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0062-4c00-8000-000000000062",
+      "name": "Send Cancel Result",
+      "notes": "The CANCELLED / LATE_CANCEL template (the verdict is the template key), built from the cancelled row: service, time and, for a late one, Settings.cancellation_hours.",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [5280, 540],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:send_message", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Normalize').first().json.contact_id }}",
+            "text": "",
+            "template_key": "={{ $('Cancel Visit').first().json.verdict }}",
+            "appt_id": "={{ $('Cancel Visit').first().json.appt_id }}",
+            "vars_json": "",
+            "outside_window": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "template_key", "displayName": "template_key", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "vars_json", "displayName": "vars_json", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0063-4c00-8000-000000000063",
+      "name": "Cancel Ask?",
+      "notes": "The agent's turn recorded a pending cancellation (WF-2 Guardrail: the last request_cancel answered CANCEL_PENDING / LATE_CANCEL_PENDING). Then the question built from the row goes out instead of the agent's text. Checked only when no summary is sent: a summary in the same turn wins.",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [6160, 1220],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e1a10013-1026-4c00-8000-000000000026",
+              "leftValue": "={{ !!$('Agent').first().json.cancel_appt_id && ['CANCEL_PENDING', 'LATE_CANCEL_PENDING'].includes($('Agent').first().json.cancel_verdict) }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0064-4c00-8000-000000000064",
+      "name": "Cancel Row",
+      "notes": "The visit request_cancel recorded, read back: only this client's, only a live one, ids in the formula only if they are plain ids. Error output -> Notify Failure -> ERROR.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [6380, 1300],
+      "alwaysOutputData": true,
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
+        "filterByFormula": "={{ \"AND({appt_id}='\" + (/^A-[0-9A-Z-]{1,40}$/.test(String($('Agent').first().json.cancel_appt_id || '')) ? $('Agent').first().json.cancel_appt_id : '__no_such_appt__') + \"',{client_id}='\" + (/^[A-Za-z0-9_-]{1,64}$/.test(String($('Client Data').first().json.client_id || '')) ? $('Client Data').first().json.client_id : '__no_such_client__') + \"',OR({status}='booked',{status}='reminded',{status}='confirmed'))\" }}",
+        "limit": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0065-4c00-8000-000000000065",
+      "name": "Ask Row?",
+      "notes": "The requested visit exists, is the one the tool answered about and its request has not expired (cancel_expires_at). Otherwise the agent's own reply goes out.",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [6600, 1300],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e1a10013-1027-4c00-8000-000000000027",
+              "leftValue": "={{ !!$json.fields?.appt_id && $json.fields.appt_id === $('Agent').first().json.cancel_appt_id && DateTime.fromISO(String($json.fields?.cancel_expires_at || '')).toMillis() > $now.toMillis() }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0066-4c00-8000-000000000066",
+      "name": "Send Cancel Ask",
+      "notes": "The cancel question built from the Appointments row (service, time; for LATE_CANCEL_PENDING the Settings.cancellation_hours window and the late-cancellation notice), not from the agent's text. The template key is the request_cancel verdict.",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [6820, 1240],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "WFID:send_message", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_id": "={{ $('Normalize').first().json.contact_id }}",
+            "text": "",
+            "template_key": "={{ $('Agent').first().json.cancel_verdict }}",
+            "appt_id": "={{ $('Cancel Row').first().json.fields.appt_id }}",
+            "vars_json": "",
+            "outside_window": ""
+          },
+          "matchingColumns": [],
+          "schema": [
+            { "id": "contact_id", "displayName": "contact_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "text", "displayName": "text", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "template_key", "displayName": "template_key", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "vars_json", "displayName": "vars_json", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "once",
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0067-4c00-8000-000000000067",
+      "name": "Mark Cancel Replied",
+      "notes": "Mark Replied for the cancel question: Clients.last_agent_reply_at = now. A separate node because Mark Cancel Asked must copy exactly the value written here. Runs after the client got the question, so a failure fails the run (WF-6 tells the owner) instead of sending ERROR.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [7040, 1240],
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "update",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Clients", "mode": "id" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $('Client Data').first().json.client_rec }}",
+            "last_agent_reply_at": "={{ $now.toUTC().toISO() }}"
+          },
+          "matchingColumns": ["id"],
+          "schema": [
+            { "id": "id", "displayName": "id", "required": false, "defaultMatch": true, "display": true, "type": "string", "readOnly": true, "removed": false },
+            { "id": "last_agent_reply_at", "displayName": "last_agent_reply_at", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "dateTime", "removed": false }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1a10013-0068-4c00-8000-000000000068",
+      "name": "Mark Cancel Asked",
+      "notes": "Appointments.cancel_asked_at = exactly the last_agent_reply_at Mark Cancel Replied just wrote (Airtable's own value read back), so Gate sees asked >= last until the next agent reply. Without this marker a YES never cancels. A failure fails the run (WF-6 tells the owner); the client's YES then goes to the agent and nothing is cancelled.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [7260, 1240],
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "update",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $('Cancel Row').first().json.id }}",
+            "cancel_asked_at": "={{ $('Mark Cancel Replied').first().json.fields?.last_agent_reply_at || $now.toUTC().toISO() }}"
+          },
+          "matchingColumns": ["id"],
+          "schema": [
+            { "id": "id", "displayName": "id", "required": false, "defaultMatch": true, "display": true, "type": "string", "readOnly": true, "removed": false },
+            { "id": "cancel_asked_at", "displayName": "cancel_asked_at", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "dateTime", "removed": false }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
         "options": {}
       }
     }
@@ -1845,15 +2157,40 @@
         [{ "node": "Confirm", "type": "main", "index": 0 }],
         [{ "node": "LLM Affirmative", "type": "main", "index": 0 }],
         [{ "node": "Reminder Check", "type": "main", "index": 0 }],
-        [{ "node": "Agent", "type": "main", "index": 0 }]
+        [{ "node": "Agent", "type": "main", "index": 0 }],
+        [{ "node": "Cancel Visit", "type": "main", "index": 0 }]
       ]
     },
     "Haiku YES": { "ai_languageModel": [[{ "node": "LLM Affirmative", "type": "ai_languageModel", "index": 0 }]] },
     "LLM Affirmative": { "main": [[{ "node": "Affirmative?", "type": "main", "index": 0 }]] },
     "Affirmative?": {
       "main": [
-        [{ "node": "Confirm", "type": "main", "index": 0 }],
+        [{ "node": "Cancel Target?", "type": "main", "index": 0 }],
         [{ "node": "Agent", "type": "main", "index": 0 }]
+      ]
+    },
+    "Cancel Target?": {
+      "main": [
+        [{ "node": "Cancel Visit", "type": "main", "index": 0 }],
+        [{ "node": "Confirm", "type": "main", "index": 0 }]
+      ]
+    },
+    "Cancel Visit": {
+      "main": [
+        [{ "node": "Cancelled?", "type": "main", "index": 0 }],
+        [{ "node": "Notify Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Cancelled?": {
+      "main": [
+        [{ "node": "Send Cancel Result", "type": "main", "index": 0 }],
+        [{ "node": "Agent", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Cancel Result": {
+      "main": [
+        [],
+        [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
       ]
     },
     "Confirm": {
@@ -1970,9 +2307,34 @@
     "Summary?": {
       "main": [
         [{ "node": "Send Summary", "type": "main", "index": 0 }],
+        [{ "node": "Cancel Ask?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Cancel Ask?": {
+      "main": [
+        [{ "node": "Cancel Row", "type": "main", "index": 0 }],
         [{ "node": "Template?", "type": "main", "index": 0 }]
       ]
     },
+    "Cancel Row": {
+      "main": [
+        [{ "node": "Ask Row?", "type": "main", "index": 0 }],
+        [{ "node": "Notify Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Ask Row?": {
+      "main": [
+        [{ "node": "Send Cancel Ask", "type": "main", "index": 0 }],
+        [{ "node": "Template?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Cancel Ask": {
+      "main": [
+        [{ "node": "Mark Cancel Replied", "type": "main", "index": 0 }],
+        [{ "node": "Notify Send Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Mark Cancel Replied": { "main": [[{ "node": "Mark Cancel Asked", "type": "main", "index": 0 }]] },
     "Send Summary": {
       "main": [
         [{ "node": "Mark Summary Sent", "type": "main", "index": 0 }],

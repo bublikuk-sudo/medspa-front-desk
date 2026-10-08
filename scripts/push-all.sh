@@ -30,6 +30,7 @@ order=(
   workflows/wf3-tools/find_client.json
   workflows/wf3-tools/check_availability.json
   workflows/wf3-tools/cancel_booking.json
+  workflows/wf3-tools/request_cancel.json
   workflows/wf3-tools/propose_booking.json
   workflows/wf3-tools/confirm_booking.json
   workflows/wf3-tools/reminder_reply.json

@@ -1,0 +1,246 @@
+{
+  "name": "request_cancel",
+  "nodes": [
+    {
+      "id": "9e1c0001-0001-4c00-8000-000000000001",
+      "name": "Trigger",
+      "notes": "Agent tool (two-step cancel, owner decision 2026-10-08): contact_id (from WF-1, never the model) and appt_id (from find_client's upcoming). It records a pending cancellation and answers whether it would be late; it never cancels. WF-1 replaces the agent's text with the CANCEL_PENDING / LATE_CANCEL_PENDING question built from the row, and the client's YES makes WF-1 run cancel_booking (internal). cancel_booking is not an agent tool any more.",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            { "name": "contact_id", "type": "string" },
+            { "name": "appt_id", "type": "string" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "9e1c0001-0002-4c00-8000-000000000002",
+      "name": "Settings",
+      "notes": "alwaysOutputData: an empty Settings table reaches Decide, which fails the tool (-> WF-6) instead of ending the run silently.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [220, 300],
+      "alwaysOutputData": true,
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Settings", "mode": "id" },
+        "returnAll": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "9e1c0001-0003-4c00-8000-000000000003",
+      "name": "Client Formula",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Validate first: an empty or malformed contact_id must match NO client row (a comparison with '' would match every row whose column is blank).\nconst raw = String($('Trigger').first().json.contact_id || '').trim();\nconst ok = /^(tg:\\d{1,20}|wa:\\+\\d{1,20})$/.test(raw);\nconst formula = ok\n  ? (raw.startsWith('tg:') ? \"{telegram_chat_id}='\" + raw.slice(3) + \"'\" : \"{phone}='\" + raw.slice(3) + \"'\")\n  : \"{client_id}='__no_such_client__'\";\nreturn [{ json: { formula } }];"
+      }
+    },
+    {
+      "id": "9e1c0001-0004-4c00-8000-000000000004",
+      "name": "Client",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [660, 300],
+      "alwaysOutputData": true,
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Clients", "mode": "id" },
+        "filterByFormula": "={{ $json.formula }}",
+        "limit": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "9e1c0001-0005-4c00-8000-000000000005",
+      "name": "Appointment",
+      "notes": "appt_id goes into the formula only if it is a plain appt_id (^A-[0-9A-Z-]{1,40}$); anything else searches for a row that cannot exist, and Decide answers NOT_FOUND.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [880, 300],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "search",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
+        "filterByFormula": "={{ \"{appt_id}='\" + (/^A-[0-9A-Z-]{1,40}$/.test(String($('Trigger').first().json.appt_id || '').trim()) ? String($('Trigger').first().json.appt_id).trim() : '__no_such_appt__') + \"'\" }}",
+        "limit": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "9e1c0001-0006-4c00-8000-000000000006",
+      "name": "Decide",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// The decision is made here, not by the model. request_cancel does NOT cancel anything: it checks that the visit is a live,\n// future visit of THIS client (the same rules as cancel_booking), records a pending cancellation on the row\n// (cancel_expires_at = now + Settings.pending_ttl_min) and says whether cancelling it now would be late\n// (Settings.cancellation_hours, the rule cancel_booking applies). WF-1 then asks the client from the row; only the\n// client's YES makes WF-1 run cancel_booking. The status is never changed here.\nconst s = ($('Settings').first().json || {}).fields;\nif (!s) throw new Error('request_cancel: the Settings table has no row');\nconst num = (v) => (v === null || v === undefined || String(v).trim() === '') ? NaN : Number(v);\nconst hrs = num(s.cancellation_hours);\nif (!Number.isFinite(hrs) || hrs < 0) throw new Error('request_cancel: Settings.cancellation_hours must be a number >= 0, got ' + JSON.stringify(s.cancellation_hours));\nconst ttl = num(s.pending_ttl_min);\nif (!Number.isFinite(ttl) || ttl <= 0) throw new Error('request_cancel: Settings.pending_ttl_min must be a positive number, got ' + JSON.stringify(s.pending_ttl_min));\nconst want = String($('Trigger').first().json.appt_id || '').trim();\nconst valid = /^A-[0-9A-Z-]{1,40}$/.test(want);\nconst reject = (verdict) => [{ json: { action: 'reject', verdict, appt_id: valid ? want : '' } }];\nif (!valid) return reject('NOT_FOUND');\nconst ar = $('Appointment').first().json || {};   // the whole record: ar.id is the Appointments record id, the columns are in ar.fields\nconst a = ar.fields || {};\nif (!ar.id || a.appt_id !== want) return reject('NOT_FOUND');\nconst c = $('Client').first().json || {};\nconst cid = (c.fields || {}).client_id;\nif (!c.id || !cid || a.client_id !== cid) return reject('NOT_YOURS');\n// Only a booking is cancelled this way. A pending proposal is not a booking (it lapses on its own after pending_ttl_min);\n// cancelled, late_cancel, no_show and done are history.\nif (!['booked', 'reminded', 'confirmed'].includes(a.status)) return reject('NOT_FOUND');\nconst start = DateTime.fromISO(String(a.start_iso || ''));\nif (!start.isValid) throw new Error('request_cancel: appointment ' + want + ' has an unreadable start_iso ' + JSON.stringify(a.start_iso));\n// A visit that has already started is history (done or a no-show), not something to cancel: nothing is recorded.\nif (start <= DateTime.utc()) return reject('NOT_FOUND');\nconst late = start.diff(DateTime.utc(), 'hours').hours < hrs;\nreturn [{ json: { action: 'ask', rec_id: ar.id, appt_id: want, verdict: (late ? 'LATE_CANCEL_PENDING ' : 'CANCEL_PENDING ') + want,\n  cancel_expires_at: DateTime.utc().plus({ minutes: ttl }).toISO() } }];"
+      }
+    },
+    {
+      "id": "9e1c0001-0007-4c00-8000-000000000007",
+      "name": "Ask?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [1320, 300],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "9e1c0001-1001-4c00-8000-000000000001",
+              "leftValue": "={{ $json.action === 'ask' }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9e1c0001-0008-4c00-8000-000000000008",
+      "name": "Result Reject",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [1540, 500],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9e1c0001-2001-4c00-8000-000000000001",
+              "name": "verdict",
+              "value": "={{ $json.verdict }}",
+              "type": "string"
+            },
+            {
+              "id": "9e1c0001-2002-4c00-8000-000000000002",
+              "name": "appt_id",
+              "value": "={{ $json.appt_id || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9e1c0001-0009-4c00-8000-000000000009",
+      "name": "Mark Requested",
+      "notes": "Only cancel_expires_at is written: the status, the calendar event and the client stay as they are until the client's YES. A new request for the same visit moves the expiry; WF-1 writes cancel_asked_at when the question has gone out.",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [1540, 200],
+      "credentials": {
+        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "update",
+        "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
+        "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $('Decide').first().json.rec_id }}",
+            "cancel_expires_at": "={{ $('Decide').first().json.cancel_expires_at }}"
+          },
+          "matchingColumns": ["id"],
+          "schema": [
+            { "id": "id", "displayName": "id", "required": false, "defaultMatch": true, "display": true, "type": "string", "readOnly": true, "removed": false },
+            { "id": "cancel_expires_at", "displayName": "cancel_expires_at", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "dateTime", "removed": false }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9e1c0001-0010-4c00-8000-000000000010",
+      "name": "Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [1760, 200],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9e1c0001-2003-4c00-8000-000000000003",
+              "name": "verdict",
+              "value": "={{ $('Decide').first().json.verdict }}",
+              "type": "string"
+            },
+            {
+              "id": "9e1c0001-2004-4c00-8000-000000000004",
+              "name": "appt_id",
+              "value": "={{ $('Decide').first().json.appt_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Trigger": { "main": [[{ "node": "Settings", "type": "main", "index": 0 }]] },
+    "Settings": { "main": [[{ "node": "Client Formula", "type": "main", "index": 0 }]] },
+    "Client Formula": { "main": [[{ "node": "Client", "type": "main", "index": 0 }]] },
+    "Client": { "main": [[{ "node": "Appointment", "type": "main", "index": 0 }]] },
+    "Appointment": { "main": [[{ "node": "Decide", "type": "main", "index": 0 }]] },
+    "Decide": { "main": [[{ "node": "Ask?", "type": "main", "index": 0 }]] },
+    "Ask?": {
+      "main": [
+        [{ "node": "Mark Requested", "type": "main", "index": 0 }],
+        [{ "node": "Result Reject", "type": "main", "index": 0 }]
+      ]
+    },
+    "Mark Requested": { "main": [[{ "node": "Result", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "errorWorkflow": "WFID:wf6-error-handler" }
+}

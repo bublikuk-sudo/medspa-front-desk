@@ -26,22 +26,24 @@ documentation. Source notes: [booking-bot client requirements](../wiki/market/bo
 ## Architecture
 
 One VPS, Docker Compose: n8n 2.41.5, Postgres 16 with pgvector, Caddy for HTTPS. Inside n8n, six workflow groups
-(15 workflows, each a JSON file in `workflows/`, plus two test workflows):
+(16 workflows, each a JSON file in `workflows/`, plus two test workflows):
 
 ```
 WF-1  Inbound     Telegram Trigger ─┐
                   WhatsApp Trigger ─┼→ Normalize {channel, contact_id, text} → rate limit → client lookup
                   Test Inbound* ────┘  → language detection (Haiku), only for a client with no language yet
                                        → deterministic gates, before the agent:
+                                           YES to the last cancel question → cancel_booking
                                            YES to a live pending summary → confirm_booking
                                            yes/no answering a reminder   → reminder_reply
                                            client already escalated      → "a team member will contact you"
-                                       → otherwise WF-2 → reply, or the pending summary instead → send_message
+                                       → otherwise WF-2 → reply, or instead the pending summary / the cancel
+                                         question built from the row → send_message
 WF-2  Agent       AI Agent on Claude (claude-opus-5), Postgres chat memory per contact_id, guardrail
-                  tools: find_client, check_availability, propose_booking, cancel_booking,
+                  tools: find_client, check_availability, propose_booking, request_cancel,
                          search_knowledge, escalate
 WF-3  Tools       sub-workflows with named inputs over Google Calendar + Airtable; each returns a verdict
-                  string. Internal, never given to the agent: confirm_booking, reminder_reply
+                  string. Internal, never given to the agent: confirm_booking, cancel_booking, reminder_reply
 WF-4  Knowledge   ingest: Airtable Knowledge → OpenAI embeddings → pgvector (on change, and hourly self-repair)
                   query: top 5 by vector distance → Claude Haiku relevance gate → ≤ 3 passages | NOT_FOUND
 WF-5  Reminders   hourly: reminders, revisit invitations, expiry of stale pending bookings
@@ -56,7 +58,7 @@ Shared            send_message (template, translation, channel formatting, Whats
 | `find_client` | `contact_id`* | `NEW`, or `KNOWN` with name, language, last visit and service, `next_visit_in`, upcoming appointments with their `appt_id`, the owner's notes |
 | `check_availability` | `contact_id`*, `service_id`, `date`, `part_of_day?` | `FREE <ISO slots>` plus `slots_local` (weekday and local time computed by the tool), `NONE <alternatives or reason>`, `UNKNOWN_SERVICE <active services>`. The offer is saved on the client as `{service_id, slots}` |
 | `propose_booking` | `contact_id`*, `channel`*, `service_id`, `start_iso`, `name?`, `replaces_appt_id?` | `PENDING <appt_id>`: an Airtable row with status `pending`, calendar untouched. `SLOT_NOT_OFFERED` if the slot or service is not in the saved offer, `UNKNOWN_SERVICE`, `NO_CLIENT_ROW` |
-| `cancel_booking` | `contact_id`*, `appt_id` | `CANCELLED` / `LATE_CANCEL` / `NOT_YOURS` / `NOT_FOUND` |
+| `request_cancel` | `contact_id`*, `appt_id` | `CANCEL_PENDING <appt_id>` / `LATE_CANCEL_PENDING <appt_id>` (the cancellation would be late): a pending cancellation is recorded, nothing is cancelled. `NOT_YOURS` / `NOT_FOUND` |
 | `search_knowledge` | `question` | `FOUND` with up to 3 passages and their topic, or `NOT_FOUND` |
 | `escalate` | `contact_id`*, `reason` | `ESCALATED`: flags the client, sends the owner the conversation |
 
@@ -64,12 +66,21 @@ Shared            send_message (template, translation, channel formatting, Whats
 
 **The client confirms, not the model.** The agent has no `confirm` tool. `propose_booking` writes a `pending` row and
 returns `PENDING <appt_id>`. WF-1 then discards whatever the agent wrote and has `send_message` render the
-`PENDING_SUMMARY` template from that row ("Botox (30 min) — Mon, Jan 7, 10:00 AM. Reply YES to confirm."). The client's next message is checked by WF-1 before the agent sees it:
+`PENDING_SUMMARY` template from that row ("Botox (30 min) — Mon, Jan 7, 10:00 AM. Free cancellation up to 24 hours
+before. Reply YES to confirm."). The client's next message is checked by WF-1 before the agent sees it:
 if a live `pending` row exists and the text is a confirmation (a word list per language, then a short Haiku check for
 other short phrasings), n8n re-checks the calendar, creates the event and moves the row to `booked`. Any other text
 goes to the agent and the pending row expires after `pending_ttl_min`. The service can only be an existing
 `service_id` and the time only a slot from the saved offer, so the model cannot invent either, and what the client
 confirms is exactly what gets written.
+
+Cancelling works the same way: the agent cannot cancel. `request_cancel` checks that the visit is the client's own
+and still ahead, records a pending cancellation and says whether it would be late (inside
+`Settings.cancellation_hours`). WF-1 sends the question built from the row ("Cancel your Botox on Mon, Jan 7, 10:00 AM?
+Reply YES to cancel.", with the late-cancellation notice when it applies), and only a YES to that question, while it is
+the bot's last message and has not expired, makes n8n run `cancel_booking` (event deleted, `cancelled` or
+`late_cancel`, a late canceller flagged, the owner notified). NO or anything else goes to the agent and the visit stays
+booked. The reminder's own "Reply YES to confirm or NO to cancel" works as before.
 
 ## Data model
 
@@ -87,7 +98,8 @@ Airtable base `MedSpa Front Desk` (`airtable/schema.json`):
 - **Appointments** (one row per visit, life cycle in one field): `appt_id`, links `client` and `service` plus their
   text ids `client_id` and `service_id`, `start_iso`, `end_iso`, `start_dt`, `status` (`pending → booked → reminded →
   confirmed | cancelled | late_cancel | no_show | done`), `calendar_event_id`, `created_via`, `pending_expires_at`,
-  `summary_sent_at`, `reminder_sent_at`, `confirmed_at`, `revisit_invited_at`, `replaces_appt_id`, and the
+  `summary_sent_at`, `reminder_sent_at`, `confirmed_at`, `revisit_invited_at`, `replaces_appt_id`,
+  `cancel_expires_at`, `cancel_asked_at` (the two-step cancel), and the
   practitioner's fields `treatment_notes`, `next_visit_in`, `practitioner`.
 - **Knowledge** (the clinic's document, one paragraph per row): `kb_id`, `topic`, `text`, `updated_at`.
 

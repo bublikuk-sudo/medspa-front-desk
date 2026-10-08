@@ -259,7 +259,7 @@ log_execs() {
   local id f
   for id in "${STEP_EXECS[@]}"; do
     f="$EXECS/$id.json"
-    log "  exec $id $(jq -r .status "$f"); route $(jq -r '.data.resultData.runData.Route[0].data.main | to_entries | map(select((.value | length) > 0) | .key) | map(["confirm","llm","reminder","agent"][.]) | join(",") // "-"' "$f" 2>/dev/null || echo -); tools $(jq -c '.data.resultData.runData.Agent[0].data.main[0][0].json.tools_used // []' "$f" 2>/dev/null)"
+    log "  exec $id $(jq -r .status "$f"); route $(jq -r '.data.resultData.runData.Route[0].data.main | to_entries | map(select((.value | length) > 0) | .key) | map(["confirm","llm","reminder","agent","cancel"][.]) | join(",") // "-"' "$f" 2>/dev/null || echo -); tools $(jq -c '.data.resultData.runData.Agent[0].data.main[0][0].json.tools_used // []' "$f" 2>/dev/null)"
     [ "$(jq -r .status "$f")" = success ] || fail "wf1-inbound execution $id ended $(jq -r .status "$f")"
   done
 }
