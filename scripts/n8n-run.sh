@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # usage: scripts/n8n-run.sh <workflow name>  (cwd or caller anywhere; runs on the VPS)
-# Runs a workflow that has a Webhook trigger with path = its name (wf5-reminders: node "Run Now"), protected by the
-# MedSpa Test Key Header Auth credential. The workflow must be ACTIVE (production webhook).
+# Runs a workflow that has a Webhook trigger with path = its name (node "Run Now" in wf5-reminders and in
+# wf4-knowledge-ingest, the manual re-index after a Knowledge edit), protected by the MedSpa Test Key Header Auth
+# credential. The workflow must be ACTIVE (production webhook).
 # Why not `n8n execute --id`: with N8N_RUNNERS_ENABLED=true `n8n execute` starts its own task broker on 127.0.0.1:5679,
 # which the running main process already holds, so it cannot run beside the live instance.
 # Reports the execution THIS call started: the newest webhook-mode execution id is noted before the call and the script

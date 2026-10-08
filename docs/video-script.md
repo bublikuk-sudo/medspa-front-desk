@@ -20,11 +20,11 @@ client name, and crop or blur the phone's own number and the WhatsApp header if 
   earliest slot offered is `min_lead_min`, 60 minutes, from now). Book it with the default settings, so the
   confirmation reads "We'll remind you 24 hours before" as in production. Being today, it also shows on "Today" in the
   last shot.
-- **Making the reminder arrive on camera.** WF-5 runs at minute 5 of every hour and reminds visits that start within
+- **Making the reminder arrive on camera.** WF-5 runs once a day at 07:05 UTC and reminds visits that start within
   `reminder_hours_before` and were booked at least that long before the visit, so with the default 24 hours a visit
   booked today is never reminded. After the booking shots, use the method of the live tests: set
   `Settings.reminder_hours_before` to `1`, wait until the visit is less than an hour away, then run WF-5 at once with
-  `medspa-front-desk/scripts/remote.sh 'scripts/n8n-run.sh wf5-reminders'` (or let the hourly run send it).
+  `medspa-front-desk/scripts/remote.sh 'scripts/n8n-run.sh wf5-reminders'`.
   **Set `reminder_hours_before` back to `24` straight after**, and do this only when no real client has a visit in the
   next hours (a real booking made meanwhile would read "We'll remind you 1 hours before").
 - On WhatsApp the reminder goes out as the approved template `medspa_reminder`, so it arrives whether or not the

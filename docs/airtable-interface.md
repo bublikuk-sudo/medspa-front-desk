@@ -1,6 +1,6 @@
 # Airtable Interface for the clinic owner
 
-The owner's day-to-day view of the MedSpa Front Desk base: four pages in one Airtable Interface. It is built by hand in
+The owner's day-to-day view of the MedSpa Front Desk base: five pages in one Airtable Interface. It is built by hand in
 the Airtable UI (the Meta API cannot create Interfaces) and takes about 10 minutes at onboarding. No screenshots: every
 step names the control exactly as Airtable words it. Airtable renames controls from time to time; where the current
 wording differs from this guide, the intent of the step is the same.
@@ -42,12 +42,12 @@ Open the table `Appointments` (Data tab, not Interfaces), then for each row of t
    Interface already exists: click **+ New interface**.
 3. Name the interface `Front desk`, choose an icon, click **Next**.
 4. The layout picker opens ("Choose a layout to create a new interface page"). Pages 1 and 2 (read-only) use the table
-   layout **Grid**; if your picker offers no **Grid**, use **List**. Pages 3 and 4 (the editable ones) use **List**,
+   layout **Grid**; if your picker offers no **Grid**, use **List**. Pages 3, 4 and 5 (the editable ones) use **List**,
    always: Airtable documents per-field **Make view-only** for **List**, and the Grid documentation names only the
    page-wide **Edit records inline** toggle. Read "column" as "field" in **List**.
 5. Each further page: hover the interface name in the left panel and click the `+` button, which opens the same
    layout picker.
-6. When all four pages are done, click **Publish** (top right). **Done** only saves a draft; collaborators see nothing
+6. When all five pages are done, click **Publish** (top right). **Done** only saves a draft; collaborators see nothing
    until **Publish**.
 
 For every page: pick the layout, choose the **Source** table, click **Finish**, then configure the right-hand
@@ -92,8 +92,9 @@ exists for filtering and sorting.
 
 ## Page 2. Awaiting confirmation
 
-Offers the client has not yet said YES to. They expire by themselves at `pending_expires_at`; nothing to do here
-except see why a slot looks held.
+Offers the client has not yet said YES to. They expire at `pending_expires_at` (a YES after that gets "That offer has
+expired"); the daily WF-5 run (07:05 UTC) then marks them cancelled, so an expired offer can stay on this page for up
+to a day. Nothing to do here except see why a slot looks held.
 
 | | |
 |---|---|
@@ -143,6 +144,24 @@ wants today's finished visits too, use `start_dt` **is on or before** **today** 
 upcoming visits show on the page as well, so the owner has to read the time column. The default is the stricter one so
 that nothing future is ever closed by mistake.
 
+## Page 5. Clients and marketing consent
+
+Every client, so the owner can record a marketing opt-in. `marketing_consent` is the only field the owner edits here:
+the revisit invitation (a MARKETING template) goes only to a client with the box ticked, and the bot never ticks it.
+
+| | |
+|---|---|
+| Layout | **List** (not Grid: per-field **Make view-only** is documented for **List**) |
+| Source | `Clients` |
+| Filter by | none |
+| Sort by | `name` ascending |
+| Fields | `name`, `phone`, `telegram_chat_id`, `language`, `status`, `marketing_consent` |
+| User actions | **Edit records inline** **on**, **Make view-only** on every field except `marketing_consent`; **Add/delete records inline** off; **Click into record details** off |
+
+Tick `marketing_consent` only when the client has agreed (for example in the clinic's intake and consent form); untick
+it when they withdraw. A visit whose client has no consent stays due, so a box ticked later still lets the invitation go
+out on the next daily WF-5 run.
+
 ## Time zones
 
 `start_dt` is a date-time field with time zone `utc`. A filter such as **today** MAY be evaluated against that
@@ -175,14 +194,14 @@ into its own fields (`status`, `language`, `intake_completed`, `last_offer_json`
 ## Onboarding checklist for a new clinic (10 minutes)
 
 1. Step 0: three Lookup fields in `Appointments`.
-2. Create the interface `Front desk` and the four pages in the order above.
-3. Check the layout: **Grid** (or **List**) for pages 1 and 2, **List** for pages 3 and 4. Check **Edit records inline**
-   only on pages 3 and 4, and **Make view-only** on every field not marked editable. On every page check **Add/delete
+2. Create the interface `Front desk` and the five pages in the order above.
+3. Check the layout: **Grid** (or **List**) for pages 1 and 2, **List** for pages 3, 4 and 5. Check **Edit records
+   inline** only on pages 3, 4 and 5, and **Make view-only** on every field not marked editable. On every page check **Add/delete
    records inline** is off and **Click into record details** is off. Check that `start_iso`, `calendar_event_id` and
    `Clients.notes` are not editable anywhere; if the UI offers no per-field view-only, stop and take a screenshot.
 4. **Publish**.
 5. Give clinic staff interface-only access, which is the primary recommendation: click **Share** on the interface and
-   choose **Interface-only editor** (pages 3 and 4 need editing) or **Interface-only viewer**. Interface-only access is a
+   choose **Interface-only editor** (pages 3, 4 and 5 need editing) or **Interface-only viewer**. Interface-only access is a
    paid-plan feature (sharing an interface separately from the base is restricted to paid plans). If the plan does not
    allow it, the fallback is to invite the person to the base itself.
    **Warning:** a user who is a base **Editor** (or higher) can open the **Data** tab and edit `start_iso` and every

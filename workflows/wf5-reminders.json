@@ -3,14 +3,15 @@
   "nodes": [
     {
       "id": "5a0e0017-0001-4c00-8000-000000000001",
-      "name": "Hourly",
+      "name": "Daily",
+      "notes": "Once a day at 07:05 UTC (GENERIC_TIMEZONE=UTC): 08:05 in Berlin in winter (CET), 09:05 in summer (CEST), before the clinic opens. Once a day for the Airtable Free plan (1,000 API calls a month per workspace): one run is 5 searches when nothing is due.",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.4,
       "position": [0, 300],
       "parameters": {
         "rule": {
           "interval": [
-            { "field": "hours", "hoursInterval": 1, "triggerAtMinute": 5 }
+            { "field": "days", "daysInterval": 1, "triggerAtHour": 7, "triggerAtMinute": 5 }
           ]
         }
       }
@@ -144,7 +145,7 @@
     {
       "id": "5a0e0017-0008-4c00-8000-000000000008",
       "name": "Send Reminder",
-      "notes": "Run once for each item, so one bad row fails alone. Error output: a failing row must not stop the hourly run - without it the mark is not set, the same row fails every hour and blocks the later ones.",
+      "notes": "Run once for each item, so one bad row fails alone. Error output: a failing row must not stop the run - without it the mark is not set, the same row fails on every run and blocks the later ones.",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
       "position": [1320, 100],
@@ -181,7 +182,7 @@
     {
       "id": "5a0e0017-0009-4c00-8000-000000000009",
       "name": "Mark Reminded",
-      "notes": "reminder_sent_at is what WF-1's reminder gate compares with Clients.last_agent_reply_at: a bare yes/no counts as the answer only after this timestamp. Error output: the reminder is already SENT, a failed mark means it goes out again next hour, so the owner is told (Alert Reminder Mark) and the other rows are still marked.",
+      "notes": "reminder_sent_at is what WF-1's reminder gate compares with Clients.last_agent_reply_at: a bare yes/no counts as the answer only after this timestamp. Error output: the reminder is already SENT, a failed mark means it goes out again on the next run, so the owner is told (Alert Reminder Mark) and the other rows are still marked.",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
@@ -389,12 +390,15 @@
       }
     },
     {
-      "id": "5a0e0017-0020-4c00-8000-000000000020",
-      "name": "Client 2",
+      "id": "5a0e0017-0035-4c00-8000-000000000035",
+      "name": "Consenting Clients",
+      "notes": "REVISIT is a MARKETING template: only clients who opted in (Clients.marketing_consent, ticked by the clinic, never by the bot). ONE search per run (executeOnce), not one Get per due visit: a visit whose client did not consent stays due (it is not marked) and would otherwise cost a call on every run. Error output -> Alert Client 2: a failed lookup must not stop the reminder and expiry branches. Always Output Data: when nobody consented, Contact 2 still runs (for the no-link alerts).",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
       "onError": "continueErrorOutput",
+      "executeOnce": true,
+      "alwaysOutputData": true,
       "type": "n8n-nodes-base.airtable",
       "typeVersion": 2.2,
       "position": [880, 860],
@@ -404,23 +408,48 @@
       "parameters": {
         "authentication": "airtableTokenApi",
         "resource": "record",
-        "operation": "get",
+        "operation": "search",
         "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
         "table": { "__rl": true, "value": "ATTBL:Clients", "mode": "id" },
-        "id": "={{ $json.fields.client[0] }}",
+        "filterByFormula": "{marketing_consent}=1",
+        "returnAll": true,
         "options": {}
       }
     },
     {
       "id": "5a0e0017-0021-4c00-8000-000000000021",
       "name": "Contact 2",
+      "notes": "Joins the due visits (Has Appt? 3) with the consenting clients (Consenting Clients) by the Clients record id. A visit whose client did not consent gets no item: not sent, not marked, so ticking the consent later still lets the invitation go out. A visit without a client link gets an alert item (Revisit Alert? -> Dedupe Alerts).",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [1100, 860],
       "parameters": {
-        "mode": "runOnceForEachItem",
+        "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// Same rule as Contact, for the revisit rows.\nconst c = $json.fields || {};\nconst ar = $('Due Revisits').item.json;\nconst a = ar.fields || {};\nconst phone = String(c.phone || '').trim();\nconst chat = String(c.telegram_chat_id || '').trim();\nconst contact_id = (a.created_via === 'wa' && phone) ? 'wa:' + phone : (chat ? 'tg:' + chat : (phone ? 'wa:' + phone : ''));\nreturn { json: { contact_id, appt_id: a.appt_id, rec_id: ar.id } };"
+        "jsCode": "// Marketing consent: a due visit is invited only when its client is among the consenting clients ($input = the one\n// Consenting Clients search; marketing_consent must be the checkbox value true, checked again here). A visit whose client\n// did not consent gets no item, so it is neither sent nor marked and goes out on a later run once the clinic ticks the box.\n// Same contact rule as Contact. A visit without a client link cannot be matched to anyone: an owner alert item, never a send.\nconst consent = new Map($input.all().map(i => i.json || {}).filter(c => c.id && (c.fields || {}).marketing_consent === true).map(c => [c.id, c.fields]));\nconst out = [];\nfor (const ar of $('Has Appt? 3').all(0).map(i => i.json || {})) {\n  const a = ar.fields || {};\n  if (!a.appt_id) continue;\n  const cid = (a.client || [])[0];\n  if (!cid) { out.push({ json: { key: 'client2:' + a.appt_id, text: '❌ WF-5 skipped the revisit invite of ' + a.appt_id + ': the visit has no client link, so no client (and no marketing consent) can be found' } }); continue; }\n  const c = consent.get(cid);\n  if (!c) continue;\n  const phone = String(c.phone || '').trim();\n  const chat = String(c.telegram_chat_id || '').trim();\n  const contact_id = (a.created_via === 'wa' && phone) ? 'wa:' + phone : (chat ? 'tg:' + chat : (phone ? 'wa:' + phone : ''));\n  out.push({ json: { contact_id, appt_id: a.appt_id, rec_id: ar.id } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "5a0e0017-0036-4c00-8000-000000000036",
+      "name": "Revisit Alert?",
+      "notes": "true: an alert item from Contact 2 (a visit without a client link) -> Dedupe Alerts. false: a consenting client's visit -> Send Revisit.",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [1320, 860],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "5a0e0017-1004-4c00-8000-000000000004",
+              "leftValue": "={{ !!$json.key }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       }
     },
     {
@@ -429,7 +458,7 @@
       "notes": "Run once for each item and with an error output, for the same reason as Send Reminder.",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [1320, 860],
+      "position": [1540, 940],
       "onError": "continueErrorOutput",
       "parameters": {
         "source": "database",
@@ -463,14 +492,14 @@
     {
       "id": "5a0e0017-0023-4c00-8000-000000000023",
       "name": "Mark Invited",
-      "notes": "Error output: the invitation is already SENT, a failed mark means it goes out again next hour (Alert Revisit Mark tells the owner).",
+      "notes": "Error output: the invitation is already SENT, a failed mark means it goes out again on the next run (Alert Revisit Mark tells the owner).",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
       "onError": "continueErrorOutput",
       "type": "n8n-nodes-base.airtable",
       "typeVersion": 2.2,
-      "position": [1540, 780],
+      "position": [1760, 860],
       "credentials": {
         "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
       },
@@ -528,7 +557,7 @@
       "name": "Alert Revisit Send",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1540, 960],
+      "position": [1760, 1040],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
@@ -538,27 +567,27 @@
     {
       "id": "5a0e0017-0027-4c00-8000-000000000027",
       "name": "Alert Reminder Mark",
-      "notes": "Mark Reminded error output: the reminder WAS sent but the row stays booked, so it is sent again next hour.",
+      "notes": "Mark Reminded error output: the reminder WAS sent but the row stays booked, so it is sent again on the next run.",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [1760, 20],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const err = j => String((j && (j.message || (j.error && (j.error.message || j.error)))) || 'see WF-6').slice(0, 300);\nconst who = i => { try { return String($('Contact').itemMatching(i).json.appt_id || '?'); } catch (e) { return '?'; } };\nreturn $input.all().map((it, i) => { const a = who(i); return { json: { key: 'reminder-mark:' + a, text: '⚠️ The reminder for ' + a + ' WAS SENT but marking the visit as reminded failed (' + err(it.json) + '). The client may receive the same reminder again every hour until the row is fixed.' } }; });"
+        "jsCode": "const err = j => String((j && (j.message || (j.error && (j.error.message || j.error)))) || 'see WF-6').slice(0, 300);\nconst who = i => { try { return String($('Contact').itemMatching(i).json.appt_id || '?'); } catch (e) { return '?'; } };\nreturn $input.all().map((it, i) => { const a = who(i); return { json: { key: 'reminder-mark:' + a, text: '⚠️ The reminder for ' + a + ' WAS SENT but marking the visit as reminded failed (' + err(it.json) + '). The client may receive the same reminder again with every daily WF-5 run until the row is fixed.' } }; });"
       }
     },
     {
       "id": "5a0e0017-0028-4c00-8000-000000000028",
       "name": "Alert Revisit Mark",
-      "notes": "Mark Invited error output: the invitation WAS sent but revisit_invited_at stays empty, so it is sent again next hour.",
+      "notes": "Mark Invited error output: the invitation WAS sent but revisit_invited_at stays empty, so it is sent again on the next run.",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1760, 780],
+      "position": [1980, 860],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const err = j => String((j && (j.message || (j.error && (j.error.message || j.error)))) || 'see WF-6').slice(0, 300);\nconst who = i => { try { return String($('Contact 2').itemMatching(i).json.appt_id || '?'); } catch (e) { return '?'; } };\nreturn $input.all().map((it, i) => { const a = who(i); return { json: { key: 'revisit-mark:' + a, text: '⚠️ The revisit invitation for ' + a + ' WAS SENT but marking it as invited failed (' + err(it.json) + '). The client may receive the same invitation again every hour until the row is fixed.' } }; });"
+        "jsCode": "const err = j => String((j && (j.message || (j.error && (j.error.message || j.error)))) || 'see WF-6').slice(0, 300);\nconst who = i => { try { return String($('Contact 2').itemMatching(i).json.appt_id || '?'); } catch (e) { return '?'; } };\nreturn $input.all().map((it, i) => { const a = who(i); return { json: { key: 'revisit-mark:' + a, text: '⚠️ The revisit invitation for ' + a + ' WAS SENT but marking it as invited failed (' + err(it.json) + '). The client may receive the same invitation again with every daily WF-5 run until the row is fixed.' } }; });"
       }
     },
     {
@@ -589,20 +618,20 @@
     {
       "id": "5a0e0017-0031-4c00-8000-000000000031",
       "name": "Alert Client 2",
-      "notes": "Same as Alert Client, for the revisit rows (Client 2 / Has Appt? 3).",
+      "notes": "Consenting Clients error output: the one consent search of this run failed (after its retry). Nothing was sent or marked, so every due visit is simply due again on the next run. One alert per run (key client2:consent, deduplicated for 24 h).",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [1100, 1060],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const err = j => String((j && (j.message || (j.error && (j.error.message || j.error)))) || 'see WF-6').slice(0, 300);\nconst read = new Set($('Client 2').all(0).map(i => (i.json || {}).id).filter(Boolean));\nconst e = err($input.first().json);\nconst bad = $('Has Appt? 3').all(0).map(i => i.json || {}).filter(r => (r.fields || {}).appt_id && !read.has((r.fields.client || [])[0]));\nif (!bad.length) return [{ json: { key: 'client2:?', text: '❌ WF-5: a client lookup failed for a revisit invite but no visit could be matched (' + e + ')' } }];\nreturn bad.map(r => { const c = (r.fields.client || [])[0]; return { json: { key: 'client2:' + r.fields.appt_id, text: '❌ WF-5 skipped the revisit invite of ' + r.fields.appt_id + ': its client record ' + (c || '(no link)') + ' could not be read (' + e + ')' } }; });"
+        "jsCode": "const err = j => String((j && (j.message || (j.error && (j.error.message || j.error)))) || 'see WF-6').slice(0, 300);\nlet n = '?';\ntry { n = String($('Has Appt? 3').all(0).filter(i => ((i.json || {}).fields || {}).appt_id).length); } catch (e) { n = '?'; }\nreturn [{ json: { key: 'client2:consent', text: '❌ WF-5 could not read the clients\\' marketing consent (' + err($input.first().json) + '): no revisit invitation was sent this run; ' + n + ' due visit(s) wait for the next run.' } }];"
       }
     },
     {
       "id": "5a0e0017-0032-4c00-8000-000000000032",
       "name": "Dedupe Alerts",
-      "notes": "The only way to the owner. At most one alert per key per 24 h, kept in the workflow static data (persisted for production runs - Hourly and Run Now - not for editor test runs). The send/mark itself is still retried every hour; only the alert is throttled.",
+      "notes": "The only way to the owner. At most one alert per key per 24 h, kept in the workflow static data (persisted for production runs - Daily and Run Now - not for editor test runs). The send/mark itself is still retried on every run; only the alert is throttled.",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [2000, 500],
@@ -642,7 +671,7 @@
     {
       "id": "5a0e0017-0034-4c00-8000-000000000034",
       "name": "Forget Alert Keys",
-      "notes": "Alert Owner error output: notify_owner failed, so the alert never reached the owner. Remove the dedupe keys Dedupe Alerts stamped for it, so it is tried again next hour instead of being silenced for 24 h. Lost pairing -> forget every key of this run. Nothing is connected after it.",
+      "notes": "Alert Owner error output: notify_owner failed, so the alert never reached the owner. Remove the dedupe keys Dedupe Alerts stamped for it, so it is tried again on the next run instead of being silenced for 24 h. Lost pairing -> forget every key of this run. Nothing is connected after it.",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [2440, 600],
@@ -654,7 +683,7 @@
     }
   ],
   "connections": {
-    "Hourly": { "main": [[{ "node": "Settings", "type": "main", "index": 0 }]] },
+    "Daily": { "main": [[{ "node": "Settings", "type": "main", "index": 0 }]] },
     "Run Now": { "main": [[{ "node": "Settings", "type": "main", "index": 0 }]] },
     "Settings": {
       "main": [
@@ -688,14 +717,20 @@
     "Orphan Pending": { "main": [[{ "node": "Orphan Alert", "type": "main", "index": 0 }]] },
     "Orphan Alert": { "main": [[{ "node": "Dedupe Alerts", "type": "main", "index": 0 }]] },
     "Due Revisits": { "main": [[{ "node": "Has Appt? 3", "type": "main", "index": 0 }]] },
-    "Has Appt? 3": { "main": [[{ "node": "Client 2", "type": "main", "index": 0 }], []] },
-    "Client 2": {
+    "Has Appt? 3": { "main": [[{ "node": "Consenting Clients", "type": "main", "index": 0 }], []] },
+    "Consenting Clients": {
       "main": [
         [{ "node": "Contact 2", "type": "main", "index": 0 }],
         [{ "node": "Alert Client 2", "type": "main", "index": 0 }]
       ]
     },
-    "Contact 2": { "main": [[{ "node": "Send Revisit", "type": "main", "index": 0 }]] },
+    "Contact 2": { "main": [[{ "node": "Revisit Alert?", "type": "main", "index": 0 }]] },
+    "Revisit Alert?": {
+      "main": [
+        [{ "node": "Dedupe Alerts", "type": "main", "index": 0 }],
+        [{ "node": "Send Revisit", "type": "main", "index": 0 }]
+      ]
+    },
     "Send Revisit": {
       "main": [
         [{ "node": "Mark Invited", "type": "main", "index": 0 }],

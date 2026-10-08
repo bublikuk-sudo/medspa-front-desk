@@ -16,9 +16,12 @@ Every account is the clinic's, registered on the clinic's card (see "Handover" b
 - [ ] **Server.** A Hetzner VPS (the demo runs on a CX23, Ubuntu 24.04) with Docker, `jq`, and your SSH key; a host
       name for HTTPS (`<your-domain>`).
 - [ ] **Anthropic** and **OpenAI** API keys, each with a monthly spend limit set in the console.
-- [ ] **Airtable** workspace on a **paid plan**. The Free plan's 1,000 API calls per month per workspace are used up by
-      the hourly jobs alone, and interface-only sharing needs a paid plan. A personal access token with scopes
-      `data.records:read`, `data.records:write`, `schema.bases:read`, `schema.bases:write`, limited to this workspace.
+- [ ] **Airtable** workspace, **paid plan for a clinic**. Free allows 1,000 API calls per month per workspace, Team
+      100,000 (support.airtable.com, "Managing API call limits in Airtable"). With the daily jobs the bot uses 180 to
+      210 calls a month idle, and a five-message booking about 72 (README, Running costs): Free carries a demo with
+      roughly ten bookings a month, not a clinic, and not the test suites. Interface-only sharing also needs a paid
+      plan. A personal access token with scopes `data.records:read`, `data.records:write`, `schema.bases:read`,
+      `schema.bases:write`, limited to this workspace.
 - [ ] **Google**: a calendar for the clinic, and a Google Cloud project with the Calendar API enabled, an OAuth consent
       screen and a Web OAuth client whose redirect URI is the n8n OAuth callback on `<your-domain>`. **Publish the
       app** (it needs a home page and a privacy policy on a domain the clinic owns); in Testing mode the token expires
@@ -107,8 +110,9 @@ Every account is the clinic's, registered on the clinic's card (see "Handover" b
       published version", activate the called workflows first, in `push-all.sh`'s order up to `wf2-agent`:
       `medspa-front-desk/scripts/remote.sh 'scripts/n8n-push.sh workflows/<path>.json --activate'` for each, then run
       `push-all.sh` again.
-- [ ] Knowledge index: open `wf4-knowledge-ingest` in the n8n editor and run it once (Execute workflow). The owner gets
-      "Knowledge base re-indexed". Otherwise its hourly run rebuilds an index that does not match Airtable.
+- [ ] Knowledge index: `medspa-front-desk/scripts/remote.sh 'scripts/n8n-run.sh wf4-knowledge-ingest'` (or open
+      `wf4-knowledge-ingest` in the n8n editor and run it once). The owner gets "Knowledge base re-indexed". Otherwise
+      the daily run (06:35 UTC) builds the index the next morning and the bot answers NOT_FOUND until then.
 - [ ] Telegram: activating `wf1-inbound` sets the bot's webhook; nothing else to do.
 - [ ] WhatsApp: activating `wf1-inbound` registers the Meta app's webhook subscription (field `messages`). Also
       subscribe the app to the WhatsApp Business Account once: `POST /<WABA id>/subscribed_apps` with the System User
@@ -137,14 +141,18 @@ What changes per client: one Settings row, the Services and Knowledge tables, an
 - [ ] Optional full regression on the clinic's server: `medspa-front-desk/scripts/remote.sh 'tests/tool-cases.sh'`.
       It uses test contacts and 2030 dates and cleans up after itself, but the owner receives real Telegram alerts
       during the run.
-- [ ] **Revisits are on as soon as data allows; there is no switch and no consent check.** WF-5 sends the revisit
-      invitation (the MARKETING template on WhatsApp) to every client with a `done` visit whose
-      `Appointments.next_visit_in` is above 0, once that many days have passed. Until the clinic collects marketing
-      opt-in and a consent field exists, keep revisits off: either the practitioners leave `Appointments.next_visit_in`
-      empty, or set `"disabled": true` on the `Due Revisits` node in `workflows/wf5-reminders.json`, commit and push
-      (a disabled node passes the Settings row on, which has no `appt_id`, so `Has Appt? 3` stops the branch; not yet
-      exercised).
-- [ ] Spend limits confirmed on Anthropic and OpenAI; Airtable plan confirmed paid.
+- [ ] **Marketing consent for revisits.** WF-5 sends the revisit invitation (the MARKETING template on WhatsApp) only
+      to clients whose `Clients.marketing_consent` is ticked, for a `done` visit whose `Appointments.next_visit_in` is
+      above 0, once that many days have passed. Agree with the clinic where the opt-in is collected (a consent line in
+      its intake and consent form is the usual place) and who ticks the box in Airtable; the bot never ticks it. A
+      client without the box gets no invitation and the visit stays due, so ticking it later still sends the invitation
+      on the next daily run. Unticking it stops further invitations.
+- [ ] **Knowledge edits are re-indexed by hand.** After the clinic changes the Knowledge table, run
+      `medspa-front-desk/scripts/remote.sh 'scripts/n8n-run.sh wf4-knowledge-ingest'`; the owner gets "Knowledge base
+      re-indexed: N paragraphs". Without it the bot uses the old text until the daily WF-4 run (06:35 UTC) repairs the
+      index. Tell the clinic who does this.
+- [ ] Spend limits confirmed on Anthropic and OpenAI; Airtable plan chosen: paid for a real clinic (Free only for a
+      demo, see "Before the 30 minutes").
 
 ## Handover (about 15 minutes, done by the clinic)
 

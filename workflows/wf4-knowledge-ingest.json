@@ -11,39 +11,36 @@
     },
     {
       "id": "4b0e0016-0016-4c00-8000-000000000016",
-      "name": "Hourly",
+      "name": "Daily",
+      "notes": "Self-repair once a day at 06:35 UTC (07:35 Berlin in winter, 08:35 in summer): one Airtable search; Plan rebuilds only when the index differs from Knowledge. Once a day for the Airtable Free plan (1,000 API calls a month per workspace). After a Knowledge edit, re-index at once with Run Now (scripts/n8n-run.sh wf4-knowledge-ingest); otherwise this run picks the edit up within a day.",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.4,
       "position": [0, 300],
       "parameters": {
         "rule": {
           "interval": [
-            { "field": "hours", "hoursInterval": 1 }
+            { "field": "days", "daysInterval": 1, "triggerAtHour": 6, "triggerAtMinute": 35 }
           ]
         }
       }
     },
     {
-      "id": "4b0e0016-0002-4c00-8000-000000000002",
-      "name": "Knowledge Changed",
-      "type": "n8n-nodes-base.airtableTrigger",
-      "typeVersion": 1,
+      "id": "4b0e0016-0019-4c00-8000-000000000019",
+      "name": "Run Now",
+      "notes": "Manual re-index after a Knowledge edit: scripts/n8n-run.sh wf4-knowledge-ingest (POST /webhook/wf4-knowledge-ingest with the MedSpa Test Key header, as WF-5's Run Now). Counts as a manual run in Plan: always rebuilds and tells the owner. Replaces the Airtable trigger that checked Knowledge every 15 minutes (2,880 API calls a month).",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
       "position": [0, 500],
+      "webhookId": "4b0e0016-aaaa-4c00-8000-00000000f004",
       "credentials": {
-        "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
+        "httpHeaderAuth": { "id": "CRED", "name": "MedSpa Test Key" }
       },
       "parameters": {
-        "authentication": "airtableTokenApi",
-        "baseId": { "__rl": true, "value": "ATBASE", "mode": "id" },
-        "tableId": { "__rl": true, "value": "ATTBL:Knowledge", "mode": "id" },
-        "triggerField": "updated_at",
-        "downloadAttachments": false,
-        "additionalFields": {},
-        "pollTimes": {
-          "item": [
-            { "mode": "everyX", "value": 15, "unit": "minutes" }
-          ]
-        }
+        "httpMethod": "POST",
+        "path": "wf4-knowledge-ingest",
+        "authentication": "headerAuth",
+        "responseMode": "onReceived",
+        "options": {}
       }
     },
     {
@@ -120,7 +117,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// Build the documents, refuse to continue when there are none (BEFORE anything is truncated), and decide whether the index needs rebuilding.\n// One document per Knowledge row: the topic goes on the first line so the embedding sees it; search_knowledge strips that line again. Rows without text are skipped (an empty string cannot be embedded).\nconst documents = $('Knowledge').all()\n  .map(i => i.json.fields || {})\n  .filter(f => String(f.text ?? '').trim() !== '')\n  .map(f => ({ pageContent: f.topic + '\\n' + f.text, kb_id: f.kb_id, topic: f.topic }));\nif (!documents.length) throw new Error('KB_NO_DOCUMENTS: Airtable Knowledge returned no row with text; the index was NOT touched');\n// The index is up to date when it holds exactly the same (kb_id, text) pairs as the documents: nothing missing, nothing duplicated, nothing stale.\nconst key = (id, text) => String(id) + '\\u0000' + String(text);\nconst before = $('Old Index').all().map(i => i.json).filter(r => r.text != null).map(r => key(r.kb_id, r.text)).sort();\nconst after = documents.map(d => key(d.kb_id, d.pageContent)).sort();\nconst upToDate = before.length === after.length && before.every((v, k) => v === after[k]);\nconst manual = $('Manual').isExecuted;\nreturn [{ json: { documents, upToDate, manual, rebuild: manual || !upToDate } }];"
+        "jsCode": "// Build the documents, refuse to continue when there are none (BEFORE anything is truncated), and decide whether the index needs rebuilding.\n// One document per Knowledge row: the topic goes on the first line so the embedding sees it; search_knowledge strips that line again. Rows without text are skipped (an empty string cannot be embedded).\nconst documents = $('Knowledge').all()\n  .map(i => i.json.fields || {})\n  .filter(f => String(f.text ?? '').trim() !== '')\n  .map(f => ({ pageContent: f.topic + '\\n' + f.text, kb_id: f.kb_id, topic: f.topic }));\nif (!documents.length) throw new Error('KB_NO_DOCUMENTS: Airtable Knowledge returned no row with text; the index was NOT touched');\n// The index is up to date when it holds exactly the same (kb_id, text) pairs as the documents: nothing missing, nothing duplicated, nothing stale.\nconst key = (id, text) => String(id) + '\\u0000' + String(text);\nconst before = $('Old Index').all().map(i => i.json).filter(r => r.text != null).map(r => key(r.kb_id, r.text)).sort();\nconst after = documents.map(d => key(d.kb_id, d.pageContent)).sort();\nconst upToDate = before.length === after.length && before.every((v, k) => v === after[k]);\n// A manual run (the editor's Manual trigger, or Run Now from scripts/n8n-run.sh) always rebuilds and reports; the Daily run only repairs.\nconst manual = $('Manual').isExecuted || $('Run Now').isExecuted;\nreturn [{ json: { documents, upToDate, manual, rebuild: manual || !upToDate } }];"
       }
     },
     {
@@ -326,8 +323,8 @@
   ],
   "connections": {
     "Manual": { "main": [[{ "node": "Knowledge", "type": "main", "index": 0 }]] },
-    "Hourly": { "main": [[{ "node": "Knowledge", "type": "main", "index": 0 }]] },
-    "Knowledge Changed": { "main": [[{ "node": "Knowledge", "type": "main", "index": 0 }]] },
+    "Daily": { "main": [[{ "node": "Knowledge", "type": "main", "index": 0 }]] },
+    "Run Now": { "main": [[{ "node": "Knowledge", "type": "main", "index": 0 }]] },
     "Knowledge": { "main": [[{ "node": "Index State", "type": "main", "index": 0 }]] },
     "Index State": { "main": [[{ "node": "Old Index", "type": "main", "index": 0 }]] },
     "Old Index": { "main": [[{ "node": "Plan", "type": "main", "index": 0 }]] },

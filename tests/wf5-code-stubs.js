@@ -1,4 +1,4 @@
-// Stub test for WF-5 (workflows/wf5-reminders.json): the Code nodes Contact, Contact 2, Orphan Alert, every non-trivial
+// Stub test for WF-5 (workflows/wf5-reminders.json): the Code nodes Contact, Contact 2 (the marketing-consent join), Orphan Alert, every non-trivial
 // expression (Airtable formulas, record ids, report texts, send inputs) and the wiring.
 // Runs inside the n8n container's Node (see tests/wf5-code-stubs.sh), which prepends:
 //   const WF = <the workflow JSON>;
@@ -42,10 +42,23 @@ const expr = (e, json, nodes = {}) => new Function('$json', '$', '$now', 'return
 // An expression string that is a plain formula (no "={{") is used as is.
 const throws = (f) => { try { f(); return false; } catch (e) { return true; } };
 
-// ---------------------------------------------------------------- Contact / Contact 2
+// ---------------------------------------------------------------- Contact (reminders, one Get per row) / Contact 2 (revisits, consent join)
 const rec = (fields, id = 'recAPPT1') => ({ id, createdTime: 'x', fields });
-for (const [cn, src] of [['Contact', 'Due Reminders'], ['Contact 2', 'Due Revisits']]) {
-  const run = (client, appt, id) => runEach(cn, client, { [src]: rec(appt, id) });
+// Contact 2 runs once for all items: $input = the Consenting Clients records, $('Has Appt? 3').all(0) = the due revisit rows.
+// runC2(client, appt, id): one due row whose client is the given record; the record is in the consent search result as given
+// (a consenting client carries marketing_consent: true; the helper adds it unless the record says otherwise), so the
+// contact rule tests below run unchanged for both Code nodes.
+const runC2 = (client, appt, id) => {
+  const crec = { id: client.id || 'recC1', ...client, fields: client.fields === undefined ? { marketing_consent: true } : { marketing_consent: true, ...client.fields } };
+  try {
+    const out = runAll('Contact 2', [crec], { 'Has Appt? 3': [rec({ ...appt, client: [crec.id] }, id)] });
+    return out[0] || { json: {} };
+  } catch (e) { return { json: { threw: String(e.message) } }; }
+};
+// block(name, fn): a group of checks that must not abort the whole suite when the workflow is not built yet (RED).
+const block = (name, fn) => { try { fn(); } catch (e) { check(name + ' (the block threw)', false, String(e.message)); } };
+for (const [cn, src] of [['Contact', 'Due Reminders'], ['Contact 2', 'Has Appt? 3']]) {
+  const run = cn === 'Contact' ? (client, appt, id) => runEach(cn, client, { [src]: rec(appt, id) }) : runC2;
   const base = { appt_id: 'A-1', created_via: 'tg' };
   let r = run(rec({ phone: '+491701234567', telegram_chat_id: '4242' }, 'recC1'), base, 'recAPPT9');
   check(cn + ': tg visit, both ids -> tg, rec_id of the APPOINTMENT', same(r, { json: { contact_id: 'tg:4242', appt_id: 'A-1', rec_id: 'recAPPT9' } }), r);
@@ -65,8 +78,47 @@ for (const [cn, src] of [['Contact', 'Due Reminders'], ['Contact 2', 'Due Revisi
   check(cn + ': client without fields -> empty contact_id, no throw', r.json.contact_id === '', r);
   r = run(rec({ phone: '  +49170  ', telegram_chat_id: ' 4242 ' }), { ...base, created_via: 'wa' });
   check(cn + ': ids are trimmed', r.json.contact_id === 'wa:+49170', r);
-  check(cn + ': reads the visit from "' + src + '" (a stale name would throw)', throws(() => runEach(cn, rec({}), {})), 'did not throw');
-  check(cn + ': mode runOnceForEachItem', node(cn).parameters.mode === 'runOnceForEachItem');
+  if (cn === 'Contact') {
+    check(cn + ': reads the visit from "' + src + '" (a stale name would throw)', throws(() => runEach(cn, rec({}), {})), 'did not throw');
+    check(cn + ': mode runOnceForEachItem', node(cn).parameters.mode === 'runOnceForEachItem');
+  } else {
+    check(cn + ': reads the visits from "' + src + '" (a stale name would throw)', throws(() => runAll(cn, [rec({ marketing_consent: true }, 'recC1')], {})), 'did not throw');
+    check(cn + ': mode runOnceForAllItems (one consent search per run, joined here)', node(cn).parameters.mode === 'runOnceForAllItems');
+  }
+}
+
+// ---------------------------------------------------------------- Contact 2: marketing consent (REVISIT is MARKETING)
+{
+  const yes = (id, f = {}) => rec({ marketing_consent: true, telegram_chat_id: '42' + id.slice(-1), ...f }, id);
+  const due = (appt_id, client, extra = {}) => rec({ appt_id, created_via: 'tg', ...(client ? { client: [client] } : {}), ...extra }, 'r-' + appt_id);
+  const c2 = (clients, rows) => { try { return runAll('Contact 2', clients, { 'Has Appt? 3': rows }).map((x) => x.json); } catch (e) { return [{ threw: String(e.message) }]; } };
+  let x = c2([yes('recC1')], [due('A-1', 'recC1'), due('A-2', 'recC2')]);
+  check('Contact 2: only the visit whose client is in the consent search is sent; the other is skipped (no item, so not sent and not marked)', same(x, [{ contact_id: 'tg:421', appt_id: 'A-1', rec_id: 'r-A-1' }]), x);
+  x = c2([rec({ telegram_chat_id: '4242' }, 'recC1'), rec({ marketing_consent: false, telegram_chat_id: '4243' }, 'recC2')], [due('A-1', 'recC1'), due('A-2', 'recC2')]);
+  check('Contact 2: a client record WITHOUT marketing_consent true is not sent even if the search returned it (defence in depth)', same(x, []), x);
+  x = c2([rec({ marketing_consent: 'true', telegram_chat_id: '4242' }, 'recC1')], [due('A-1', 'recC1')]);
+  check('Contact 2: consent must be the checkbox value true, not a truthy string', same(x, []), x);
+  x = c2([{}], [due('A-1', 'recC1'), {}]);
+  check('Contact 2: nobody consented (the empty item from Always Output Data) -> nothing sent, no alert', same(x, []), x);
+  x = c2([yes('recC1')], [due('A-1', 'recC1'), {}, rec({ status: 'done' }, 'r-x')]);
+  check('Contact 2: rows without appt_id are ignored', x.length === 1 && x[0].appt_id === 'A-1', x);
+  x = c2([yes('recC1'), yes('recC3')], [due('A-1', 'recC1'), due('A-2', 'recC2'), due('A-3', 'recC1'), due('A-4', 'recC3')]);
+  check('Contact 2: two visits of the same consenting client -> two items, in row order', same(x.map((i) => i.appt_id), ['A-1', 'A-3', 'A-4']) && x.every((i) => !i.key), x);
+  x = c2([yes('recC1')], [due('A-9'), due('A-1', 'recC1')]);
+  check('Contact 2: a visit without a client link -> one owner alert item (key client2:<appt_id>), never a send', x.length === 2 && x[0].key === 'client2:A-9' && /A-9/.test(x[0].text) && /no client/i.test(x[0].text) && !('contact_id' in x[0]) && x[1].appt_id === 'A-1', x);
+  x = c2([], [due('A-1', 'recC1')]);
+  check('Contact 2: no input items at all -> no throw, nothing sent', same(x, []), x);
+  check('Contact 2: does not read the old per-row Get', !node('Contact 2').parameters.jsCode.includes("$('Client 2')") && !node('Contact 2').parameters.jsCode.includes("$('Due Revisits').item"));
+}
+
+// ---------------------------------------------------------------- Consenting Clients: ONE search per run, not one Get per due row
+{
+  const n = node('Consenting Clients'), p = n.parameters || {};
+  check('Consenting Clients: Airtable search on Clients for marketing_consent', n.type === 'n8n-nodes-base.airtable' && p.operation === 'search' && (p.table || {}).value === 'ATTBL:Clients' && p.filterByFormula === '{marketing_consent}=1', p);
+  check('Consenting Clients: runs ONCE per run whatever the number of due rows (executeOnce), all pages', n.executeOnce === true && p.returnAll === true);
+  check('Consenting Clients: Always Output Data (Contact 2 still runs when nobody consented, for the no-link alerts)', n.alwaysOutputData === true);
+  check('Consenting Clients: error output (a failed lookup must not stop the reminder and expiry branches)', n.onError === 'continueErrorOutput');
+  check('the per-row Get "Client 2" is gone from the revisit branch', !WF.nodes.some((x) => x.name === 'Client 2'));
 }
 
 // ---------------------------------------------------------------- Orphan Alert
@@ -101,7 +153,7 @@ for (const n of ['Has Appt?', 'Has Appt? 2', 'Has Appt? 3']) {
   check(n + ': empty item (Always Output Data) -> false', expr(e, {}) === false);
   check(n + ': record without appt_id -> false', expr(e, rec({ status: 'booked' })) === false);
 }
-for (const n of ['Client', 'Client 2']) {
+for (const n of ['Client']) {
   const p = node(n).parameters;
   check(n + ': Get Clients by the first linked record id', p.operation === 'get' && expr(p.id, rec({ client: ['recCLIENT1'] })) === 'recCLIENT1');
   check(n + ': visit without client link -> throws inside the node (error output), not a wrong lookup', throws(() => expr(p.id, rec({}))));
@@ -150,13 +202,27 @@ for (const [n, up, prefix, head] of rowShapes) {
   check(n + ': code mode all items', node(n).parameters.mode === 'runOnceForAllItems');
 }
 check('Alert Reminder Mark / Alert Revisit Mark: say the client may get the message again', ['Alert Reminder Mark', 'Alert Revisit Mark'].every((n) => /again/.test(shapeOf(n, [{ error: 'x' }], { Contact: [{ appt_id: 'A' }], 'Contact 2': [{ appt_id: 'A' }] })[0].text)));
+check('Alert Reminder Mark / Alert Revisit Mark: the repeat comes with the next daily run, not "every hour"', ['Alert Reminder Mark', 'Alert Revisit Mark'].every((n) => { const t = shapeOf(n, [{ error: 'x' }], { Contact: [{ appt_id: 'A' }], 'Contact 2': [{ appt_id: 'A' }] })[0].text; return !/hour/.test(t) && /daily/.test(t); }));
 {
   const x = shapeOf('Alert Expiry Mark', [{ message: 'nope' }, { error: 'x' }], { 'Has Appt? 2': [rec({ appt_id: 'A-5' }), rec({ appt_id: 'A-6' })] });
   check('Alert Expiry Mark: key expiry:<appt_id>, text names it', x.length === 2 && x[0].key === 'expiry:A-5' && x[1].key === 'expiry:A-6' && x[0].text.includes('A-5') && x[0].text.includes('nope'), x);
   const y = shapeOf('Alert Expiry Mark', [{ error: 'x' }], {});
   check('Alert Expiry Mark: lost source -> "?" not a throw', y.length === 1 && y[0].key === 'expiry:?', y);
 }
-for (const [n, cl, ap, prefix, what] of [['Alert Client', 'Client', 'Has Appt?', 'client:', 'reminder'], ['Alert Client 2', 'Client 2', 'Has Appt? 3', 'client2:', 'revisit']]) {
+block('Alert Client 2 (consent lookup failed)', () => {
+  // Consenting Clients error output: ONE alert for the run (no row failed on its own; the one search did), naming the
+  // number of due visits that wait for the next run. Nothing is sent and nothing is marked.
+  const rows = [rec({ appt_id: 'A-1', client: ['recC1'] }, 'a1'), rec({ appt_id: 'A-2' }, 'a2'), {}];
+  let x = shapeOf('Alert Client 2', [{ message: 'Airtable 503', error: { message: 'inner' } }], { 'Has Appt? 3': rows });
+  check('Alert Client 2: consent lookup failed -> one alert, key client2:consent, names the error and the 2 waiting visits', x.length === 1 && x[0].key === 'client2:consent' && /consent/i.test(x[0].text) && x[0].text.includes('Airtable 503') && /\b2 due/.test(x[0].text) && /not sent|no revisit/i.test(x[0].text), x);
+  x = shapeOf('Alert Client 2', [{}], { 'Has Appt? 3': rows });
+  check('Alert Client 2: no error text -> "see WF-6", no "undefined"', x[0].text.includes('see WF-6') && !x[0].text.includes('undefined'), x);
+  x = shapeOf('Alert Client 2', [{ error: 'x' }], {});
+  check('Alert Client 2: lost source rows -> still one alert, count "?" not a throw', x.length === 1 && x[0].key === 'client2:consent' && x[0].text.includes('?'), x);
+  check('Alert Client 2: asks the true output of Has Appt? 3 explicitly (all(0))', node('Alert Client 2').parameters.jsCode.includes("$('Has Appt? 3').all(0)"));
+  check('Alert Client 2: code mode all items', node('Alert Client 2').parameters.mode === 'runOnceForAllItems');
+});
+for (const [n, cl, ap, prefix, what] of [['Alert Client', 'Client', 'Has Appt?', 'client:', 'reminder']]) {
   // visits A-1 and A-3 share client recC1 (read fine), A-2 has client recC2 (lookup failed), A-4 has no client link at all
   const rows = [rec({ appt_id: 'A-1', client: ['recC1'] }, 'a1'), rec({ appt_id: 'A-2', client: ['recC2'] }, 'a2'), rec({ appt_id: 'A-3', client: ['recC1'] }, 'a3'), rec({ appt_id: 'A-4' }, 'a4'), {}];
   const nodes = { [cl]: [{ id: 'recC1', fields: { name: 'X' } }], [ap]: rows };
@@ -176,7 +242,7 @@ const dd = (items, sd) => runAll('Dedupe Alerts', items, {}, sd);
   check('Dedupe Alerts: two keys pass, the repeat of k1 in the same run is dropped', same(x, [{ text: 't1', key: 'k1' }, { text: 't2', key: 'k2' }]), x);
   check('Dedupe Alerts: keys are remembered in the workflow static data', Object.keys(sd.alertSeen || {}).sort().join() === 'k1,k2', sd);
   x = dd([{ key: 'k1', text: 't1' }, { key: 'k3', text: 't3' }], sd).map((i) => i.json);
-  check('Dedupe Alerts: next run (hour later) - k1 is throttled, new k3 passes', same(x, [{ text: 't3', key: 'k3' }]), x);
+  check('Dedupe Alerts: a later run inside 24 h (e.g. a Run Now) - k1 is throttled, new k3 passes', same(x, [{ text: 't3', key: 'k3' }]), x);
   sd.alertSeen.k1 = Date.now() - 25 * 3600 * 1000;
   sd.alertSeen.old = Date.now() - 48 * 3600 * 1000;
   x = dd([{ key: 'k1', text: 't1' }], sd).map((i) => i.json);
@@ -186,7 +252,7 @@ const dd = (items, sd) => runAll('Dedupe Alerts', items, {}, sd);
   check('Dedupe Alerts: 23 h is still inside the window', same(dd([{ key: 'k2', text: 't2' }], sd), []));
   check('Dedupe Alerts: items without key or text are dropped, not sent', same(dd([{ text: 'x' }, { key: 'z' }, {}], sd), []));
   check('Dedupe Alerts: empty input -> nothing, no throw', same(dd([], {}), []));
-  check('Dedupe Alerts: uses the global workflow static data (persisted for Hourly / Run Now runs, not for editor test runs)', /\$getWorkflowStaticData\('global'\)/.test(node('Dedupe Alerts').parameters.jsCode));
+  check('Dedupe Alerts: uses the global workflow static data (persisted for Daily / Run Now runs, not for editor test runs)', /\$getWorkflowStaticData\('global'\)/.test(node('Dedupe Alerts').parameters.jsCode));
 }
 {
   const p = node('Alert Owner').parameters;
@@ -224,15 +290,20 @@ for (const [from, c] of Object.entries(WF.connections)) {
   for (const outs of c.main) for (const t of outs) if (!names.has(t.node)) bad.push('unknown target ' + t.node);
 }
 check('every connection joins existing nodes', bad.length === 0, bad);
-check('Hourly and Run Now -> Settings', same(targets('Hourly'), ['Settings']) && same(targets('Run Now'), ['Settings']));
+check('Daily and Run Now -> Settings', same(targets('Daily'), ['Settings']) && same(targets('Run Now'), ['Settings']));
 check('Settings -> the four searches', same(targets('Settings'), ['Due Reminders', 'Expired Pending', 'Orphan Pending', 'Due Revisits']));
 check('reminder chain', same(targets('Due Reminders'), ['Has Appt?']) && same(targets('Has Appt?'), ['Client']) && same(targets('Client'), ['Contact']) && same(targets('Contact'), ['Send Reminder']));
 check('expiry chain', same(targets('Expired Pending'), ['Has Appt? 2']) && same(targets('Has Appt? 2'), ['Mark Expired']));
-check('revisit chain', same(targets('Due Revisits'), ['Has Appt? 3']) && same(targets('Has Appt? 3'), ['Client 2']) && same(targets('Client 2'), ['Contact 2']) && same(targets('Contact 2'), ['Send Revisit']));
+check('revisit chain: Due Revisits -> Has Appt? 3 -> Consenting Clients -> Contact 2 -> Revisit Alert?', same(targets('Due Revisits'), ['Has Appt? 3']) && same(targets('Has Appt? 3'), ['Consenting Clients']) && same(targets('Consenting Clients'), ['Contact 2']) && same(targets('Contact 2'), ['Revisit Alert?']));
+block('Revisit Alert?', () => {
+  const e = node('Revisit Alert?').parameters.conditions.conditions[0].leftValue;
+  check('Revisit Alert?: an alert item (key) -> true, a send item -> false', expr(e, { key: 'client2:A-1', text: 't' }) === true && expr(e, { contact_id: 'tg:1', appt_id: 'A-1', rec_id: 'r' }) === false);
+  check('Revisit Alert?: true -> Dedupe Alerts, false -> Send Revisit', same(targets('Revisit Alert?', 0), ['Dedupe Alerts']) && same(targets('Revisit Alert?', 1), ['Send Revisit']));
+});
 check('If false outputs go nowhere (an empty item ends the branch)', ['Has Appt?', 'Has Appt? 2', 'Has Appt? 3'].every((n) => targets(n, 1).length === 0));
 check('Send Reminder: success -> Mark Reminded, error -> Alert Reminder Send', same(targets('Send Reminder', 0), ['Mark Reminded']) && same(targets('Send Reminder', 1), ['Alert Reminder Send']));
 check('Send Revisit: success -> Mark Invited, error -> Alert Revisit Send', same(targets('Send Revisit', 0), ['Mark Invited']) && same(targets('Send Revisit', 1), ['Alert Revisit Send']));
-check('Client -> Alert Client, Client 2 -> Alert Client 2 (error outputs)', same(targets('Client', 1), ['Alert Client']) && same(targets('Client 2', 1), ['Alert Client 2']));
+check('Client -> Alert Client, Consenting Clients -> Alert Client 2 (error outputs)', same(targets('Client', 1), ['Alert Client']) && same(targets('Consenting Clients', 1), ['Alert Client 2']));
 check('I1: Mark Reminded and Mark Invited have an error output into their alert (the send already happened)', node('Mark Reminded').onError === 'continueErrorOutput' && node('Mark Invited').onError === 'continueErrorOutput' && same(targets('Mark Reminded', 1), ['Alert Reminder Mark']) && same(targets('Mark Invited', 1), ['Alert Revisit Mark']));
 check('M1: Mark Expired has an error output into Alert Expiry Mark', node('Mark Expired').onError === 'continueErrorOutput' && same(targets('Mark Expired', 1), ['Alert Expiry Mark']));
 check('Mark nodes success outputs go nowhere', ['Mark Reminded', 'Mark Invited', 'Mark Expired'].every((n) => targets(n, 0).length === 0));
@@ -240,20 +311,23 @@ check('orphan chain: Orphan Pending -> Orphan Alert -> Dedupe Alerts', same(targ
 const shapes = ['Alert Reminder Send', 'Alert Revisit Send', 'Alert Reminder Mark', 'Alert Revisit Mark', 'Alert Expiry Mark', 'Alert Client', 'Alert Client 2'];
 check('every shape node -> Dedupe Alerts (the only way to the owner)', shapes.every((n) => same(targets(n), ['Dedupe Alerts'])), shapes.map((n) => targets(n)));
 check('Dedupe Alerts -> Alert Owner (no success output)', same(targets('Dedupe Alerts'), ['Alert Owner']) && targets('Alert Owner', 0).length === 0);
-const unreachable = WF.nodes.map((n) => n.name).filter((n) => !['Hourly', 'Run Now'].includes(n) && !Object.values(WF.connections).some((c) => c.main.some((o) => o.some((t) => t.node === n))));
+const unreachable = WF.nodes.map((n) => n.name).filter((n) => !['Daily', 'Run Now'].includes(n) && !Object.values(WF.connections).some((c) => c.main.some((o) => o.some((t) => t.node === n))));
 check('no unreachable node', unreachable.length === 0, unreachable);
 
 // ---------------------------------------------------------------- settings of every node
 check('errorWorkflow is WF-6', WF.settings.errorWorkflow === 'WFID:wf6-error-handler');
-check('Hourly: every hour at minute 5', same(node('Hourly').parameters.rule.interval, [{ field: 'hours', hoursInterval: 1, triggerAtMinute: 5 }]));
+// Airtable Free plan budget: once a day. GENERIC_TIMEZONE=UTC, so 07:05 UTC = 08:05 Berlin in winter (CET), 09:05 in summer (CEST).
+check('Daily: once a day at 07:05 UTC', same(((node('Daily').parameters || {}).rule || {}).interval, [{ field: 'days', daysInterval: 1, triggerAtHour: 7, triggerAtMinute: 5 }]), (node('Daily').parameters || {}).rule);
+check('Daily: the only schedule trigger; no "Hourly" node left', WF.nodes.filter((n) => n.type === 'n8n-nodes-base.scheduleTrigger').map((n) => n.name).join() === 'Daily');
+check('no note or text still says the run is hourly', !/every hour|next hour|hourly/i.test(JSON.stringify(WF)), (JSON.stringify(WF).match(/.{60}(every hour|next hour|hourly).{20}/i) || [])[0]);
 check('Run Now: POST, Header Auth with MedSpa Test Key, path = workflow name, answers at once (lastNode gave HTTP 500 when the last node had no item)', node('Run Now').parameters.httpMethod === 'POST' && node('Run Now').parameters.path === 'wf5-reminders' && node('Run Now').parameters.authentication === 'headerAuth' && node('Run Now').credentials.httpHeaderAuth.name === 'MedSpa Test Key' && node('Run Now').parameters.responseMode === 'onReceived');
 const noRetry = WF.nodes.filter((n) => n.type === 'n8n-nodes-base.airtable' && !(n.retryOnFail === true && n.maxTries === 2 && n.waitBetweenTries === 5000)).map((n) => n.name);
 check('every Airtable node: retryOnFail, maxTries 2, wait 5000', noRetry.length === 0, noRetry);
 const noErr = WF.nodes.filter((n) => n.type === 'n8n-nodes-base.executeWorkflow' && n.onError !== 'continueErrorOutput').map((n) => n.name);
 check('every Execute Workflow node has an error output', noErr.length === 0, noErr);
-const noAo = ['Settings', 'Due Reminders', 'Expired Pending', 'Orphan Pending', 'Due Revisits'].filter((n) => node(n).alwaysOutputData !== true);
+const noAo = ['Settings', 'Due Reminders', 'Expired Pending', 'Orphan Pending', 'Due Revisits', 'Consenting Clients'].filter((n) => node(n).alwaysOutputData !== true);
 check('searches have Always Output Data', noAo.length === 0, noAo);
-const ret = ['Due Reminders', 'Expired Pending', 'Orphan Pending', 'Due Revisits'].filter((n) => node(n).parameters.returnAll !== true);
+const ret = ['Due Reminders', 'Expired Pending', 'Orphan Pending', 'Due Revisits', 'Consenting Clients'].filter((n) => (node(n).parameters || {}).returnAll !== true);
 check('searches return all', ret.length === 0, ret);
 const ids = WF.nodes.map((n) => n.id);
 check('node ids and names are unique', new Set(ids).size === ids.length && names.size === WF.nodes.length);

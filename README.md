@@ -44,9 +44,11 @@ WF-2  Agent       AI Agent on Claude (claude-opus-5), Postgres chat memory per c
                          search_knowledge, escalate
 WF-3  Tools       sub-workflows with named inputs over Google Calendar + Airtable; each returns a verdict
                   string. Internal, never given to the agent: confirm_booking, cancel_booking, reminder_reply
-WF-4  Knowledge   ingest: Airtable Knowledge → OpenAI embeddings → pgvector (on change, and hourly self-repair)
+WF-4  Knowledge   ingest: Airtable Knowledge → OpenAI embeddings → pgvector (Run Now after a Knowledge edit,
+                  and a daily self-repair)
                   query: top 5 by vector distance → Claude Haiku relevance gate → ≤ 3 passages | NOT_FOUND
-WF-5  Reminders   hourly: reminders, revisit invitations, expiry of stale pending bookings
+WF-5  Reminders   daily (07:05 UTC): reminders, revisit invitations (only with marketing consent), expiry of stale
+                  pending bookings
 WF-6  Errors      Error Trigger → owner's Telegram; the failing workflow stays active
 Shared            send_message (template, translation, channel formatting, WhatsApp template vs free text)
                   notify_owner (owner's Telegram; a direct fallback when Airtable is unreachable)
@@ -95,7 +97,8 @@ Airtable base `MedSpa Front Desk` (`airtable/schema.json`):
 - **Clients** (one person, several channels): `client_id`, `name`, `phone`, `telegram_chat_id`, `email`, `language`,
   `first_seen`, `last_visit`, `status` (`new | active | flagged | escalated`), `intake_completed`, `notes` (written by
   the clinic, read by the agent), `last_offer_json`, `last_offer_at`, `last_agent_reply_at`, `cancel_ask_appt_id` (the
-  open cancel question; send_message clears it on any other message to the client).
+  open cancel question; send_message clears it on any other message to the client), `marketing_consent` (ticked by
+  the clinic when the client opted in to marketing messages; the bot never sets it).
 - **Appointments** (one row per visit, life cycle in one field): `appt_id`, links `client` and `service` plus their
   text ids `client_id` and `service_id`, `start_iso`, `end_iso`, `start_dt`, `status` (`pending → booked → reminded →
   confirmed | cancelled | late_cancel | no_show | done`), `calendar_event_id`, `created_via`, `pending_expires_at`,
@@ -105,7 +108,7 @@ Airtable base `MedSpa Front Desk` (`airtable/schema.json`):
 - **Knowledge** (the clinic's document, one paragraph per row): `kb_id`, `topic`, `text`, `updated_at`.
 
 The owner works in an Airtable Interface (today's visits, pending confirmations, flagged and escalated clients, after
-visit): [docs/airtable-interface.md](docs/airtable-interface.md).
+visit, clients with their marketing consent): [docs/airtable-interface.md](docs/airtable-interface.md).
 
 ## What we deliberately do not store, and why
 
@@ -144,12 +147,12 @@ What an EU deployment needs. This is a checklist, not legal advice.
 - **Roles.** The clinic is the controller. The developer is a processor while they have access: a DPA (Art. 28) with
   technical and organisational measures (TOMs). If the developer works from outside the EU/EEA, Standard Contractual
   Clauses as well.
-- **Marketing consent: revisits are not switchable.** WF-5 sends the revisit invitation (a WhatsApp template Meta
-  classified as MARKETING) to every client whose visit is `done` with `Appointments.next_visit_in` > 0, once that many
-  days have passed. There is no consent check and no on/off setting. Until a consent field exists, keep revisits off
-  in one of two ways: leave `Appointments.next_visit_in` empty (the practitioner's field; the WF-5 search requires a
-  value above 0), or disable the `Due Revisits` node in `workflows/wf5-reminders.json` and push it. The clinic
-  collects opt-in at booking before revisits are switched on.
+- **Marketing consent is enforced.** The revisit invitation is a WhatsApp template Meta classified as MARKETING, so
+  WF-5 sends it only to a client whose `Clients.marketing_consent` is ticked: for a `done` visit with
+  `Appointments.next_visit_in` > 0, once that many days have passed. The checkbox is empty by default and only the
+  clinic ticks it, when the client has opted in (for example in the intake and consent form); the bot never sets it.
+  A visit of a client without consent is neither sent nor marked, so ticking the box later still lets the invitation
+  go out on the next daily run. Withdrawn consent: untick the box.
 - **Privacy notice.** The clinic's patient privacy notice names the AI assistant and the processors above.
 - **AI disclosure.** The bot tells a new client in its first reply that it is the clinic's AI assistant, and answers
   truthfully when asked (EU AI Act Art. 50).
@@ -224,10 +227,16 @@ and a licence (see the contract checklist in the onboarding document).
   ≈ €0.046. From 2026-10-01 Meta bills service messages (free-form replies inside the 24-hour window) per delivered
   message after 1,000 free per number per month, and stops delivering them for businesses with no payment method on
   file.
-- **Airtable needs a paid plan.** The Free plan allows 1,000 public API calls per month per workspace; the bot's hourly
-  jobs alone exceed it (WF-5's four searches an hour are about 2,900 a month, WF-4's hourly check about 720) before any
-  client writes. Source: support.airtable.com, "Managing API call limits in Airtable". Interface-only sharing is also
-  a paid-plan feature.
+- **Airtable: the demo runs on the Free plan; a clinic needs a paid one.** The Free plan allows 1,000 public API calls
+  per month per workspace and 5 requests per second; Team allows 100,000 (support.airtable.com, "Managing API call
+  limits in Airtable"). The scheduled jobs were cut for Free: WF-5 runs once a day (5 Airtable searches, 6 once a
+  visit waits for a client's consent), WF-4 checks Knowledge once a day (1 search) and is re-indexed by hand after an
+  edit (`scripts/n8n-run.sh wf4-knowledge-ingest`). Idle load: 180 to 210 calls in a 30-day month, down from 7,200
+  (hourly WF-5 3,600, WF-4's 15-minute Airtable trigger 2,880, its hourly check 720). Counted from the workflow JSON, a
+  five-message booking (dialog 01: greeting, name, day, slot, YES) makes about 72 Airtable calls and any other agent
+  answer about 10, so Free leaves room for roughly ten bookings a month: enough for a demo, not for a clinic. When the
+  month's calls run out the bot stops answering until the next month. The test suites cannot run on Free either.
+  Interface-only sharing is also a paid-plan feature.
 - **Server.** The demo runs on a Hetzner CX23.
 - **Set monthly spend limits** on the Anthropic and OpenAI accounts.
 
@@ -281,11 +290,14 @@ silent for everyone; here a workflow that throws stays active, the owner gets an
 - Two clients and one slot: if the second confirms after the first, they get `SLOT_TAKEN` with alternatives; two
   confirmations at the same instant could both succeed (not reproduced).
 - A visit booked less than `reminder_hours_before` ahead gets no reminder.
+- WF-5 runs once a day (Airtable Free plan), at 07:05 UTC. A visit is reminded by the run in the
+  `reminder_hours_before` (24) hours before it: for a clinic that opens after the run, that is the morning of the
+  visit day, not a day ahead as the booking confirmation says. Expired `pending` offers are marked cancelled by the same
+  daily run; until then a late YES gets "That offer has expired" from `confirm_booking`.
+- A Knowledge edit reaches the bot after `scripts/n8n-run.sh wf4-knowledge-ingest`, or with the next daily WF-4 run.
 - An exhausted Anthropic credit reaches the owner as "Bad request - please check your parameters"; a fix that passes
   the real cause through is planned.
 - The conversation history in Postgres has no retention job yet.
-- No consent flag for REVISIT: WF-5 sends the MARKETING revisit template to every client with a `done` visit and
-  `next_visit_in` > 0. Keep `next_visit_in` empty or disable `Due Revisits` until a consent field exists (see GDPR).
 - `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`: Code nodes can read the environment, including the encryption key and database
   password. Run one clinic per instance.
 

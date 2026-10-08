@@ -168,9 +168,10 @@ below; this table only says which spec point the cases of a tool close.
 | | `agent_discloses_ai` | EU AI Act Art. 50: a new client is told in the first reply that the assistant is an AI. |
 
 Not in this suite. WF-5 is a scheduled workflow, not a sub-workflow tool the harness can call, so its behaviour is
-tested separately (`tests/wf5-live.sh`, `tests/wf5-live-markfail.sh`, Code-node stubs in `tests/wf5-code-stubs.sh`):
-the reminder and its gate (who is reminded and when), revisit invitations, the cleanup of expired `pending` rows, and
-the orphan-pending alert (an expired pending row that already has a calendar event is reported to the owner, not
+tested separately (`tests/wf5-live.sh`, `tests/wf5-live-markfail.sh`, `tests/wf5-live-consent.sh`, Code-node stubs in
+`tests/wf5-code-stubs.sh`): the reminder and its gate (who is reminded and when), revisit invitations and their
+marketing-consent filter (`Clients.marketing_consent`: a client without it is neither invited nor marked), the cleanup of
+expired `pending` rows, and the orphan-pending alert (an expired pending row that already has a calendar event is reported to the owner, not
 cancelled). In this suite the TTL rule is covered only on the tool side (`confirm_expired`) and the reminder answer
 only on the `reminder_reply` side. The WF-2 guardrail layer (drug names escalate when no knowledge passage is in
 context) and the full agent dialogs belong to level 2 (`tests/dialogs/`); here only the three `agent_*` cases touch
@@ -271,7 +272,9 @@ anything: measured on 60 questions, answerable ones score 0.27-0.76 and unanswer
 separates them. That is why the decision is made by the gate. Details, sweep table and gate results:
 `raw/n8n/2026-10-01-pgvector-knowledge-base-report.md`.
 
-Run the ingest by hand with `docker compose exec -T -e N8N_RUNNERS_BROKER_PORT=5690 n8n n8n execute --id <id of wf4-knowledge-ingest>`
+Run the ingest by hand with `scripts/n8n-run.sh wf4-knowledge-ingest` (on the VPS; the `Run Now` webhook, MedSpa Test
+Key, exit 0 only when the execution succeeded). The older way still works:
+`docker compose exec -T -e N8N_RUNNERS_BROKER_PORT=5690 n8n n8n execute --id <id of wf4-knowledge-ingest>`
 (from `/opt/medspa/deploy`; without the extra port the CLI fails with "Task Broker's port 5679 is already in use").
 
 | case | why |
@@ -297,11 +300,14 @@ then returns `FOUND` after about 6 s (the retry wait) and the first one also sen
 ### wf4-knowledge-ingest
 
 Not a tool, so no tsv case. It is run with the command above and checked by `select count(*) from medspa_knowledge`
-(14 after every run, never more). It has three triggers: Manual, an Airtable poll every 15 minutes, and an hourly
-schedule. `Plan` builds the documents and throws `KB_NO_DOCUMENTS` BEFORE anything is truncated when no Knowledge row
+(14 after every run, never more). It has three triggers: Manual (the editor), `Run Now` (a webhook for
+`scripts/n8n-run.sh wf4-knowledge-ingest`) and a daily schedule at 06:35 UTC. Until 2026-10-08 it also had an Airtable
+trigger checking Knowledge every 15 minutes and an hourly schedule; both were dropped for the Airtable Free plan, so a
+Knowledge edit is re-indexed by `Run Now`, or by the next daily run. Stub suite: `tests/wf4-code-stubs.sh`.
+`Plan` builds the documents and throws `KB_NO_DOCUMENTS` BEFORE anything is truncated when no Knowledge row
 has text. It also compares the (kb_id, text) pairs the index holds with the documents: when they are identical the run
-does nothing (no truncate, no embedding, no message), unless it is a manual run, which always rebuilds. So the hourly
-run costs nothing on a healthy index and repairs a broken one. After `Insert`, `Count` and `Verify` throw
+does nothing (no truncate, no embedding, no message), unless it is a manual run (Manual or `Run Now`), which always
+rebuilds. So the daily run costs one Airtable search on a healthy index and repairs a broken or stale one. After `Insert`, `Count` and `Verify` throw
 `KB_INDEX_EMPTY` (no rows, or the table is missing), `KB_INDEX_DUPLICATED` or `KB_INDEX_INCOMPLETE` (distinct kb_id
 count different from the documents) so a failed rebuild is never silent. The owner message
 `📚 Knowledge base re-indexed: N paragraphs` is sent only for a manual run or when a rebuild changed the content.
