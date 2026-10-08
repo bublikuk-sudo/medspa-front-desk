@@ -15,7 +15,8 @@ the agent's tool is `request_cancel`: it answers `NOT_YOURS` / `NOT_FOUND` and r
 | 2 | It's the Botox on January 8 at 11 AM, booked under the name Maria Othertest. | agent reply refusing to cancel or change it; no cancel question | unchanged |
 
 **Final state.** A has no appointments and is still `active`; B's `A-TEST-D05OTHER` is still `booked`, B still `active`;
-no cancel request was recorded on B's visit (`cancel_expires_at`, `cancel_asked_at` empty); no owner notification about
+no cancel request was recorded on B's visit (`cancel_expires_at` empty) and no cancel question opened for A
+(`cancel_ask_appt_id` empty); no owner notification about
 either contact; nothing was sent to B.
 
 **Check.** On the VPS: `tests/dialogs.sh 05`.
@@ -34,7 +35,7 @@ expect regex: \b(can.?t|cannot|couldn.?t|unable to|not able to|don.?t|do not)\b[
 expect regex: \byour (own )?(contact|number|account|profile|chat|phone)
 expect no-node: Send Cancel Ask
 expect state: [.second.appts[].status] == ["booked"]
-expect state: [.second.appts[] | (.cancel_expires_at // "") + (.cancel_asked_at // "")] == [""]
+expect state: [.second.appts[] | (.cancel_expires_at // "")] == [""]
 send: It's the Botox on January 8 at 11 AM, booked under the name Maria Othertest.
 expect templates: reply
 expect lang: en
@@ -42,8 +43,9 @@ expect regex: \b(can.?t|cannot|couldn.?t|unable to|not able to|only)\b[^.]{0,80}
 expect no-node: Send Cancel Ask
 state: (.appts | length) == 0
 state: .client.status == "active"
+state: (.client.cancel_ask_appt_id // "") == ""
 state: [.second.appts[] | {appt_id, status}] == [{"appt_id": "A-TEST-D05OTHER", "status": "booked"}]
-state: [.second.appts[] | (.cancel_expires_at // "") + (.cancel_asked_at // "")] == [""]
+state: [.second.appts[] | (.cancel_expires_at // "")] == [""]
 state: .second.client.status == "active"
 state: (.owner | length) == 0 and (.second.owner | length) == 0
 state: (.second.outbox | length) == 0

@@ -89,5 +89,29 @@ THROWS('LATE_CANCEL without cancellation_hours throws (REQ)', 'LATE_CANCEL', /LA
 for (const k of ['CANCEL_PENDING', 'LATE_CANCEL_PENDING', 'CANCELLED', 'LATE_CANCEL']) {
   THROWS(k + ' without a visit (no service, no time) throws instead of sending an empty question', k, /needs "(service|when)"/, { appt: {} });
 }
+
+// ---- Fix 1 (I1): any message to the client except the cancel question itself closes an open cancel question ----
+// Clients.cancel_ask_appt_id is set by WF-1 (Mark Cancel Asked) before the question goes out. send_message is the one way out to the
+// client (WF-1, WF-5 reminders and revisits, errors), so clearing it here makes the cancel question answerable only while it is
+// the bot's last message.
+const clearLeft = ((((node('Clear Ask?').parameters || {}).conditions || {}).conditions || [])[0] || {}).leftValue;
+const clears = (template_key, fields) => { try { return new Function('$', 'return (' + String(clearLeft).replace(/^=\{\{\s*/, '').replace(/\s*\}\}$/, '') + ');')((n) => ({ first: () => ({ json: n === 'Trigger' ? { template_key } : { id: 'recC', fields } }) })); } catch (e) { return 'THROW ' + e.message; } };
+const OPEN = { client_id: 'C-test-1', cancel_ask_appt_id: 'A-1' };
+for (const k of [...Object.keys(TEMPLATES), '']) {
+  const want = !['CANCEL_PENDING', 'LATE_CANCEL_PENDING'].includes(k);
+  check('Clear Ask? ' + (k || '(free text: agent reply)') + ' with an open question -> ' + want, clears(k, OPEN) === want, clears(k, OPEN));
+}
+check('Clear Ask? false when no question is open (no write on ordinary sends)', clears('', { client_id: 'C-test-1' }) === false && clears('BOOKED', { client_id: 'C-test-1', cancel_ask_appt_id: '' }) === false, [clears('', { client_id: 'C-test-1' })]);
+check('Clear Ask? false without a Clients row', clears('ERROR', undefined) === false, clears('ERROR', undefined));
+const cl = node('Clear Ask'); const clv = ((cl.parameters || {}).columns || {}).value || {};
+check('Clear Ask: Clients update of the recipient row, cancel_ask_appt_id = "" only; retried; a failure fails the send (no error output)',
+  (cl.parameters || {}).operation === 'update' && ((cl.parameters || {}).table || {}).value === 'ATTBL:Clients' &&
+  clv.id === "={{ $('Client').first().json.id }}" && clv.cancel_ask_appt_id === '' && Object.keys(clv).sort().join() === 'cancel_ask_appt_id,id' &&
+  cl.retryOnFail === true && cl.onError === undefined, [clv, cl.onError]);
+check('wiring: Client -> Clear Ask?; true -> Clear Ask -> Appointment; false -> Appointment (before anything is sent)',
+  out0('Client') === 'Clear Ask?' && out0('Clear Ask?', 0) === 'Clear Ask' && out0('Clear Ask?', 1) === 'Appointment' && out0('Clear Ask') === 'Appointment',
+  [out0('Client'), out0('Clear Ask?', 0), out0('Clear Ask?', 1), out0('Clear Ask')]);
+check('the inserted branch cannot change what is sent: Render and Appointment read named nodes only, not $json/$input',
+  !/\$json|\$input/.test(CODE.render || '') && !/\$json/.test(String((node('Appointment').parameters || {}).filterByFormula || '')), 'Render or Appointment reads its input item');
 console.log('\nSEND_MESSAGE_STUBS passed ' + pass + ', failed ' + fail);
 process.exit(fail ? 1 : 0);

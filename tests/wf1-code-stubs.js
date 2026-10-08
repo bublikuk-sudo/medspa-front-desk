@@ -2,7 +2,7 @@
 // expressions that turn contact_id into telegram_chat_id / phone, and the cancel confirmation (two-step cancel): WF-2's
 // Guardrail/Result hand WF-1 the visit request_cancel recorded, WF-1 asks the client, and Gate routes the client's YES.
 // Runs in a Node (see tests/wf1-code-stubs.sh), which prepends:
-//   const WF = <workflows/wf1-inbound.json>;  const WF2 = <workflows/wf2-agent.json>;
+//   const WF = <workflows/wf1-inbound.json>;  const WF2 = <workflows/wf2-agent.json>;  const SM = <workflows/shared/send_message.json>;
 // No network, no n8n runtime: $input / $ / $now are stubbed. No jq and no luxon needed, so it also runs offline.
 
 const nodeIn = (wf, n) => wf.nodes.find((x) => x.name === n) || {};
@@ -311,61 +311,148 @@ T('WF-2 Result passes cancel_appt_id / cancel_verdict, blanked when the turn esc
   ev(res2('Result', 'cancel_verdict').value, { escalated: true, cancel_verdict: 'CANCEL_PENDING' }) === '' || 'wrong');
 T('WF-2 Result Escalated never asks to cancel', () => res2('Result Escalated', 'cancel_appt_id').value === '' && res2('Result Escalated', 'cancel_verdict').value === '' || 'wrong');
 
-// ---- WF-1 Pending search: the pending proposal, every reminded visit, and live visits with a cancel question ----
-T('Pending: one search, returnAll, formula for C-1', () => P('Pending').returnAll === true && P('Pending').limit === undefined &&
-  ev(P('Pending').filterByFormula, { client_id: 'C-1' }) === "AND({client_id}='C-1',OR({status}='pending',{status}='reminded',AND(OR({status}='booked',{status}='confirmed'),NOT({cancel_asked_at}=BLANK()))))" || ev(P('Pending').filterByFormula, { client_id: 'C-1' }));
-T('Pending: a hostile client_id matches nothing', () => ev(P('Pending').filterByFormula, { client_id: "C-1'" }).startsWith("AND({client_id}='__no_such_client__',") || 'wrong');
+// ---- Fix 1 (I1): the open cancel question lives on the client row, Clients.cancel_ask_appt_id ----
+// WF-1's Mark Cancel Asked sets it BEFORE the question goes out; send_message clears it before ANY other message to the client
+// goes out (its Clear Ask? / Clear Ask nodes; tests/send-message-stubs.sh checks them, SM is used here end to end). So while it
+// is set, the cancel question IS the bot's last message, whatever path (WF-1, WF-5 reminder or revisit, error) sent the others.
+const smLeft = ((((nodeIn(SM, 'Clear Ask?').parameters || {}).conditions || {}).conditions || [])[0] || {}).leftValue;
+const smClears = (template_key, cf) => ev(smLeft, {}, { Trigger: { template_key }, Client: { id: 'recC', fields: cf } }) === true;
+// one message through send_message: the client fields afterwards
+const sendVia = (template_key, cf) => (smClears(template_key, cf) ? { ...cf, cancel_ask_appt_id: '' } : cf);
+
+// Client Data passes the marker on (Gate and the Pending formula read it there)
+const clientData = (fields) => new Function('$input', '$', P('Client Data').jsCode)({}, dollar({ Normalize: { contact_id: 'tg:1', channel: 'tg', text: 'yes' }, Client: { id: 'recC', fields } }))[0].json;
+T('Client Data passes cancel_ask_appt_id on ("" when absent)', () => clientData({ client_id: 'C-1', cancel_ask_appt_id: 'A-C' }).cancel_ask_appt_id === 'A-C' && clientData({ client_id: 'C-1' }).cancel_ask_appt_id === '' || clientData({ client_id: 'C-1', cancel_ask_appt_id: 'A-C' }));
+
+// ---- WF-1 Pending search: the pending proposal and the visit of the open cancel question, one search ----
+const pf = (json) => ev(P('Pending').filterByFormula, json);
+T('Pending: one search, returnAll; the pending row and the open question\'s visit', () => P('Pending').returnAll === true && P('Pending').limit === undefined &&
+  pf({ client_id: 'C-1', cancel_ask_appt_id: 'A-C' }) === "AND({client_id}='C-1',OR({status}='pending',{appt_id}='A-C'))" &&
+  pf({ client_id: 'C-1', cancel_ask_appt_id: '' }) === "AND({client_id}='C-1',OR({status}='pending',{appt_id}='__no_such_appt__'))" || pf({ client_id: 'C-1', cancel_ask_appt_id: 'A-C' }));
+T('Pending: hostile client_id / appt id match nothing', () => pf({ client_id: "C-1'", cancel_ask_appt_id: 'A-C' }).startsWith("AND({client_id}='__no_such_client__',") &&
+  pf({ client_id: 'C-1', cancel_ask_appt_id: "A-C')" }).includes("{appt_id}='__no_such_appt__'") || 'wrong');
 
 // ---- WF-1 Gate: routing of a short reply ----
-const LAST = iso(-2 * MIN);   // the bot's last agent reply
-const gate = (kind, is_short, rows, last = LAST) => new Function('$input', '$', P('Gate').jsCode)({}, dollar({ Classify: { kind, is_short }, 'Client Data': { last_agent_reply_at: last }, Pending: rows.length ? rows.map((f, i) => ({ id: 'rec' + i, createdTime: '', fields: f })) : [{}] }))[0].json;
+const gate = (kind, is_short, rows, askId = '') => new Function('$input', '$', P('Gate').jsCode)({}, dollar({ Classify: { kind, is_short }, 'Client Data': { cancel_ask_appt_id: askId, last_agent_reply_at: iso(-1 * MIN) }, Pending: rows.length ? rows.map((f, i) => ({ id: 'rec' + i, createdTime: '', fields: f })) : [{}] }))[0].json;
 const pend = { appt_id: 'A-P', status: 'pending', summary_sent_at: iso(-10 * MIN), pending_expires_at: iso(5 * MIN) };
-const ask = (over = {}) => ({ appt_id: 'A-C', status: 'confirmed', cancel_asked_at: LAST, cancel_expires_at: iso(13 * MIN), ...over });
+const visit = (over = {}) => ({ appt_id: 'A-C', status: 'confirmed', cancel_expires_at: iso(13 * MIN), ...over });
 let gr = gate('yes', true, [pend]);
-T('Gate: YES with a pending booking only -> confirm', () => gr.route === 'confirm' && gr.cancel_appt_id === '' || gr);
-gr = gate('yes', true, [ask()]);
-T('Gate: YES with a cancel question that is the last bot message -> cancel that visit', () => gr.route === 'cancel' && gr.cancel_appt_id === 'A-C' || gr);
-gr = gate('yes', true, [pend, ask()]);
-T('Gate: both pending, the cancel question asked after the summary -> cancel (the latest question)', () => gr.route === 'cancel' && gr.cancel_appt_id === 'A-C' || gr);
-gr = gate('yes', true, [{ ...pend, summary_sent_at: iso(-1 * MIN) }, ask({ cancel_asked_at: iso(-5 * MIN) })], iso(-1 * MIN));
-T('Gate: both pending, the summary sent after the cancel question -> confirm the booking, never cancel', () => gr.route === 'confirm' && gr.cancel_appt_id === '' || gr);
-gr = gate('yes', true, [ask({ cancel_expires_at: iso(-1 * MIN) })]);
+T('Gate: YES with a pending booking and no open cancel question -> confirm', () => gr.route === 'confirm' && gr.cancel_appt_id === '' || gr);
+gr = gate('yes', true, [visit()], 'A-C');
+T('Gate: YES while the cancel question is open -> cancel that visit', () => gr.route === 'cancel' && gr.cancel_appt_id === 'A-C' || gr);
+gr = gate('yes', true, [pend, visit()], 'A-C');
+T('Gate: pending booking + open cancel question (asked last) -> cancel', () => gr.route === 'cancel' && gr.cancel_appt_id === 'A-C' || gr);
+for (const st of ['booked', 'reminded']) {
+  gr = gate('yes', true, [visit({ status: st })], 'A-C');
+  T('Gate: open question on a ' + st + ' visit -> cancel', () => gr.route === 'cancel' || gr);
+}
+gr = gate('yes', true, [visit({ cancel_expires_at: iso(-1 * MIN) })], 'A-C');
 T('Gate: YES to an expired cancel question -> agent, the visit stays', () => gr.route === 'agent' && gr.cancel_appt_id === '' || gr);
-gr = gate('yes', true, [pend, ask({ cancel_expires_at: iso(-1 * MIN) })]);
-T('Gate: YES to an expired cancel question that was the last one, with a pending booking -> agent (neither cancel nor booking)', () => gr.route === 'agent' || gr);
-gr = gate('yes', true, [ask({ cancel_asked_at: iso(-5 * MIN) })], iso(-1 * MIN));
-T('Gate: the agent replied after the cancel question -> YES does not cancel (reminder route as before)', () => gr.route === 'reminder' && gr.cancel_appt_id === '' || gr);
-gr = gate('yes', true, [ask(), { appt_id: 'A-R', status: 'reminded', reminder_sent_at: iso(-1 * MIN) }]);
-T('Gate: a reminder sent after the cancel question is the last message -> reminder route, not cancel', () => gr.route === 'reminder' && gr.cancel_appt_id === '' || gr);
-gr = gate('yes', true, [ask({ status: 'reminded', reminder_sent_at: iso(-1 * MIN) })]);
-T('Gate: the same visit reminded after the cancel question -> reminder route (the reminder flow stays)', () => gr.route === 'reminder' || gr);
-gr = gate('yes', true, [ask({ status: 'reminded', reminder_sent_at: iso(-60 * MIN) })]);
-T('Gate: a reminded visit whose reminder came BEFORE the cancel question -> cancel', () => gr.route === 'cancel' && gr.cancel_appt_id === 'A-C' || gr);
-gr = gate('no', true, [ask()]);
-T('Gate: NO to the cancel question -> agent, the visit stays', () => gr.route === 'agent' && gr.cancel_appt_id === '' || gr);
-gr = gate('other', true, [ask()]);
-T('Gate: a short other reply to the cancel question -> llm with yes_target cancel', () => gr.route === 'llm' && gr.yes_target === 'cancel' && gr.cancel_appt_id === 'A-C' || gr);
-gr = gate('other', true, [pend]);
-T('Gate: a short other reply with a pending booking -> llm with yes_target confirm', () => gr.route === 'llm' && gr.yes_target === 'confirm' && gr.cancel_appt_id === '' || gr);
-gr = gate('other', false, [ask()]);
+gr = gate('yes', true, [pend, visit({ cancel_expires_at: iso(-1 * MIN) })], 'A-C');
+T('Gate: expired cancel question that is still the last message, with a pending booking -> agent (neither cancel nor booking)', () => gr.route === 'agent' || gr);
+gr = gate('yes', true, [visit({ cancel_expires_at: undefined })], 'A-C');
+T('Gate: a visit without cancel_expires_at is never cancelled', () => gr.route === 'agent' || gr);
+gr = gate('yes', true, [pend], 'A-C');
+T('Gate: open question but its visit is no longer live (not returned) -> agent, not the booking', () => gr.route === 'agent' && gr.cancel_appt_id === '' || gr);
+gr = gate('yes', true, [visit({ status: 'cancelled' })], 'A-C');
+T('Gate: open question on a cancelled visit -> agent', () => gr.route === 'agent' || gr);
+gr = gate('yes', true, [visit({ appt_id: 'A-OTHER' })], 'A-C');
+T('Gate: only the visit the question names counts', () => gr.route === 'agent' || gr);
+// M1: a bare cancel word (Classify's NO list) answering the cancel question goes to Haiku, which decides
+gr = gate('no', true, [visit()], 'A-C');
+T('Gate (M1): a short NO-list reply ("cancel", "no", "отмена") to the open question -> llm, yes_target cancel', () => gr.route === 'llm' && gr.yes_target === 'cancel' && gr.cancel_appt_id === 'A-C' || gr);
+gr = gate('no', true, [visit({ cancel_expires_at: iso(-1 * MIN) })], 'A-C');
+T('Gate (M1): a NO-list reply to an expired question -> agent', () => gr.route === 'agent' || gr);
+gr = gate('other', true, [visit()], 'A-C');
+T('Gate: a short other reply to the open question -> llm, yes_target cancel', () => gr.route === 'llm' && gr.yes_target === 'cancel' && gr.cancel_appt_id === 'A-C' || gr);
+gr = gate('other', false, [visit()], 'A-C');
 T('Gate: a long message after the cancel question -> agent', () => gr.route === 'agent' || gr);
-gr = gate('yes', true, [ask()], '');
-T('Gate: no last_agent_reply_at -> a cancel question cannot be proven last, YES does not cancel', () => gr.route !== 'cancel' && gr.cancel_appt_id === '' || gr);
-gr = gate('yes', true, [ask({ status: 'cancelled' })]);
-T('Gate: a cancel question on a visit that is no longer live is ignored', () => gr.route === 'reminder' || gr);
-gr = gate('yes', true, [ask({ appt_id: 'A-OLD', cancel_asked_at: iso(-30 * MIN) }), ask({ appt_id: 'A-NEW' })]);
-T('Gate: an older cancel question and the last one -> the last one', () => gr.route === 'cancel' && gr.cancel_appt_id === 'A-NEW' || gr);
+gr = gate('other', true, [pend]);
+T('Gate: a short other reply with a pending booking -> llm, yes_target confirm', () => gr.route === 'llm' && gr.yes_target === 'confirm' && gr.cancel_appt_id === '' || gr);
 gr = gate('yes', true, []);
 T('Gate: YES with nothing pending -> reminder route (unchanged)', () => gr.route === 'reminder' || gr);
+gr = gate('no', true, []);
+T('Gate: NO with nothing pending -> reminder route (unchanged)', () => gr.route === 'reminder' || gr);
+gr = gate('no', true, [pend]);
+T('Gate: NO with a pending booking only -> reminder route (unchanged)', () => gr.route === 'reminder' || gr);
 gr = gate('other', false, [pend]);
 T('Gate: a long message with a pending booking -> agent (unchanged)', () => gr.route === 'agent' || gr);
+
+// ---- I1: every other message to the client closes the cancel question ----
+// Each WF-1 send node with the template key it really sends; only Send Cancel Ask keeps the question open.
+const sendNodes = WF.nodes.filter((x) => ((x.parameters || {}).workflowId || {}).value === 'WFID:send_message').map((x) => x.name).sort();
+const keyCtx = {
+  'Send Reminder Result': [{ verdict: 'CONFIRMED' }, {}], 'Send Template': [{}, { Agent: { template_key: 'ESCALATED_REPLY' } }],
+  'Send Cancel Result': [{}, { 'Cancel Visit': { verdict: 'LATE_CANCEL', appt_id: 'A-C' } }], 'Send Cancel Ask': [{}, { Agent: { cancel_verdict: 'CANCEL_PENDING' } }],
+};
+const keyOf = (n) => { const k = inputsOf(n).template_key || ''; return k.startsWith('=') ? ev(k, ...(keyCtx[n] || [{}, {}])) : k; };
+const open = { client_id: 'C-1', cancel_ask_appt_id: 'A-C' };
+const keep = sendNodes.filter((n) => !smClears(keyOf(n), open));
+T('every WF-1 send to the client except Send Cancel Ask closes the question (' + sendNodes.length + ' send nodes)', () =>
+  same(keep, ['Send Cancel Ask']) && sendNodes.length >= 16 || { keep, sendNodes: sendNodes.map((n) => n + '=' + keyOf(n)) });
+T('Send Reminder Result closes it for CONFIRMED and for CANCELLED', () => smClears(ev(inputsOf('Send Reminder Result').template_key, { verdict: 'CONFIRMED' }), open) &&
+  smClears(ev(inputsOf('Send Reminder Result').template_key, { verdict: 'CANCELLED' }), open) || 'wrong');
+T('WF-1 sends to the client only through send_message (no Telegram / WhatsApp send node)', () =>
+  WF.nodes.filter((x) => ['n8n-nodes-base.telegram', 'n8n-nodes-base.whatsApp'].includes(x.type)).length === 0 || 'direct send node');
+T('WF-5\'s REMINDER and REVISIT (sent through send_message) close it too', () => smClears('REMINDER', open) && smClears('REVISIT', open) || 'wrong');
+
+// Sequences (the reviewer's reproduction and its relatives): state = the client row; the visit A stays booked and unexpired.
+const VA = visit({ appt_id: 'A-A', status: 'booked' });
+const VB = { appt_id: 'A-B', status: 'reminded', reminder_sent_at: iso(-1 * MIN) };
+const markAsked = (cf) => ({ ...cf, cancel_ask_appt_id: ev(((P('Mark Cancel Asked').columns || {}).value || {}).cancel_ask_appt_id, {}, { 'Cancel Row': { id: 'recA', fields: { appt_id: 'A-A' } }, 'Client Data': { client_rec: 'recC' } }) });
+const rowsFor = (cf, extra = []) => (cf.cancel_ask_appt_id === 'A-A' ? [VA, ...extra] : extra);   // what Pending returns
+for (const verdict of ['CONFIRMED', 'CANCELLED']) {
+  let cf = markAsked({ client_id: 'C-1' });
+  cf = sendVia(keyOf('Send Cancel Ask'), cf);                                     // the question goes out
+  T('sequence ' + verdict + ': after the question the marker is A', () => cf.cancel_ask_appt_id === 'A-A' || cf);
+  cf = sendVia('REMINDER', cf);                                                  // WF-5 reminds B
+  let g1 = gate('yes', true, rowsFor(cf), cf.cancel_ask_appt_id);
+  T('sequence ' + verdict + ': YES after the reminder for B goes to the reminder route, not cancel', () => g1.route === 'reminder' || g1);
+  cf = sendVia(ev(inputsOf('Send Reminder Result').template_key, { verdict }), cf);   // reminder_reply answered B
+  g1 = gate('yes', true, rowsFor(cf), cf.cancel_ask_appt_id);
+  const g2 = gate('other', true, rowsFor(cf), cf.cancel_ask_appt_id);
+  T('sequence ' + verdict + ': reminder answered for B, then a bare YES / "ok" does not cancel A', () => g1.route !== 'cancel' && g2.yes_target !== 'cancel' && g1.cancel_appt_id === '' || [g1, g2]);
+}
+{
+  // the reminder send alone failing to clear would still be caught by Send Reminder Result: check each step on its own
+  let cf = markAsked({ client_id: 'C-1' });
+  cf = sendVia(ev(inputsOf('Send Reminder Result').template_key, { verdict: 'CONFIRMED' }), cf);
+  const g = gate('yes', true, rowsFor(cf, [VB]), cf.cancel_ask_appt_id);
+  T('sequence: Send Reminder Result alone closes the question', () => g.route !== 'cancel' || g);
+}
+{
+  let cf = markAsked({ client_id: 'C-1' });
+  cf = sendVia(keyOf('Send Cancel Ask'), cf);
+  cf = sendVia('PENDING_SUMMARY', cf);                                           // a later agent turn proposed a booking
+  let g = gate('yes', true, rowsFor(cf, [pend]), cf.cancel_ask_appt_id);
+  T('sequence: summary sent after the cancel question -> YES confirms the booking, not cancel', () => g.route === 'confirm' || g);
+  cf = sendVia('BOOKED', cf); cf = sendVia('BOOKED_INTAKE', cf);
+  g = gate('other', true, rowsFor(cf), cf.cancel_ask_appt_id);
+  const g2 = gate('yes', true, rowsFor(cf), cf.cancel_ask_appt_id);
+  T('sequence: booked summary confirmed, then "ok" / "yes" -> never cancel', () => g.route !== 'cancel' && g.yes_target !== 'cancel' && g2.route !== 'cancel' || [g, g2]);
+}
+for (const k of ['', 'ERROR', 'ESCALATED_HOLD', 'NON_TEXT', 'RATE_LIMIT', 'SLOT_TAKEN', 'EXPIRED', 'ALREADY_BOOKED', 'CANCELLED', 'LATE_CANCEL', 'REVISIT']) {
+  let cf = sendVia(keyOf('Send Cancel Ask'), markAsked({ client_id: 'C-1' }));
+  cf = sendVia(k, cf);
+  const g = gate('yes', true, rowsFor(cf), cf.cancel_ask_appt_id);
+  T('sequence: cancel question, then ' + (k || 'an agent reply') + ', then YES -> not cancel', () => g.route !== 'cancel' || g);
+}
+{
+  let cf = sendVia(keyOf('Send Cancel Ask'), markAsked({ client_id: 'C-1' }));
+  cf = sendVia('LATE_CANCEL_PENDING', cf);
+  const g = gate('yes', true, rowsFor(cf), cf.cancel_ask_appt_id);
+  T('sequence: the question repeated is still the question -> YES cancels', () => g.route === 'cancel' && g.cancel_appt_id === 'A-A' || g);
+}
 
 // ---- WF-1 Route and the YES-to-cancel path ----
 const routeKeys = ((P('Route').rules || {}).values || []).map((r) => r.outputKey);
 T('Route outputs: confirm, llm, reminder, agent, cancel (tests/dialog.sh log_execs maps them by index)', () => same(routeKeys, ['confirm', 'llm', 'reminder', 'agent', 'cancel']) || routeKeys);
 T('Route cancel -> Cancel Visit; agent -> Agent', () => target('Route', 4) === 'Cancel Visit' && target('Route', 3) === 'Agent' || [target('Route', 3), target('Route', 4)]);
 const lt = (yt) => tpl(P('LLM Affirmative').text, {}, { Gate: { yes_target: yt }, 'Client Data': { text: 'sure thing' } });
-T('LLM Affirmative names the question it checks (a booking or a cancellation)', () => /confirm a booking/.test(lt('confirm')) && /cancel/i.test(lt('cancel')) && !/booking/.test(lt('cancel')) && /Message: sure thing$/.test(lt('cancel')) || [lt('confirm'), lt('cancel')]);
+T('LLM Affirmative for a booking is the old prompt, unchanged', () => lt('confirm') === 'The assistant asked the user to reply YES to confirm a booking. Does the following user message mean agreement or confirmation? Reply with exactly YES or NO.\n\nMessage: sure thing' || lt('confirm'));
+T('LLM Affirmative for the cancel question (M1): "cancel" / "yes cancel" mean YES, "no" / "don\'t" mean NO', () =>
+  /cancel/i.test(lt('cancel')) && !/booking/.test(lt('cancel')) && /"cancel"/.test(lt('cancel')) && /"yes,? cancel/i.test(lt('cancel')) && /"no"/.test(lt('cancel')) && /"don'?t/i.test(lt('cancel')) &&
+  /exactly YES or NO/.test(lt('cancel')) && /Message: sure thing$/.test(lt('cancel')) || lt('cancel'));
 T('Affirmative? true -> Cancel Target?; false -> Agent', () => target('Affirmative?', 0) === 'Cancel Target?' && target('Affirmative?', 1) === 'Agent' || [target('Affirmative?', 0), target('Affirmative?', 1)]);
 T('Cancel Target? true -> Cancel Visit, false -> Confirm', () => ev(leftOf('Cancel Target?'), {}, { Gate: { yes_target: 'cancel' } }) === true &&
   ev(leftOf('Cancel Target?'), {}, { Gate: { yes_target: 'confirm' } }) === false && target('Cancel Target?', 0) === 'Cancel Visit' && target('Cancel Target?', 1) === 'Confirm' || 'wrong');
@@ -404,29 +491,31 @@ const ar = (fields) => ev(leftOf('Ask Row?'), { id: 'rec1', fields }, agentOut('
 T('Ask Row? true only for the requested visit with an unexpired request', () =>
   ar({ appt_id: 'A-C', cancel_expires_at: iso(10 * MIN) }) === true && ar({ appt_id: 'A-C', cancel_expires_at: iso(-1 * MIN) }) === false &&
   ar({ appt_id: 'A-C' }) === false && ar({ appt_id: 'A-X', cancel_expires_at: iso(10 * MIN) }) === false && ev(leftOf('Ask Row?'), {}, agentOut('A-C', 'CANCEL_PENDING')) === false || 'wrong');
-T('Ask Row? true -> Send Cancel Ask, false -> Template? (the agent\'s own text)', () => target('Ask Row?', 0) === 'Send Cancel Ask' && target('Ask Row?', 1) === 'Template?' || 'wrong');
+// M3: the marker is written BEFORE the question goes out, so the client never sees a question WF-1 does not know about
+T('M3: Ask Row? true -> Mark Cancel Asked -> Send Cancel Ask (marker first); false -> Template?', () =>
+  target('Ask Row?', 0) === 'Mark Cancel Asked' && target('Ask Row?', 1) === 'Template?' && target('Mark Cancel Asked', 0) === 'Send Cancel Ask' || [target('Ask Row?', 0), target('Mark Cancel Asked', 0)]);
+T('M3: Mark Cancel Asked failing -> Notify Failure -> ERROR, the question is never sent', () =>
+  node('Mark Cancel Asked').onError === 'continueErrorOutput' && target('Mark Cancel Asked', 1) === 'Notify Failure' && !outs('Mark Cancel Asked', 1).includes('Send Cancel Ask') || 'wrong');
+T('Mark Cancel Replied is gone (one Clients update does both)', () => !WF.nodes.some((x) => x.name === 'Mark Cancel Replied') || 'still there');
+const mca = (P('Mark Cancel Asked').columns || {}).value || {};
+T('Mark Cancel Asked: Clients row, cancel_ask_appt_id = the requested visit, last_agent_reply_at = now', () =>
+  (P('Mark Cancel Asked').table || {}).value === 'ATTBL:Clients' && P('Mark Cancel Asked').operation === 'update' &&
+  ev(mca.id, {}, { 'Client Data': { client_rec: 'recC' } }) === 'recC' &&
+  ev(mca.cancel_ask_appt_id, {}, { 'Cancel Row': { id: 'rec1', fields: { appt_id: 'A-C' } } }) === 'A-C' &&
+  /^\d{4}-\d\d-\d\dT/.test(ev(mca.last_agent_reply_at, {})) && same(Object.keys(mca).sort(), ['cancel_ask_appt_id', 'id', 'last_agent_reply_at']) || mca);
 const sca = inputsOf('Send Cancel Ask');
-T('Send Cancel Ask: template = request_cancel verdict, appt_id from the row, errors -> Notify Send Failure', () =>
+T('Send Cancel Ask: template = request_cancel verdict, appt_id from the row; success ends, errors -> Notify Send Failure', () =>
   ev(sca.template_key, {}, agentOut('A-C', 'LATE_CANCEL_PENDING')) === 'LATE_CANCEL_PENDING' &&
   ev(sca.appt_id, {}, { 'Cancel Row': { id: 'rec1', fields: { appt_id: 'A-C' } } }) === 'A-C' && sca.text === '' &&
-  target('Send Cancel Ask', 0) === 'Mark Cancel Replied' && target('Send Cancel Ask', 1) === 'Notify Send Failure' || sca);
-const mcr = (P('Mark Cancel Replied').columns || {}).value || {};
-T('Mark Cancel Replied: Clients.last_agent_reply_at = now on the client row, then Mark Cancel Asked', () =>
-  (P('Mark Cancel Replied').table || {}).value === 'ATTBL:Clients' && P('Mark Cancel Replied').operation === 'update' &&
-  ev(mcr.id, {}, { 'Client Data': { client_rec: 'recC' } }) === 'recC' && /^\d{4}-\d\d-\d\dT/.test(ev(mcr.last_agent_reply_at, {})) &&
-  target('Mark Cancel Replied') === 'Mark Cancel Asked' || mcr);
-const mca = (P('Mark Cancel Asked').columns || {}).value || {};
-T('Mark Cancel Asked: the row\'s cancel_asked_at = exactly the last_agent_reply_at just written (so Gate sees asked >= last)', () =>
-  (P('Mark Cancel Asked').table || {}).value === 'ATTBL:Appointments' && P('Mark Cancel Asked').operation === 'update' &&
-  ev(mca.id, {}, { 'Cancel Row': { id: 'rec1', fields: {} } }) === 'rec1' &&
-  ev(mca.cancel_asked_at, {}, { 'Mark Cancel Replied': { id: 'recC', fields: { last_agent_reply_at: '2030-01-01T10:00:00.000Z' } } }) === '2030-01-01T10:00:00.000Z' &&
-  outs('Mark Cancel Asked').length === 0 || mca);
-// End to end through Gate: what Mark Cancel Replied / Mark Cancel Asked write makes the next YES a cancel.
-const written = '2030-01-01T10:00:00.000Z';
-gr = new Function('$input', '$', P('Gate').jsCode)({}, dollar({ Classify: { kind: 'yes', is_short: true }, 'Client Data': { last_agent_reply_at: written },
-  Pending: [{ fields: { appt_id: 'A-C', status: 'booked', cancel_asked_at: ev(mca.cancel_asked_at, {}, { 'Mark Cancel Replied': { fields: { last_agent_reply_at: written } } }), cancel_expires_at: iso(10 * MIN) } }] }))[0].json;
-T('the markers the ask path writes make the next bare YES cancel that visit', () => gr.route === 'cancel' && gr.cancel_appt_id === 'A-C' || gr);
-T('Notify Failure is reached from Cancel Visit and Cancel Row errors (the client gets ERROR)', () => outs('Cancel Visit', 1).includes('Notify Failure') && outs('Cancel Row', 1).includes('Notify Failure') || 'wrong');
+  outs('Send Cancel Ask', 0).length === 0 && target('Send Cancel Ask', 1) === 'Notify Send Failure' || sca);
+// End to end: what Mark Cancel Asked writes, after Send Cancel Ask went through send_message, makes the next bare YES a cancel.
+{
+  const cf = sendVia(keyOf('Send Cancel Ask'), markAsked({ client_id: 'C-1' }));
+  const g = gate('yes', true, rowsFor(cf), cf.cancel_ask_appt_id);
+  T('the marker the ask path writes makes the next bare YES cancel that visit', () => g.route === 'cancel' && g.cancel_appt_id === 'A-A' || g);
+}
+T('Notify Failure is reached from Cancel Visit, Cancel Row and Mark Cancel Asked errors (the client gets ERROR)', () =>
+  outs('Cancel Visit', 1).includes('Notify Failure') && outs('Cancel Row', 1).includes('Notify Failure') && outs('Mark Cancel Asked', 1).includes('Notify Failure') || 'wrong');
 
 console.log('\nWF1_STUBS passed ' + pass + ', failed ' + fail);
 process.exit(fail ? 1 : 0);

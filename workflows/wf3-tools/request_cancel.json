@@ -167,7 +167,7 @@
     {
       "id": "9e1c0001-0009-4c00-8000-000000000009",
       "name": "Mark Requested",
-      "notes": "Only cancel_expires_at is written: the status, the calendar event and the client stay as they are until the client's YES. A new request for the same visit moves the expiry; WF-1 writes cancel_asked_at when the question has gone out.",
+      "notes": "Only cancel_expires_at is written: the status, the calendar event and the client stay as they are until the client's YES. A new request for the same visit moves the expiry; WF-1 opens the question on Clients.cancel_ask_appt_id just before it sends it.",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,

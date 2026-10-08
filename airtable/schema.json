@@ -37,7 +37,8 @@
       { "name": "notes", "type": "multilineText" },
       { "name": "last_offer_json", "type": "multilineText" },
       { "name": "last_offer_at", "type": "dateTime", "options": { "timeZone": "utc", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } },
-      { "name": "last_agent_reply_at", "type": "dateTime", "options": { "timeZone": "utc", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } }
+      { "name": "last_agent_reply_at", "type": "dateTime", "options": { "timeZone": "utc", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } },
+      { "name": "cancel_ask_appt_id", "type": "singleLineText" }
     ]},
     { "name": "Appointments", "fields": [
       { "name": "appt_id", "type": "singleLineText" },
@@ -56,7 +57,6 @@
       { "name": "revisit_invited_at", "type": "dateTime", "options": { "timeZone": "utc", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } },
       { "name": "replaces_appt_id", "type": "singleLineText" },
       { "name": "cancel_expires_at", "type": "dateTime", "options": { "timeZone": "utc", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } },
-      { "name": "cancel_asked_at", "type": "dateTime", "options": { "timeZone": "utc", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } },
       { "name": "treatment_notes", "type": "multilineText" },
       { "name": "next_visit_in", "type": "number", "options": { "precision": 0 } },
       { "name": "practitioner", "type": "singleLineText" }

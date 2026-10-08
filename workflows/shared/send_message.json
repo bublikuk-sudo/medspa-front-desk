@@ -133,6 +133,111 @@
       }
     },
     {
+      "id": "5e5d0001-0023-4c00-8000-000000000023",
+      "name": "Clear Ask?",
+      "notes": "Two-step cancel: an open cancel question (Clients.cancel_ask_appt_id, set by WF-1 just before it sends the question) is answerable only while it is the bot's LAST message. send_message is the one way out to the client (WF-1, WF-5 reminders and revisits, errors), so every message except the question itself (CANCEL_PENDING / LATE_CANCEL_PENDING) closes it here, before anything is sent. No write when no question is open.",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        770,
+        600
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "5e5d0001-1006-4c00-8000-000000000006",
+              "leftValue": "={{ !!($('Client').first().json.fields || {}).cancel_ask_appt_id && !['CANCEL_PENDING', 'LATE_CANCEL_PENDING'].includes(String($('Trigger').first().json.template_key || '')) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "5e5d0001-0024-4c00-8000-000000000024",
+      "name": "Clear Ask",
+      "notes": "Clients.cancel_ask_appt_id = '' on the recipient's row: the cancel question is no longer the bot's last message, so WF-1's Gate will not let a later YES cancel that visit. Retried; a failure fails the send (no error output): the message is not sent rather than sent with the question still open.",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        700
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "CRED",
+          "name": "MedSpa Airtable"
+        }
+      },
+      "parameters": {
+        "authentication": "airtableTokenApi",
+        "resource": "record",
+        "operation": "update",
+        "base": {
+          "__rl": true,
+          "value": "ATBASE",
+          "mode": "id"
+        },
+        "table": {
+          "__rl": true,
+          "value": "ATTBL:Clients",
+          "mode": "id"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "id": "={{ $('Client').first().json.id }}",
+            "cancel_ask_appt_id": ""
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": true,
+              "removed": false
+            },
+            {
+              "id": "cancel_ask_appt_id",
+              "displayName": "cancel_ask_appt_id",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
       "id": "5e5d0001-0005-4c00-8000-000000000005",
       "name": "Appointment",
       "type": "n8n-nodes-base.airtable",
@@ -722,6 +827,35 @@
       ]
     },
     "Client": {
+      "main": [
+        [
+          {
+            "node": "Clear Ask?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clear Ask?": {
+      "main": [
+        [
+          {
+            "node": "Clear Ask",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Appointment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clear Ask": {
       "main": [
         [
           {

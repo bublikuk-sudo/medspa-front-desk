@@ -639,15 +639,18 @@ the model; `appt_id` from find_client's `upcoming`. It never cancels:
 
 What happens next is WF-1's (stub-tested in `tests/wf1-code-stubs.sh`, live in dialog 04): WF-2's Guardrail hands WF-1 the
 visit of the last `CANCEL_PENDING` / `LATE_CANCEL_PENDING` of the turn; WF-1 reads the row back (`Cancel Row`: this
-client's, live, request unexpired), sends the `CANCEL_PENDING` / `LATE_CANCEL_PENDING` template instead of the agent's
-text, writes `Clients.last_agent_reply_at` and then `Appointments.cancel_asked_at` = exactly that value. A bare YES (or a
-short phrase Haiku reads as YES) while that question is the bot's last message and the request is unexpired runs
-`cancel_booking` without the agent and sends the `CANCELLED` / `LATE_CANCEL` template.
+client's, live, request unexpired), opens the question on the client row (`Mark Cancel Asked`:
+`Clients.cancel_ask_appt_id` = the visit, `last_agent_reply_at` = now) and only then sends the `CANCEL_PENDING` /
+`LATE_CANCEL_PENDING` template instead of the agent's text. send_message clears `cancel_ask_appt_id` before ANY other
+message to that client goes out (fix 1: agent replies, summaries, booking and reminder results, WF-5 reminders and
+revisits, errors), so the question is open exactly while it is the bot's last message. Then a bare YES (or any short reply,
+a bare "cancel" included, that Haiku reads as YES) with the request unexpired runs `cancel_booking` without the agent and
+sends the `CANCELLED` / `LATE_CANCEL` template.
 
 | case | why |
 |---|---|
-| `rcancel_free` | client 1's real booking at 12:00 on 2030-01-07: `CANCEL_PENDING <appt_id>`; the row is still `booked` with the same `calendar_event_id`, `cancel_expires_at` is set and in the future, `cancel_asked_at` empty, the event is still there (`EVENTS 1`), the client stays `active`, no owner message |
-| `rcancel_late` | a `confirmed` visit 3 hours ahead (no event): `LATE_CANCEL_PENDING A-TEST-LATE`; still `confirmed` with `cancel_expires_at` set, the client stays `new` (not flagged), no owner message |
+| `rcancel_free` | client 1's real booking at 12:00 on 2030-01-07: `CANCEL_PENDING <appt_id>`; the row is still `booked` with the same `calendar_event_id`, `cancel_expires_at` is set and in the future, the client's `cancel_ask_appt_id` empty (the tool opens no question), the event is still there (`EVENTS 1`), the client stays `active`, no owner message |
+| `rcancel_late` | a `confirmed` visit 3 hours ahead (no event): `LATE_CANCEL_PENDING A-TEST-LATE`; still `confirmed` with `cancel_expires_at` set, the client stays `new` (not flagged) with an empty `cancel_ask_appt_id`, no owner message |
 | `rcancel_not_yours` | client 2 asks for client 1's booked `A-TEST-RC1`: `NOT_YOURS`, the row has no cancel fields |
 | `rcancel_not_found` | `A-NOPE` does not exist: `NOT_FOUND` |
 | `rcancel_invalid_id` | `A-TEST-RC1'` is not a plain appt_id: `NOT_FOUND` with `appt_id` `""`, the client's own `A-TEST-RC1` untouched |

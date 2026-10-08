@@ -17,8 +17,8 @@ notifies the owner.
 
 | # | Client writes | Expected reaction | Expected state |
 |---|---|---|---|
-| 1 | Hi, I need to cancel my appointment today, sorry. | `LATE_CANCEL_PENDING` only (the agent called `request_cancel`; its own text is replaced): the visit, "less than 24 hours", "late cancellation", "Reply YES to cancel"; nothing cancelled | still `confirmed`, the event still there, `cancel_asked_at` set, no owner message about a cancellation |
-| 2 | Yes, please cancel it. | `LATE_CANCEL` only: short non-yes/no reply -> Haiku reads it as YES -> `Cancel Visit` (cancel_booking), no agent | `late_cancel`, client `flagged`, no event, one `LATE cancellation` owner message |
+| 1 | Hi, I need to cancel my appointment today, sorry. | `LATE_CANCEL_PENDING` only (the agent called `request_cancel`; its own text is replaced): the visit, "less than 24 hours", "late cancellation", "Reply YES to cancel"; nothing cancelled | still `confirmed`, the event still there, the question open (`Clients.cancel_ask_appt_id` = the visit), no owner message about a cancellation |
+| 2 | Yes, please cancel it. | `LATE_CANCEL` only: short non-yes/no reply -> Haiku reads it as YES -> `Cancel Visit` (cancel_booking), no agent | `late_cancel`, client `flagged`, no event, one `LATE cancellation` owner message, the question closed (the `LATE_CANCEL` send cleared the marker) |
 | 3 | What is your cancellation policy? | agent reply with the 24-hour rule from `search_knowledge` | — |
 
 **Final state.** The appointment `late_cancel`; Clients `flagged`; no calendar event of the client left; exactly one
@@ -43,7 +43,7 @@ expect regex: late cancellation
 expect regex: reply yes to cancel
 expect state: [.appts[].status] == ["confirmed"]
 expect state: (.events | length) == 1
-expect state: [.appts[] | (.cancel_asked_at // "") != ""] == [true]
+expect state: (.client.cancel_ask_appt_id // "") == .appts[0].appt_id
 expect state: [.owner[] | select(test("cancel"; "i"))] | length == 0
 send: Yes, please cancel it.
 expect templates: LATE_CANCEL
@@ -56,6 +56,7 @@ expect regex: \b24 hours\b
 expect state: [.appts[].status] == ["late_cancel"]
 expect state: .client.status == "flagged"
 expect state: (.events | length) == 0
+expect state: (.client.cancel_ask_appt_id // "") == ""
 expect owner: LATE cancellation
 send: What is your cancellation policy?
 expect templates: reply
@@ -68,4 +69,5 @@ state: .client.status == "flagged"
 state: (.events | length) == 0
 state: [.owner[] | select(test("LATE cancellation"))] | length == 1
 state: [.outbox[] | .template_key] | index("LATE_CANCEL_PENDING") != null and index("LATE_CANCEL") != null
+state: (.client.cancel_ask_appt_id // "") == ""
 ```

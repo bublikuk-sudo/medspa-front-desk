@@ -94,12 +94,13 @@ Airtable base `MedSpa Front Desk` (`airtable/schema.json`):
   `deposit_required`, `active`.
 - **Clients** (one person, several channels): `client_id`, `name`, `phone`, `telegram_chat_id`, `email`, `language`,
   `first_seen`, `last_visit`, `status` (`new | active | flagged | escalated`), `intake_completed`, `notes` (written by
-  the clinic, read by the agent), `last_offer_json`, `last_offer_at`, `last_agent_reply_at`.
+  the clinic, read by the agent), `last_offer_json`, `last_offer_at`, `last_agent_reply_at`, `cancel_ask_appt_id` (the
+  open cancel question; send_message clears it on any other message to the client).
 - **Appointments** (one row per visit, life cycle in one field): `appt_id`, links `client` and `service` plus their
   text ids `client_id` and `service_id`, `start_iso`, `end_iso`, `start_dt`, `status` (`pending → booked → reminded →
   confirmed | cancelled | late_cancel | no_show | done`), `calendar_event_id`, `created_via`, `pending_expires_at`,
   `summary_sent_at`, `reminder_sent_at`, `confirmed_at`, `revisit_invited_at`, `replaces_appt_id`,
-  `cancel_expires_at`, `cancel_asked_at` (the two-step cancel), and the
+  `cancel_expires_at` (the two-step cancel), and the
   practitioner's fields `treatment_notes`, `next_visit_in`, `practitioner`.
 - **Knowledge** (the clinic's document, one paragraph per row): `kb_id`, `topic`, `text`, `updated_at`.
 
