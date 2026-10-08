@@ -117,8 +117,9 @@ event of the day whose description looked like an appt_id, which could have reac
 
 ## Index: which spec point each case closes
 
-Level 1 is "each tool on its own with fixed inputs" (spec, section Testing, point 1). The suite is 97 cases and is
-green twice in a row (log: `tests/dialog-runs/2026-10-03-level1.md`). Every case is self-sufficient: it builds its own
+Level 1 is "each tool on its own with fixed inputs" (spec, section Testing, point 1). The suite is 97 cases; its last
+full run, 2026-10-08, passed 97 of 97 (log: `tests/dialog-runs/2026-10-08-level1.md`). The 96 cases before
+`escalate_already_escalated` were green twice in a row on 2026-10-03 (log: `tests/dialog-runs/2026-10-03-level1.md`). Every case is self-sufficient: it builds its own
 state in `setup`, can be run alone (`tests/tool-cases.sh <name>`) and removes its test data in `teardown`. The last row,
 `final_cleanup`, leaves the base and the calendar empty of test data. The per-case details are in the tool sections
 below; this table only says which spec point the cases of a tool close.
