@@ -37,10 +37,21 @@ Every account is the clinic's, registered on the clinic's card (see "Handover" b
 
 ### 1. Accounts and base (5 min)
 
-- [ ] Collect, into `deploy/secrets.env` on the server (names in `deploy/secrets.env.example`): the Anthropic, OpenAI,
-      Airtable, Telegram and Meta values, `GOOGLE_CALENDAR_ID`, `OWNER_TELEGRAM_CHAT_ID`, `OWNER_WHATSAPP_NUMBER`,
-      `WHATSAPP_FROM_DISPLAY` in E.164 without spaces (`secrets.env` is sourced by bash; spaces or brackets break every
-      script), and a random `TEST_KEY`.
+- [ ] Collect the values for `deploy/secrets.env` (names as in `deploy/secrets.env.example`; the file itself is
+      written on the server in step 2). Keep them in the clinic's password manager meanwhile, never in the repo or a chat:
+  - `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`;
+  - `AIRTABLE_PAT`, `AIRTABLE_WORKSPACE_ID` (where `airtable-schema.sh` creates the base), `AIRTABLE_BASE_ID` (empty
+    on the scripted path, see below);
+  - `TELEGRAM_BOT_TOKEN`, `OWNER_TELEGRAM_CHAT_ID`;
+  - `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_BUSINESS_ACCOUNT_ID` (the WABA id), `WHATSAPP_PHONE_NUMBER_ID`,
+    `WHATSAPP_FROM_DISPLAY` (the sender number in E.164, no spaces: `secrets.env` is sourced by bash, and spaces or
+    brackets break every script), `META_APP_ID`, `META_APP_SECRET`;
+  - `GOOGLE_CALENDAR_ID`;
+  - `POSTGRES_PASSWORD`: generate it now; the same value goes into `deploy/.env` in step 2 (the n8n Postgres
+    credential is created from `secrets.env`, the database from `.env`, so they must match);
+  - `TEST_KEY`: a random string;
+  - `N8N_HOST` (`<your-domain>`) now, `N8N_API_KEY` after n8n is up (step 2);
+  - `OWNER_WHATSAPP_NUMBER`: optional, used only for manual template tests; no script reads it.
 - [ ] Airtable base, either way:
   - scripted (the path the template is built on): leave `AIRTABLE_BASE_ID` empty and run
     `scripts/airtable-schema.sh` in step 4; it creates the base and five tables and writes the ids;
@@ -52,8 +63,9 @@ Every account is the clinic's, registered on the clinic's card (see "Handover" b
 ### 2. Server (5 min)
 
 - [ ] Copy `deploy/` to `/opt/medspa/deploy` on the server. Create `deploy/.env` from `deploy/.env.example`:
-      `N8N_HOST=<your-domain>`, `N8N_VERSION=2.41.5`, a generated `POSTGRES_PASSWORD` and `N8N_ENCRYPTION_KEY`,
-      `OWNER_TELEGRAM_CHAT_ID`. Create `deploy/secrets.env` (step 1). Both files mode 600, never in git.
+      `N8N_HOST=<your-domain>`, `N8N_VERSION=2.41.5`, `POSTGRES_PASSWORD` (the value from step 1), a generated
+      `N8N_ENCRYPTION_KEY`, `OWNER_TELEGRAM_CHAT_ID`. Create `deploy/secrets.env` with the values from step 1. Both
+      files mode 600, never in git.
 - [ ] `cd /opt/medspa/deploy && docker compose up -d`. Check `https://<your-domain>/healthz` answers ok.
 - [ ] In the n8n UI: create the owner account, then an API key (Settings → n8n API); put it in `secrets.env` as
       `N8N_API_KEY`, and `N8N_HOST` there too.
@@ -125,7 +137,13 @@ What changes per client: one Settings row, the Services and Knowledge tables, an
 - [ ] Optional full regression on the clinic's server: `medspa-front-desk/scripts/remote.sh 'tests/tool-cases.sh'`.
       It uses test contacts and 2030 dates and cleans up after itself, but the owner receives real Telegram alerts
       during the run.
-- [ ] Marketing consent: the clinic collects opt-in for revisit invitations at booking before revisits are relied on.
+- [ ] **Revisits are on as soon as data allows; there is no switch and no consent check.** WF-5 sends the revisit
+      invitation (the MARKETING template on WhatsApp) to every client with a `done` visit whose
+      `Appointments.next_visit_in` is above 0, once that many days have passed. Until the clinic collects marketing
+      opt-in and a consent field exists, keep revisits off: either the practitioners leave `Appointments.next_visit_in`
+      empty, or set `"disabled": true` on the `Due Revisits` node in `workflows/wf5-reminders.json`, commit and push
+      (a disabled node passes the Settings row on, which has no `appt_id`, so `Has Appt? 3` stops the branch; not yet
+      exercised).
 - [ ] Spend limits confirmed on Anthropic and OpenAI; Airtable plan confirmed paid.
 
 ## Handover (about 15 minutes, done by the clinic)
@@ -145,9 +163,24 @@ At handover the clinic takes every key over. Names only; never send values.
 
 Then:
 
-- [ ] Re-run `scripts/n8n-credentials.sh` with the new values. It skips credentials already listed in
-      `deploy/credentials.map.json`, so remove their entries first (or edit the credentials in the n8n UI).
-- [ ] Re-authorise `MedSpa Google Calendar` in the n8n UI with the clinic's Google account.
+- [ ] **Edit each credential in place** in the n8n UI (Credentials → open `MedSpa Anthropic`, `MedSpa OpenAI`,
+      `MedSpa Airtable`, `MedSpa Telegram`, `MedSpa WhatsApp`, `MedSpa WhatsApp Trigger`, `MedSpa Test Key` → paste the
+      new value → Save). The credential ids stay the same, so every workflow stays bound to them. Why not re-run
+      `scripts/n8n-credentials.sh`: it skips every name already in `deploy/credentials.map.json`, and if you delete the
+      entries it creates NEW credentials with new ids while the pushed workflows still point at the old ones, which
+      hold the revoked keys.
+- [ ] Update `deploy/secrets.env` on the server with the same new values, so the scripts stay in sync (`N8N_API_KEY`
+      and `TEST_KEY` are read by the scripts and tests directly; the others are what a later re-create would use).
+- [ ] Re-register the webhooks with the new Telegram token and Meta app secret: deactivate and re-activate
+      `wf1-inbound`, `medspa-front-desk/scripts/remote.sh 'scripts/n8n-push.sh workflows/wf1-inbound.json --deactivate
+      && scripts/n8n-push.sh workflows/wf1-inbound.json --activate'`. Deactivation removes the Meta app subscription and
+      activation registers it and the Telegram webhook again; the bot is offline for those seconds.
+- [ ] Alternative, if you prefer re-creating: remove the rotated credentials' entries from
+      `deploy/credentials.map.json`, re-run `scripts/n8n-credentials.sh` (new ids are written to the map), run
+      `medspa-front-desk/scripts/remote.sh 'scripts/push-all.sh'` (it re-pushes every workflow, binding credentials
+      by name to the ids in the map, and re-activates the trigger workflows), check `push-all done`, then delete the
+      old credentials in the n8n UI.
+- [ ] Re-authorise `MedSpa Google Calendar` in the n8n UI with the clinic's Google account (in place; same id).
 - [ ] Change the n8n owner password; remove the developer's n8n user, if any.
 - [ ] Remove the developer from Airtable, the Google Cloud project, Meta Business (system users and people), the
       Hetzner project, and the developer's SSH key from the server.

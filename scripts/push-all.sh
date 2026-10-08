@@ -20,6 +20,9 @@ cd "$(dirname "$0")/.."
 # half-finished file sits in somebody's working tree would replace the live workflow.
 [ "${PUSH_ALL_CHECKED:-}" = "1" ] || { echo "push-all.sh: run it via medspa-front-desk/scripts/remote.sh (it checks the working tree is committed first)" >&2; exit 1; }
 source deploy/secrets.env
+# Fresh server: nothing has written these yet, and the jq reads below would abort under set -e (same guard as n8n-push.sh).
+[ -f deploy/workflow-ids.json ]     || echo '{}' > deploy/workflow-ids.json
+[ -f deploy/credentials.map.json ]  || echo '{}' > deploy/credentials.map.json
 order=(
   workflows/shared/notify_owner.json
   workflows/wf6-error-handler.json

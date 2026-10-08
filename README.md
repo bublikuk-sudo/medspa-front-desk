@@ -31,7 +31,8 @@ One VPS, Docker Compose: n8n 2.41.5, Postgres 16 with pgvector, Caddy for HTTPS.
 ```
 WF-1  Inbound     Telegram Trigger ─┐
                   WhatsApp Trigger ─┼→ Normalize {channel, contact_id, text} → rate limit → client lookup
-                  Test Inbound* ────┘  → deterministic gates, before any model:
+                  Test Inbound* ────┘  → language detection (Haiku), only for a client with no language yet
+                                       → deterministic gates, before the agent:
                                            YES to a live pending summary → confirm_booking
                                            yes/no answering a reminder   → reminder_reply
                                            client already escalated      → "a team member will contact you"
@@ -62,8 +63,8 @@ Shared            send_message (template, translation, channel formatting, Whats
 \* filled by n8n from the incoming message, never by the model.
 
 **The client confirms, not the model.** The agent has no `confirm` tool. `propose_booking` writes a `pending` row and
-builds the summary from that row ("Botox (30 min) — Mon, Jan 7, 10:00 AM. Reply YES to confirm."). WF-1 sends that
-summary in place of whatever the agent wrote. The client's next message is checked by WF-1 before the agent sees it:
+returns `PENDING <appt_id>`. WF-1 then discards whatever the agent wrote and has `send_message` render the
+`PENDING_SUMMARY` template from that row ("Botox (30 min) — Mon, Jan 7, 10:00 AM. Reply YES to confirm."). The client's next message is checked by WF-1 before the agent sees it:
 if a live `pending` row exists and the text is a confirmation (a word list per language, then a short Haiku check for
 other short phrasings), n8n re-checks the calendar, creates the event and moves the row to `booked`. Any other text
 goes to the agent and the pending row expires after `pending_ttl_min`. The service can only be an existing
@@ -96,7 +97,7 @@ visit): [docs/airtable-interface.md](docs/airtable-interface.md).
 ## What we deliberately do not store, and why
 
 - **No medical questionnaire.** Allergies, medication, pregnancy and diagnoses are special-category health data. The
-  bot never asks for them, and if a client volunteers them it does not repeat them back. On the first booking the client
+  agent is instructed never to ask for them and not to repeat them back if a client volunteers them. On the first booking the client
   gets a link to the clinic's own intake and consent form (`Settings.intake_form_url`; in a real deployment the clinic's
   EMR form). The clinic ticks `Clients.intake_completed`; the answers live in the EMR, not in Airtable or the chat.
 - **Short-lived run logs.** n8n stores every node's input and output for every run, including message texts and
@@ -104,8 +105,10 @@ visit): [docs/airtable-interface.md](docs/airtable-interface.md).
 - **Calendar events without attendees.** The event is `{service} — {client name}` with the `appt_id` as description.
   No attendee is ever added, so Google never emails the client an invite (the earlier Make.com bot did exactly that).
   The client hears about the booking from the bot.
-- **Keys in two places only**: n8n credentials on the server and the git-ignored `deploy/secrets.env`. Workflow JSON
-  refers to credentials by name.
+- **Secrets only on the server, never in git.** `deploy/secrets.env` holds the API keys and tokens the scripts use;
+  `deploy/.env` holds `POSTGRES_PASSWORD` and `N8N_ENCRYPTION_KEY`; n8n's credential store (encrypted with that key)
+  holds the copies the workflows use, plus the Google OAuth client secret and tokens, which exist only there. Both
+  files are git-ignored; workflow JSON refers to credentials by name.
 
 **HIPAA / BAA: what a real US deployment adds** (this template does not claim any of it):
 
@@ -119,7 +122,8 @@ visit): [docs/airtable-interface.md](docs/airtable-interface.md).
 What an EU deployment needs. This is a checklist, not legal advice.
 
 - **Data and where it lives.** Airtable: client name, phone or Telegram id, language, status, notes, appointments.
-  Google Calendar: service, client name, time. Postgres on the server: the conversation history per contact
+  Google Calendar: service, client name, time; when the client has no name yet, the event title falls back to the
+  `contact_id`, which is a phone number or a Telegram id. Postgres on the server: the conversation history per contact
   (`n8n_chat_histories`, read by the agent; the template has no retention job for it yet), run logs (7 days), the
   knowledge-base index, rate-limit counters. Anthropic: message texts in every agent, translation and YES-check call.
   OpenAI: knowledge-base paragraphs and client questions, for embeddings only.
@@ -127,8 +131,12 @@ What an EU deployment needs. This is a checklist, not legal advice.
 - **Roles.** The clinic is the controller. The developer is a processor while they have access: a DPA (Art. 28) with
   technical and organisational measures (TOMs). If the developer works from outside the EU/EEA, Standard Contractual
   Clauses as well.
-- **Marketing consent.** The revisit invitation is sent with a WhatsApp template that Meta classified as MARKETING;
-  the clinic collects opt-in at booking. The template has no consent field yet: add one before switching revisits on.
+- **Marketing consent: revisits are not switchable.** WF-5 sends the revisit invitation (a WhatsApp template Meta
+  classified as MARKETING) to every client whose visit is `done` with `Appointments.next_visit_in` > 0, once that many
+  days have passed. There is no consent check and no on/off setting. Until a consent field exists, keep revisits off
+  in one of two ways: leave `Appointments.next_visit_in` empty (the practitioner's field; the WF-5 search requires a
+  value above 0), or disable the `Due Revisits` node in `workflows/wf5-reminders.json` and push it. The clinic
+  collects opt-in at booking before revisits are switched on.
 - **Privacy notice.** The clinic's patient privacy notice names the AI assistant and the processors above.
 - **AI disclosure.** The bot tells a new client in its first reply that it is the clinic's AI assistant, and answers
   truthfully when asked (EU AI Act Art. 50).
@@ -171,27 +179,32 @@ medspa-front-desk/scripts/remote.sh 'scripts/push-all.sh'          # every workf
 ```
 
 The Google Calendar credential is the ninth and is connected in the n8n UI (OAuth). The 30 minutes assume the accounts
-already exist; Meta template approval and Google app publishing take longer and are listed as lead-time items.
+already exist; Meta template approval and Google app publishing take longer and are listed as lead-time items. The
+timings are targets: a complete deployment on a fresh server has not been timed end to end yet.
 
 ## Handover: who owns what
 
 Every account is registered by the clinic, on the clinic's card: Hetzner, Anthropic, OpenAI, Meta Business (WhatsApp
 Business Account), Airtable, Google, and the Telegram bot (transferred through @BotFather). The developer is invited
 with scoped access (an Airtable token for one base, a Meta system user with WhatsApp permissions only, spend limits on
-the paid keys) and never holds the clinic's passwords. At handover the clinic rotates every key in
-`deploy/secrets.env`, re-runs `scripts/n8n-credentials.sh`, re-authorises Google, and removes the developer's
-invitations; the onboarding checklist lists each secret and where it is issued. Because keys live in exactly two
-places, the clinic can check this itself. The developer keeps the reusable template; the clinic gets its configuration
+the paid keys) and never holds the clinic's passwords. At handover the clinic rotates every key: it edits each n8n
+credential in place with the new value (so the workflows stay bound to it), updates `deploy/secrets.env` to match,
+re-authorises Google, and removes the developer's invitations; the onboarding checklist lists each secret and where
+it is issued. Because every secret sits in a known place on the server (`deploy/secrets.env`, `deploy/.env`, n8n's
+credential store) and none is in git, the clinic can check this itself. The developer keeps the reusable template; the clinic gets its configuration
 and a licence (see the contract checklist in the onboarding document).
 
 ## Running costs
 
 - **Claude (agent).** Measured on the 2026-10-05 dialog run (run 1, 12 dialogs): 70 agent executions, 138 model calls,
   549,526 input and 13,522 output tokens on `claude-opus-5`. That is about 7,850 input and 193 output tokens per client
-  message that reaches the agent (549,526 / 70 and 13,522 / 70). Multiply by Anthropic's current price for the model.
-  Translation, language detection and the YES check (Haiku) are not in these numbers.
-- **Claude (knowledge gate).** About 0.0011 USD per knowledge question (901 input and 46.9 output tokens per call on
-  average, priced at remembered Haiku 4.5 rates, not an invoice).
+  message that reaches the agent (549,526 / 70 and 13,522 / 70). At Anthropic's published `claude-opus-5` price, $5
+  per million input and $25 per million output tokens (platform.claude.com/docs/en/about-claude/pricing, checked
+  2026-10-08), that is about $0.044 per agent answer: 7,850 × $5 / 1M ≈ $0.039 plus 193 × $25 / 1M ≈ $0.005, at the
+  base input price with no caching discount. Translation, language detection and the YES check (Haiku) are not in
+  these numbers.
+- **Claude (knowledge gate).** About 0.0011 USD per knowledge question: 901 input and 46.9 output tokens per call on
+  average, at Haiku 4.5's $1 / $5 per million (same pricing page). An estimate from measured tokens, not an invoice.
 - **OpenAI embeddings.** Negligible: one full re-index of the 14 demo paragraphs is 856 tokens of
   `text-embedding-3-small`.
 - **Meta WhatsApp.** Per-message prices for Germany from third-party rate tables: Marketing ≈ €0.113, Utility
@@ -210,8 +223,8 @@ and a licence (see the contract checklist in the onboarding document).
 - **Level 1, tools** (`tests/tool-cases.sh`, cases in `tests/tool-cases.tsv`, described in `tests/tool-cases.md`):
   every sub-workflow called alone with fixed inputs through a key-protected test harness, compared against a regular
   expression; each case builds and removes its own data. 97 cases: 97 passed on 2026-10-08
-  (`tests/dialog-runs/2026-10-08-level1.md`); the 96 cases before the last one was added passed twice in a row on
-  2026-10-03 (`tests/dialog-runs/2026-10-03-level1.md`). Code nodes also have stub suites (`tests/*-stubs.sh`).
+  (`tests/dialog-runs/2026-10-08-level1.md`); the 96 cases before `escalate_already_escalated` was added passed twice
+  in a row on 2026-10-03 (`tests/dialog-runs/2026-10-03-level1.md`). Code nodes also have stub suites (`tests/*-stubs.sh`).
 - **Level 2, dialogs** (`tests/dialogs.sh`, scripts in `tests/dialogs/`): 12 end-to-end dialogs through the real WF-1,
   in Telegram and WhatsApp payload formats (dialogs 09 and 10 run once), 22 runs per pass. A key-protected test inbound
   feeds the same `Normalize` as the real triggers; `send_message` writes outbound messages for test contacts to a
@@ -258,6 +271,8 @@ silent for everyone; here a workflow that throws stays active, the owner gets an
 - An exhausted Anthropic credit reaches the owner as "Bad request - please check your parameters"; a fix that passes
   the real cause through is planned.
 - The conversation history in Postgres has no retention job yet.
+- No consent flag for REVISIT: WF-5 sends the MARKETING revisit template to every client with a `done` visit and
+  `next_visit_in` > 0. Keep `next_visit_in` empty or disable `Due Revisits` until a consent field exists (see GDPR).
 - `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`: Code nodes can read the environment, including the encryption key and database
   password. Run one clinic per instance.
 
