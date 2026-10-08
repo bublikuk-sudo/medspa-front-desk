@@ -4,7 +4,7 @@
     {
       "id": "5a0e0017-0001-4c00-8000-000000000001",
       "name": "Daily",
-      "notes": "Once a day at 07:05 UTC (GENERIC_TIMEZONE=UTC): 08:05 in Berlin in winter (CET), 09:05 in summer (CEST), before the clinic opens. Once a day for the Airtable Free plan (1,000 API calls a month per workspace): one run is 5 searches when nothing is due.",
+      "notes": "Once a day at 07:05 UTC (GENERIC_TIMEZONE=UTC): 08:05 in Berlin in winter (CET), 09:05 in summer (CEST), before the clinic opens. Once a day for the Airtable Free plan (1,000 API calls a month per workspace): one run is 5 searches when nothing is due. The interval (24 h) is also written into Due Reminders' window (reminder_hours_before + 24): change both together.",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.4,
       "position": [0, 300],
@@ -62,7 +62,7 @@
     {
       "id": "5a0e0017-0004-4c00-8000-000000000004",
       "name": "Due Reminders",
-      "notes": "Booked, start inside the next reminder_hours_before hours, and booked at least that many hours ahead: a client who books a visit inside the reminder window is not sent 'Reply YES to confirm' an hour later.",
+      "notes": "Booked, start inside the next reminder_hours_before + 24 hours, and booked at least reminder_hours_before hours ahead. The + 24 is the Daily trigger's interval: the run the day before reminds the visit (BOOKED says 'a reminder the day before'); keep it equal to the schedule. A client who books a visit inside reminder_hours_before is not sent 'Reply YES to confirm' later.",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
@@ -79,7 +79,7 @@
         "operation": "search",
         "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
         "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
-        "filterByFormula": "={{ \"AND({status}='booked',IS_AFTER({start_dt},NOW()),IS_BEFORE({start_dt},DATEADD(NOW(),\" + Number($json.fields.reminder_hours_before) + \",'hours')),DATETIME_DIFF({start_dt},CREATED_TIME(),'hours')>=\" + Number($json.fields.reminder_hours_before) + \")\" }}",
+        "filterByFormula": "={{ \"AND({status}='booked',IS_AFTER({start_dt},NOW()),IS_BEFORE({start_dt},DATEADD(NOW(),\" + (Number($json.fields.reminder_hours_before) + 24) + \",'hours')),DATETIME_DIFF({start_dt},CREATED_TIME(),'hours')>=\" + Number($json.fields.reminder_hours_before) + \")\" }}",
         "returnAll": true,
         "options": {}
       }
@@ -529,7 +529,7 @@
     {
       "id": "5a0e0017-0016-4c00-8000-000000000016",
       "name": "Orphan Alert",
-      "notes": "One alert item listing every expired pending row that still has a calendar event; key = 'orphan:' + the SORTED id list, so the same rows are announced once per 24 h by Dedupe Alerts.",
+      "notes": "One alert item listing every expired pending row that still has a calendar event; key = 'orphan:' + the SORTED id list, so the same rows are announced once per daily run (20 h dedupe) by Dedupe Alerts.",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [660, 640],
@@ -618,7 +618,7 @@
     {
       "id": "5a0e0017-0031-4c00-8000-000000000031",
       "name": "Alert Client 2",
-      "notes": "Consenting Clients error output: the one consent search of this run failed (after its retry). Nothing was sent or marked, so every due visit is simply due again on the next run. One alert per run (key client2:consent, deduplicated for 24 h).",
+      "notes": "Consenting Clients error output: the one consent search of this run failed (after its retry). Nothing was sent or marked, so every due visit is simply due again on the next run. One alert per run (key client2:consent, deduplicated for 20 h).",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [1100, 1060],
@@ -631,14 +631,14 @@
     {
       "id": "5a0e0017-0032-4c00-8000-000000000032",
       "name": "Dedupe Alerts",
-      "notes": "The only way to the owner. At most one alert per key per 24 h, kept in the workflow static data (persisted for production runs - Daily and Run Now - not for editor test runs). The send/mark itself is still retried on every run; only the alert is throttled.",
+      "notes": "The only way to the owner. At most one alert per key per 20 h (less than the 24 h between daily runs, so each daily run alerts once), kept in the workflow static data (persisted for production runs - Daily and Run Now - not for editor test runs). The send/mark itself is still retried on every run; only the alert is throttled.",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [2000, 500],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const sd = $getWorkflowStaticData('global');\nconst now = Date.now(), DAY = 24 * 3600 * 1000;\nconst seen = sd.alertSeen || {};\nfor (const k of Object.keys(seen)) if (!(now - seen[k] < DAY)) delete seen[k];\nconst out = [];\nfor (const it of $input.all()) {\n  const { key, text } = it.json || {};\n  if (!key || !text || seen[key]) continue;\n  seen[key] = now;\n  out.push({ json: { text, key } });\n}\nsd.alertSeen = seen;\nreturn out;"
+        "jsCode": "const sd = $getWorkflowStaticData('global');\n// 20 h, shorter than the 24 h between two daily runs: each daily run alerts once for a lasting failure, while repeated Run Nows on the same day stay deduplicated.\nconst now = Date.now(), DAY = 20 * 3600 * 1000;\nconst seen = sd.alertSeen || {};\nfor (const k of Object.keys(seen)) if (!(now - seen[k] < DAY)) delete seen[k];\nconst out = [];\nfor (const it of $input.all()) {\n  const { key, text } = it.json || {};\n  if (!key || !text || seen[key]) continue;\n  seen[key] = now;\n  out.push({ json: { text, key } });\n}\nsd.alertSeen = seen;\nreturn out;"
       }
     },
     {
@@ -671,7 +671,7 @@
     {
       "id": "5a0e0017-0034-4c00-8000-000000000034",
       "name": "Forget Alert Keys",
-      "notes": "Alert Owner error output: notify_owner failed, so the alert never reached the owner. Remove the dedupe keys Dedupe Alerts stamped for it, so it is tried again on the next run instead of being silenced for 24 h. Lost pairing -> forget every key of this run. Nothing is connected after it.",
+      "notes": "Alert Owner error output: notify_owner failed, so the alert never reached the owner. Remove the dedupe keys Dedupe Alerts stamped for it, so it is tried again on the next run instead of being silenced for 20 h. Lost pairing -> forget every key of this run. Nothing is connected after it.",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [2440, 600],

@@ -81,7 +81,11 @@ R('PENDING_SUMMARY states the cancellation policy before "Reply YES to confirm"'
 THROWS('PENDING_SUMMARY without Settings.cancellation_hours throws (REQ)', 'PENDING_SUMMARY', /PENDING_SUMMARY needs "cancellation_hours"/, { settings: { ...SETTINGS, cancellation_hours: undefined } });
 R('PENDING_SUMMARY with cancellation_hours 0 still renders (0 is a value)', 'PENDING_SUMMARY', 'Botox (30 min) — Mon, Jan 7, 12:00 PM. Free cancellation up to 0 hours before. Reply YES to confirm.', { settings: { ...SETTINGS, cancellation_hours: 0 } });
 // Owner addition 2026-10-08: the booking confirmation says how to cancel AND the free-cancellation rule, in the same message.
-R('BOOKED names how to cancel and the free-cancellation rule (Settings.cancellation_hours)', 'BOOKED', "You're booked: Botox (30 min) — Mon, Jan 7, 12:00 PM. We'll remind you 24 hours before. To change or cancel, just message me here — cancellation is free up to 24 hours before your visit.");
+R('BOOKED names how to cancel and the free-cancellation rule (Settings.cancellation_hours)', 'BOOKED', "You're booked: Botox (30 min) — Mon, Jan 7, 12:00 PM. We'll send you a reminder the day before. To change or cancel, just message me here — cancellation is free up to 24 hours before your visit.");
+// P1 ruling 2026-10-08: WF-5 runs daily and reminds the day before, so BOOKED no longer quotes reminder_hours_before and
+// REQ.BOOKED does not require it.
+R('BOOKED renders without Settings.reminder_hours_before (REQ.BOOKED no longer needs reminder_hours)', 'BOOKED', "You're booked: Botox (30 min) — Mon, Jan 7, 12:00 PM. We'll send you a reminder the day before. To change or cancel, just message me here — cancellation is free up to 24 hours before your visit.", { settings: { ...SETTINGS, reminder_hours_before: undefined } });
+check('BOOKED template has no {reminder_hours} placeholder', !/\{reminder_hours\}/.test(TEMPLATES.BOOKED || ''), TEMPLATES.BOOKED);
 THROWS('BOOKED without Settings.cancellation_hours throws (REQ)', 'BOOKED', /BOOKED needs "cancellation_hours"/, { settings: { ...SETTINGS, cancellation_hours: undefined } });
 R('CANCEL_PENDING asks for YES, built from the row', 'CANCEL_PENDING', 'Cancel your Botox on Mon, Jan 7, 12:00 PM? Reply YES to cancel.');
 R('LATE_CANCEL_PENDING names the window and the late cancellation', 'LATE_CANCEL_PENDING', 'Cancel your Botox on Mon, Jan 7, 12:00 PM? This is less than 24 hours before your visit, so it will be recorded as a late cancellation. Reply YES to cancel.');

@@ -130,17 +130,12 @@ appt_set() {
 berlin_in() { local t=$(( $(date +%s) + $1 * 60 )); t=$(( (t + 1799) / 1800 * 1800 )); TZ=Europe/Berlin date -d "@$t" +%Y-%m-%dT%H:%M:00%:z; }
 # rate_limit_reset: forgets A's wf1_rate_limit row - stands in for the 10-minute wait of dialog 09 (said so in the log)
 rate_limit_reset() { log "  rate_limit_reset: wf1_rate_limit row of $CID deleted instead of waiting 10 minutes"; pg_sql "DELETE FROM wf1_rate_limit WHERE contact_id = '$CID'" > /dev/null; }
-# test_client_ids: client_ids of every test client, one per line (C-test*, which includes the dialog clients: WF-1 gives
-# a client created through Test Inbound the prefix C-test-)
-test_client_ids() {
-  at_list Clients "REGEX_MATCH({client_id}, '^C-test')" | jq -r '.records[].fields.client_id // empty'
-}
 # reminder_leg: the Task 17 trick, for the client's one booked visit. Waits until the hourly WF-5 run (:05) is far away,
 # refuses when a non-test row would be touched by WF-5, sets Settings.reminder_hours_before = 1 (always restored: right
 # after the run and by the EXIT trap), moves the visit to about an hour ahead in Airtable (the calendar event stays
 # where it was booked), waits until WF-5's due-reminder formula selects it, then runs WF-5 (scripts/n8n-run.sh).
 reminder_leg() {
-  local m waited=0 clid rows rec appt dur created s e sid orig bad tids due n
+  local m waited=0 clid rows rec appt dur created s e sid orig bad due n
   while m=$((10#$(date -u +%M))); [ "$m" -lt 10 ] || [ "$m" -gt 44 ]; do
     [ "$waited" -ge 2700 ] && { echo "reminder_leg: still near the hourly WF-5 run after 45 min" >&2; return 1; }
     [ "$waited" -eq 0 ] && log "  reminder_leg: waiting for minute 10-44 (the hourly WF-5 run is at :05), now :$(date -u +%M)"
@@ -153,13 +148,11 @@ reminder_leg() {
   rec=$(jq -r '.records[0].id' <<< "$rows"); appt=$(jq -r '.records[0].fields.appt_id' <<< "$rows")
   dur=$(( $(date -d "$(jq -r '.records[0].fields.end_iso' <<< "$rows")" +%s) - $(date -d "$(jq -r '.records[0].fields.start_iso' <<< "$rows")" +%s) ))
   created=$(date -d "$(jq -r '.records[0].createdTime' <<< "$rows")" +%s)
-  # Safety (as tests/wf5-live.sh, window widened to 2 h): this extra WF-5 run may touch test rows only.
-  tids=$(test_client_ids | jq -Rsc 'split("\n") | map(select(length > 0))')
-  bad=$(for f in "AND({status}='pending',IS_BEFORE({pending_expires_at},NOW()))" \
-      "AND({status}='done',{next_visit_in}>0,{revisit_invited_at}=BLANK(),IS_BEFORE(DATEADD({start_dt},{next_visit_in},'days'),NOW()))" \
-      "AND({status}='booked',IS_AFTER({start_dt},NOW()),IS_BEFORE({start_dt},DATEADD(NOW(),2,'hours')))"; do
-      at_list Appointments "$f" | jq -r --argjson t "$tids" '.records[].fields | select((.client_id // "") as $c | ($t | index($c)) == null) | (.appt_id // "?")'; done)
-  [ -z "$bad" ] || { echo "reminder_leg: refusing, real rows would be touched by WF-5: $bad" >&2; return 1; }
+  # Safety: this extra WF-5 run (at reminder_hours_before = 1) may touch test rows only. WF-5's own send criteria
+  # (tests/lib/airtable.sh wf5_guard): the reminder window 1 + 24 h widened by 1 h for the wait below, expired real pending
+  # offers, due revisits of consenting real clients only (a real client without consent never blocks).
+  bad=$(wf5_guard 1 1) || { echo "reminder_leg: refusing, cannot read Airtable for the safety check" >&2; return 1; }
+  [ -z "$bad" ] || { printf 'reminder_leg: refusing, a WF-5 run would act on real rows:\n%s\n' "$bad" >&2; return 1; }
   sid=$(at_list Settings 1 | jq -r '.records[0].id'); orig=$(at_list Settings 1 | jq -r '.records[0].fields.reminder_hours_before')
   [[ -n "$sid" && "$orig" =~ ^[0-9]+$ ]] || { echo "reminder_leg: cannot read Settings" >&2; return 1; }
   # An original below 2 is most likely a 1 left behind by an earlier leg: never treat it as the value to restore.

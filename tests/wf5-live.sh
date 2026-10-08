@@ -35,12 +35,10 @@ fi
 min=$((10#$(date -u +%M)))
 if [ "$min" -lt 10 ] || [ "$min" -gt 45 ]; then echo "refusing: the hourly :05 run is near (minute $min), start between :10 and :45" >&2; exit 1; fi
 
-# ---- safety: nothing real may match the WF-5 formulas
-bad=$(for f in "AND({status}='pending',IS_BEFORE({pending_expires_at},NOW()))" \
-  "AND({status}='done',{next_visit_in}>0,{revisit_invited_at}=BLANK(),IS_BEFORE(DATEADD({start_dt},{next_visit_in},'days'),NOW()))" \
-  "AND({status}='booked',IS_AFTER({start_dt},NOW()),IS_BEFORE({start_dt},DATEADD(NOW(),1,'hours')))"; do
-    at_list Appointments "$f" | jq -r '.records[] | (.fields.appt_id // "?")'; done | grep -v '^A-TEST-' || true)
-if [ -n "$bad" ]; then echo "refusing: real rows would be touched by WF-5: $bad" >&2; exit 1; fi
+# ---- safety: nothing real may be acted on by the runs below. WF-5's own send criteria at reminder_hours_before = 1
+# (tests/lib/airtable.sh wf5_guard), the reminder window widened by 1 h for the wait before the runs.
+bad=$(wf5_guard 1 1) || { echo "refusing: cannot read Airtable for the safety check" >&2; exit 1; }
+if [ -n "$bad" ]; then printf 'refusing: a WF-5 run would act on real rows:\n%s\n' "$bad" >&2; exit 1; fi
 
 sid=$(at_list Settings 1 | jq -r '.records[0].id'); orig=$(at_list Settings 1 | jq -r '.records[0].fields.reminder_hours_before')
 [ -n "$sid" ] && [ "$orig" -ge 1 ] 2>/dev/null || { echo "cannot read Settings" >&2; exit 1; }

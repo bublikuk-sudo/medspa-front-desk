@@ -14,7 +14,7 @@ test_outbox rows. 2030-01-07 (a Monday) has free morning slots. No real appointm
 | 2 | My name is Dana Testova. | agent reply (asks for the day) | — |
 | 3 | Monday, January 7, 2030, in the morning, please. | agent lists free slots with times | the offer saved on the client |
 | 4 | The earliest one, please. | `PENDING_SUMMARY` only (the agent's own text after PENDING is suppressed), with the cancellation policy ("Free cancellation up to 24 hours before.") before "Reply YES to confirm" | Appointments `pending` |
-| 5 | YES | `BOOKED` (with how to cancel and "cancellation is free up to 24 hours before your visit"), then `BOOKED_INTAKE` (first visit); the list YES goes to Confirm, no Agent | `booked`, event `Botox — <name>` |
+| 5 | YES | `BOOKED` ("We'll send you a reminder the day before", how to cancel and "cancellation is free up to 24 hours before your visit"), then `BOOKED_INTAKE` (first visit); the list YES goes to Confirm, no Agent | `booked`, event `Botox — <name>` |
 | 6 | *(runner: `reminder_leg`)* the visit is moved to about an hour ahead in Airtable, `reminder_hours_before = 1` behind an EXIT trap, WF-5 Run Now | `REMINDER`; on WhatsApp through the template path `medspa_reminder` (wa_template), on Telegram free-form | `reminded`, `reminder_sent_at` set; Settings restored |
 | 7 | YES | `REMINDER_CONFIRMED`; Reminder Reply, no Agent | `confirmed` |
 
@@ -48,7 +48,8 @@ expect tool: propose_booking
 expect state: [.appts[].status] == ["pending"]
 send: YES
 expect templates: BOOKED, BOOKED_INTAKE
-expect regex: to change or cancel, just message me here — cancellation is free up to 24 hours before your visit
+expect regex: we.ll send you a reminder the day before\. to change or cancel, just message me here — cancellation is free up to 24 hours before your visit
+expect no-regex: remind you \d+ hours before
 expect node: Confirm
 expect no-node: Agent
 expect state: [.appts[].status] == ["booked"] and (.events | length) == 1

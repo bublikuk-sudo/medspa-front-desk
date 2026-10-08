@@ -11,10 +11,11 @@
 # REVISIT becomes a Postgres test_outbox row. Everything created is C-test / A-TEST; tests/cleanup.sh --no-calendar removes it
 # (and those test_outbox rows) in the EXIT trap, also after a failure. Exit status 0 only when every check passed and the
 # cleanup worked.
-# Refuses to start near the daily WF-5 run (06:55-07:20 UTC) or when a Run Now would touch something real: a booked visit due
-# for its reminder, or a due revisit of a real client who consented. A real expired pending row would be cancelled exactly as
-# the daily run would cancel it (it is listed first). One writer at a time on Airtable: not beside tests/tool-cases.sh or
-# tests/dialogs.sh (same C-test prefix, same cleanup).
+# Refuses to start near the daily WF-5 run (06:55-07:20 UTC) or when a Run Now would act on something real
+# (tests/lib/airtable.sh wf5_guard): a booked visit due for its reminder, an expired real pending offer (the run would cancel
+# it), or a due revisit of a real client who consented; a real client without consent never blocks. Each refusal names the
+# row and why. One writer at a time on Airtable: not beside tests/tool-cases.sh or tests/dialogs.sh (same C-test prefix,
+# same cleanup).
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source tests/lib/airtable.sh
@@ -28,34 +29,16 @@ finish() {
   echo "failed checks: $failed"
   exit $((r > 0 ? 1 : 0))
 }
-# every page of a search (at_list returns the first 100 records only): table formula -> JSON array of records
-at_all() {
-  local off="" out="[]" page
-  while :; do
-    page=$(curl -fsS -G "${_H[@]}" "$_AT/$1" --data-urlencode "filterByFormula=$2" ${off:+--data-urlencode "offset=$off"}) || return 1
-    out=$(jq -c --argjson a "$out" '$a + .records' <<< "$page")
-    off=$(jq -r '.offset // ""' <<< "$page")
-    [ -n "$off" ] || break
-  done
-  printf '%s' "$out"
-}
-
 hm=$((10#$(date -u +%H%M)))
 if [ "$hm" -ge 655 ] && [ "$hm" -le 720 ]; then echo "refusing: the daily WF-5 run (07:05 UTC) is near, now $(date -u +%H:%M) UTC" >&2; exit 1; fi
 
 # ---- safety: nothing real may be acted on by a Run Now
 h=$(at_list Settings 1 | jq -r '.records[0].fields.reminder_hours_before')
 [[ "$h" =~ ^[0-9]+$ ]] || { echo "cannot read Settings.reminder_hours_before" >&2; exit 1; }
-rem=$(at_all Appointments "AND({status}='booked',IS_AFTER({start_dt},NOW()),IS_BEFORE({start_dt},DATEADD(NOW(),$h,'hours')),DATETIME_DIFF({start_dt},CREATED_TIME(),'hours')>=$h)" |
-  jq -r '.[] | (.fields.appt_id // "?") | select(startswith("A-TEST-") | not)') || exit 1
-[ -z "$rem" ] || { echo "refusing: a Run Now would send these real reminders now: $rem" >&2; exit 1; }
-rev_formula="AND({status}='done',{next_visit_in}>0,{revisit_invited_at}=BLANK(),IS_BEFORE(DATEADD({start_dt},{next_visit_in},'days'),NOW()))"
-yes_ids=$(at_all Clients "{marketing_consent}=1" | jq -c '[.[].id]') || exit 1
-rev=$(at_all Appointments "$rev_formula" | jq -r --argjson yes "$yes_ids" \
-  '.[] | select(((.fields.appt_id // "") | startswith("A-TEST-")) | not) | select((.fields.client // [])[0] as $c | $yes | index($c)) | .fields.appt_id // "?"') || exit 1
-[ -z "$rev" ] || { echo "refusing: a Run Now would send real revisit invitations: $rev" >&2; exit 1; }
-exp=$(at_all Appointments "AND({status}='pending',IS_BEFORE({pending_expires_at},NOW()))" | jq -r '.[] | (.fields.appt_id // "?") | select(startswith("A-TEST-") | not)')
-[ -z "$exp" ] || echo "note: these real expired pending rows will be cancelled (or reported, with an event) as the daily run would: $exp"
+# WF-5's own send criteria at the current reminder_hours_before (tests/lib/airtable.sh wf5_guard), the reminder window
+# widened by 1 h for the time the three runs take.
+bad=$(wf5_guard "$h" 1) || { echo "refusing: cannot read Airtable for the safety check" >&2; exit 1; }
+if [ -n "$bad" ]; then printf 'refusing: a WF-5 run would act on real rows:\n%s\n' "$bad" >&2; exit 1; fi
 
 trap finish EXIT
 tests/cleanup.sh --no-calendar > /dev/null || { echo "pre-clean failed" >&2; failed=1; exit 1; }

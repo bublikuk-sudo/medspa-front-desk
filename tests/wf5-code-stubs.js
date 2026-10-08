@@ -136,8 +136,12 @@ check('Orphan Alert: 25 ids -> first 20 and "5 more"', r.length === 1 && r[0].js
 // ---------------------------------------------------------------- Airtable formulas
 const dr = node('Due Reminders').parameters.filterByFormula;
 const f24 = expr(dr, { fields: { reminder_hours_before: 24 } });
-check('Due Reminders formula (24): in the window AND booked at least reminder_hours_before ahead (M2)', f24 === "AND({status}='booked',IS_AFTER({start_dt},NOW()),IS_BEFORE({start_dt},DATEADD(NOW(),24,'hours')),DATETIME_DIFF({start_dt},CREATED_TIME(),'hours')>=24)", f24);
-check('Due Reminders formula (6) uses 6 in both places', expr(dr, { fields: { reminder_hours_before: 6 } }) === "AND({status}='booked',IS_AFTER({start_dt},NOW()),IS_BEFORE({start_dt},DATEADD(NOW(),6,'hours')),DATETIME_DIFF({start_dt},CREATED_TIME(),'hours')>=6)");
+// P1 (ruling 2026-10-08): the run is daily, so the window is reminder_hours_before + 24 h (the Daily interval): a visit is
+// reminded by the run the day before; the booking-lead rule stays at reminder_hours_before (M2).
+check('Due Reminders formula (24): window H + 24 = 48 h, booked at least H = 24 h ahead (M2)', f24 === "AND({status}='booked',IS_AFTER({start_dt},NOW()),IS_BEFORE({start_dt},DATEADD(NOW(),48,'hours')),DATETIME_DIFF({start_dt},CREATED_TIME(),'hours')>=24)", f24);
+check('Due Reminders formula (6): window 30 h, lead 6 h', expr(dr, { fields: { reminder_hours_before: 6 } }) === "AND({status}='booked',IS_AFTER({start_dt},NOW()),IS_BEFORE({start_dt},DATEADD(NOW(),30,'hours')),DATETIME_DIFF({start_dt},CREATED_TIME(),'hours')>=6)");
+check('Due Reminders formula (1, the live tests\' value): window 25 h, lead 1 h', expr(dr, { fields: { reminder_hours_before: 1 } }) === "AND({status}='booked',IS_AFTER({start_dt},NOW()),IS_BEFORE({start_dt},DATEADD(NOW(),25,'hours')),DATETIME_DIFF({start_dt},CREATED_TIME(),'hours')>=1)");
+check('Due Reminders and Daily name the 24 h interval in their notes, so the two are kept in step', /\b24\b/.test(node('Daily').notes || '') && /Due Reminders/.test(node('Daily').notes || '') && /Daily/.test(node('Due Reminders').notes || '') && /\+ ?24/.test(node('Due Reminders').notes || ''), [node('Daily').notes, node('Due Reminders').notes]);
 check('Due Reminders formula: Airtable number as string "24" gives the same', expr(dr, { fields: { reminder_hours_before: '24' } }) === f24);
 check('Due Reminders formula: Settings row missing -> throws (run fails loudly -> WF-6)', throws(() => expr(dr, {})));
 check('Due Reminders formula: hours missing -> NaN, which Airtable rejects (not a silent empty window)', expr(dr, { fields: {} }).includes('NaN'));
@@ -242,14 +246,18 @@ const dd = (items, sd) => runAll('Dedupe Alerts', items, {}, sd);
   check('Dedupe Alerts: two keys pass, the repeat of k1 in the same run is dropped', same(x, [{ text: 't1', key: 'k1' }, { text: 't2', key: 'k2' }]), x);
   check('Dedupe Alerts: keys are remembered in the workflow static data', Object.keys(sd.alertSeen || {}).sort().join() === 'k1,k2', sd);
   x = dd([{ key: 'k1', text: 't1' }, { key: 'k3', text: 't3' }], sd).map((i) => i.json);
-  check('Dedupe Alerts: a later run inside 24 h (e.g. a Run Now) - k1 is throttled, new k3 passes', same(x, [{ text: 't3', key: 'k3' }]), x);
-  sd.alertSeen.k1 = Date.now() - 25 * 3600 * 1000;
+  // P2 (ruling 2026-10-08): the window is 20 h, shorter than the 24 h between two daily runs, so every daily run alerts
+  // once for a lasting failure; repeated Run Nows on the same day stay deduplicated.
+  check('Dedupe Alerts: a later run inside 20 h (e.g. a Run Now) - k1 is throttled, new k3 passes', same(x, [{ text: 't3', key: 'k3' }]), x);
+  sd.alertSeen.k1 = Date.now() - 21 * 3600 * 1000;
   sd.alertSeen.old = Date.now() - 48 * 3600 * 1000;
   x = dd([{ key: 'k1', text: 't1' }], sd).map((i) => i.json);
-  check('Dedupe Alerts: after 24 h the same key alerts again', same(x, [{ text: 't1', key: 'k1' }]), x);
-  check('Dedupe Alerts: keys older than 24 h are pruned, the fresh ones kept', !('old' in sd.alertSeen) && 'k1' in sd.alertSeen && 'k3' in sd.alertSeen, Object.keys(sd.alertSeen));
-  sd.alertSeen.k2 = Date.now() - 23 * 3600 * 1000;
-  check('Dedupe Alerts: 23 h is still inside the window', same(dd([{ key: 'k2', text: 't2' }], sd), []));
+  check('Dedupe Alerts: after 20 h the same key alerts again (21 h)', same(x, [{ text: 't1', key: 'k1' }]), x);
+  check('Dedupe Alerts: keys older than 20 h are pruned, the fresh ones kept', !('old' in sd.alertSeen) && 'k1' in sd.alertSeen && 'k3' in sd.alertSeen, Object.keys(sd.alertSeen));
+  sd.alertSeen.k2 = Date.now() - 19 * 3600 * 1000;
+  check('Dedupe Alerts: 19 h is still inside the window', same(dd([{ key: 'k2', text: 't2' }], sd), []));
+  sd.alertSeen.k4 = Date.now() - (24 * 3600 * 1000 - 50);
+  check('Dedupe Alerts: the next daily run, a few ms short of 24 h later, alerts again (the 24 h window dropped it)', same(dd([{ key: 'k4', text: 't4' }], sd).map((i) => i.json), [{ text: 't4', key: 'k4' }]));
   check('Dedupe Alerts: items without key or text are dropped, not sent', same(dd([{ text: 'x' }, { key: 'z' }, {}], sd), []));
   check('Dedupe Alerts: empty input -> nothing, no throw', same(dd([], {}), []));
   check('Dedupe Alerts: uses the global workflow static data (persisted for Daily / Run Now runs, not for editor test runs)', /\$getWorkflowStaticData\('global'\)/.test(node('Dedupe Alerts').parameters.jsCode));
@@ -313,6 +321,31 @@ check('every shape node -> Dedupe Alerts (the only way to the owner)', shapes.ev
 check('Dedupe Alerts -> Alert Owner (no success output)', same(targets('Dedupe Alerts'), ['Alert Owner']) && targets('Alert Owner', 0).length === 0);
 const unreachable = WF.nodes.map((n) => n.name).filter((n) => !['Daily', 'Run Now'].includes(n) && !Object.values(WF.connections).some((c) => c.main.some((o) => o.some((t) => t.node === n))));
 check('no unreachable node', unreachable.length === 0, unreachable);
+
+// ---------------------------------------------------------------- P3: the live scripts' safety guard mirrors WF-5
+// tests/lib/airtable.sh wf5_guard (used by tests/dialog.sh reminder_leg, tests/wf5-live*.sh) must ask Airtable exactly
+// what WF-5's searches ask, or a manual run could act on a real row the guard did not see. LIB = that file's text.
+block('wf5_guard mirrors WF-5', () => {
+  if (typeof LIB === 'undefined') throw new Error('LIB (tests/lib/airtable.sh) was not prepended');
+  const m = /\nwf5_guard\(\) \{([\s\S]*?)\n\}/.exec(LIB);
+  check('wf5_guard exists in tests/lib/airtable.sh', !!m);
+  const body = m ? m[1] : '';
+  const quoted = [...body.matchAll(/at_all (\w+) "([^"]+)"/g)].map((x) => ({ table: x[1], f: x[2] }));
+  const rem = (quoted.find((q) => q.f.includes("{status}='booked'")) || {}).f || '';
+  for (const H of [1, 24]) {
+    const g = rem.replace('$((h + 24 + m))', String(H + 24)).replace('$h', String(H));
+    check('wf5_guard reminder formula at hours=' + H + ', margin 0 == Due Reminders at reminder_hours_before=' + H, g === expr(dr, { fields: { reminder_hours_before: H } }), g);
+  }
+  check('wf5_guard reminder window = hours + 24 + margin (the margin only widens it)', rem.includes("DATEADD(NOW(),$((h + 24 + m)),'hours')"));
+  const pend = (quoted.find((q) => q.f.includes("{status}='pending'")) || {}).f;
+  check('wf5_guard expired-pending formula == Expired Pending and Orphan Pending without their calendar_event_id clause (both block)',
+    !!pend && node('Expired Pending').parameters.filterByFormula === pend.replace(/\)$/, ',{calendar_event_id}=BLANK())') && node('Orphan Pending').parameters.filterByFormula === pend.replace(/\)$/, ',NOT({calendar_event_id}=BLANK()))'), pend);
+  check('wf5_guard revisit formula == Due Revisits', (quoted.find((q) => q.f.includes("{status}='done'")) || {}).f === node('Due Revisits').parameters.filterByFormula);
+  check('wf5_guard consent formula == Consenting Clients (a real client without consent never blocks)', quoted.some((q) => q.table === 'Clients' && q.f === node('Consenting Clients').parameters.filterByFormula));
+  check('wf5_guard counts a revisit only when its client is among the consenting ones', /\$yes \| index\(\$c\)\) != null/.test(body));
+  check('wf5_guard treats as test rows only A-TEST-* appointments and C-test* clients', body.includes('startswith("A-TEST-")') && body.includes('startswith("C-test")'));
+  check('wf5_guard names the row and the reason for each refusal', /would send its reminder/.test(body) && /would " \+ \(if/.test(body) && /cancel it/.test(body) && /revisit invitation/.test(body));
+});
 
 // ---------------------------------------------------------------- settings of every node
 check('errorWorkflow is WF-6', WF.settings.errorWorkflow === 'WFID:wf6-error-handler');

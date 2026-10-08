@@ -47,8 +47,8 @@ WF-3  Tools       sub-workflows with named inputs over Google Calendar + Airtabl
 WF-4  Knowledge   ingest: Airtable Knowledge → OpenAI embeddings → pgvector (Run Now after a Knowledge edit,
                   and a daily self-repair)
                   query: top 5 by vector distance → Claude Haiku relevance gate → ≤ 3 passages | NOT_FOUND
-WF-5  Reminders   daily (07:05 UTC): reminders, revisit invitations (only with marketing consent), expiry of stale
-                  pending bookings
+WF-5  Reminders   daily (07:05 UTC): reminders the day before the visit, revisit invitations (only with marketing
+                  consent), expiry of stale pending bookings
 WF-6  Errors      Error Trigger → owner's Telegram; the failing workflow stays active
 Shared            send_message (template, translation, channel formatting, WhatsApp template vs free text)
                   notify_owner (owner's Telegram; a direct fallback when Airtable is unreachable)
@@ -290,10 +290,12 @@ silent for everyone; here a workflow that throws stays active, the owner gets an
 - Two clients and one slot: if the second confirms after the first, they get `SLOT_TAKEN` with alternatives; two
   confirmations at the same instant could both succeed (not reproduced).
 - A visit booked less than `reminder_hours_before` ahead gets no reminder.
-- WF-5 runs once a day (Airtable Free plan), at 07:05 UTC. A visit is reminded by the run in the
-  `reminder_hours_before` (24) hours before it: for a clinic that opens after the run, that is the morning of the
-  visit day, not a day ahead as the booking confirmation says. Expired `pending` offers are marked cancelled by the same
-  daily run; until then a late YES gets "That offer has expired" from `confirm_booking`.
+- WF-5 runs once a day (Airtable Free plan), at 07:05 UTC, and reminds every visit that starts within the next
+  `reminder_hours_before` + 24 hours (48 by default): the reminder arrives the day before the visit, at about 08:05
+  Berlin time in winter and 09:05 in summer, so about 25 to 35 hours ahead for a clinic open 10:00-20:00 (the booking
+  confirmation says "We'll send you a reminder the day before"). A visit booked after that run but still at least
+  `reminder_hours_before` ahead is reminded on the morning of the visit day. Expired `pending` offers are marked
+  cancelled by the same daily run; until then a late YES gets "That offer has expired" from `confirm_booking`.
 - A Knowledge edit reaches the bot after `scripts/n8n-run.sh wf4-knowledge-ingest`, or with the next daily WF-4 run.
 - An exhausted Anthropic credit reaches the owner as "Bad request - please check your parameters"; a fix that passes
   the real cause through is planned.
