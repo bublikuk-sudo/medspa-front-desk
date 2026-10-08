@@ -4,7 +4,7 @@
   "ESCALATED_HOLD": "A team member will contact you shortly. Automatic replies are paused for this conversation.",
   "ERROR": "Something went wrong on our side — a team member will get back to you shortly.",
   "PENDING_SUMMARY": "{service} ({duration} min) — {when}. Free cancellation up to {cancellation_hours} hours before. Reply YES to confirm.",
-  "BOOKED": "You're booked: {service} ({duration} min) — {when}. We'll remind you {reminder_hours} hours before. To change or cancel, just message me here.",
+  "BOOKED": "You're booked: {service} ({duration} min) — {when}. We'll remind you {reminder_hours} hours before. To change or cancel, just message me here — cancellation is free up to {cancellation_hours} hours before your visit.",
   "BOOKED_INTAKE": "Before your first visit, please complete our short intake and consent form (about 5 minutes): {intake_form_url}",
   "SLOT_TAKEN": "Sorry — that time was just taken by another booking. Nearby options: {alternatives}. Which one works for you?",
   "EXPIRED": "That offer has expired (we hold offers for {ttl} minutes). Tell me the service and day again and I'll check availability.",

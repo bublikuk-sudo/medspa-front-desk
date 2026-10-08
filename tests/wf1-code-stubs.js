@@ -392,6 +392,10 @@ T('every WF-1 send to the client except Send Cancel Ask closes the question (' +
   same(keep, ['Send Cancel Ask']) && sendNodes.length >= 16 || { keep, sendNodes: sendNodes.map((n) => n + '=' + keyOf(n)) });
 T('Send Reminder Result closes it for CONFIRMED and for CANCELLED', () => smClears(ev(inputsOf('Send Reminder Result').template_key, { verdict: 'CONFIRMED' }), open) &&
   smClears(ev(inputsOf('Send Reminder Result').template_key, { verdict: 'CANCELLED' }), open) || 'wrong');
+// Owner addition: BOOKED needs cancellation_hours, which send_message fills from Settings unless a caller overrides it in vars_json.
+const bookedSenders = sendNodes.filter((n) => keyOf(n) === 'BOOKED');
+T('BOOKED is sent only by Send Booked, with no vars_json (send_message fills cancellation_hours from Settings, as for PENDING_SUMMARY)', () =>
+  same(bookedSenders, ['Send Booked']) && inputsOf('Send Booked').vars_json === '' && inputsOf('Send Summary').vars_json === '' || bookedSenders.map((n) => n + ' vars_json=' + inputsOf(n).vars_json));
 T('WF-1 sends to the client only through send_message (no Telegram / WhatsApp send node)', () =>
   WF.nodes.filter((x) => ['n8n-nodes-base.telegram', 'n8n-nodes-base.whatsApp'].includes(x.type)).length === 0 || 'direct send node');
 T('WF-5\'s REMINDER and REVISIT (sent through send_message) close it too', () => smClears('REMINDER', open) && smClears('REVISIT', open) || 'wrong');
