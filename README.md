@@ -245,8 +245,8 @@ and a licence (see the contract checklist in the onboarding document).
 
 - **Level 1, tools** (`tests/tool-cases.sh`, cases in `tests/tool-cases.tsv`, described in `tests/tool-cases.md`):
   every sub-workflow called alone with fixed inputs through a key-protected test harness, compared against a regular
-  expression; each case builds and removes its own data. 97 cases: 97 passed on 2026-10-08
-  (`tests/dialog-runs/2026-10-08-level1.md`); the 96 cases before `escalate_already_escalated` was added passed twice
+  expression; each case builds and removes its own data. 105 cases: 105 passed on 2026-10-09
+  (`tests/dialog-runs/2026-10-09-free-airtable-level1.md`); the 96 cases before `escalate_already_escalated` was added passed twice
   in a row on 2026-10-03 (`tests/dialog-runs/2026-10-03-level1.md`). Code nodes also have stub suites (`tests/*-stubs.sh`).
 - **Level 2, dialogs** (`tests/dialogs.sh`, scripts in `tests/dialogs/`): 12 end-to-end dialogs through the real WF-1,
   in Telegram and WhatsApp payload formats (dialogs 09 and 10 run once), 22 runs per pass. A key-protected test inbound
@@ -254,7 +254,14 @@ and a licence (see the contract checklist in the onboarding document).
   Postgres table `test_outbox` instead of sending them. Checks are on state, template keys and language, never on the
   model's wording. Run 1 (2026-10-05): 22 passed. Run 2 (2026-10-05): 20 passed, 2 failed, both because the Anthropic
   credit ran out mid-run, not because of a bot defect.
-  PENDING: run 2 is being repeated on 2026-10-08 after the Anthropic credit top-up; this sentence will be replaced by the result.
+  Final runs on the final configuration (two-step cancel, day-before reminders, free-Airtable budget), 2026-10-09:
+  run 1 passed 21 of 22 runs (`tests/dialog-runs/2026-10-09-dialogs-run-1.md`); the one failure was dialog 05 on
+  Telegram, where on step 2 the agent escalated instead of answering that it cannot cancel another client's
+  appointment (state unchanged). Dialog 05 alone then passed 5 of 6 re-runs (Telegram 2 of 3, WhatsApp 3 of 3). The
+  repeat of run 2 was not valid: after the first two runs the Anthropic credit ran out and every later dialog got the
+  `ERROR` template (passed 2, failed 20, `tests/dialog-runs/2026-10-09-dialogs-run-2-credit-exhausted.md`). So the
+  criterion "12 dialogs pass twice in a row" is not yet met on the final configuration; run 2 has to be repeated after a
+  credit top-up.
 - **Level 3, the owner as a client.** Live runs from a phone: a Telegram booking and cancellation and a Spanish
   WhatsApp booking and cancellation (2026-10-03), and both WhatsApp templates delivered (2026-10-05). The owner's
   final acceptance run is still open.
