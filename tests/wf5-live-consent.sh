@@ -5,8 +5,10 @@
 #   A-TEST-REV-YES  client C-test-rev-yes  tg:9000000951     marketing_consent ticked          -> REVISIT, revisit_invited_at set
 #   A-TEST-REV-WA   client C-test-rev-wa   wa:+15550000952   ticked, created_via wa            -> REVISIT on the template path
 #   A-TEST-REV-NO   client C-test-rev-no   tg:9000000953     NOT ticked                        -> nothing, revisit_invited_at empty
-# Run 1 checks that. Run 2 must send nothing new and leave A-TEST-REV-NO unmarked. Then the clinic ticks C-test-rev-no and
-# run 3 must invite A-TEST-REV-NO (consent given later still lets the invitation go out).
+#   A-TEST-REV-NO-OLD  the same client, 150 days ago, next_visit_in 30: a backlog of two due visits
+# Run 1 checks that. Run 2 must send nothing new and leave both A-TEST-REV-NO rows unmarked. Then the clinic ticks
+# C-test-rev-no and run 3 must send ONE invitation, built from the newest visit (REVISIT says its next_visit_in, "60 days"), and mark both rows
+# (consent given later still lets the invitation go out, without a stack of stale ones).
 # No real message: the contacts are in send_message's test ranges (tg:9000000NNN, wa:+1555000NNNN) with C-test rows, so every
 # REVISIT becomes a Postgres test_outbox row. Everything created is C-test / A-TEST; tests/cleanup.sh --no-calendar removes it
 # (and those test_outbox rows) in the EXIT trap, also after a failure. Exit status 0 only when every check passed and the
@@ -49,15 +51,16 @@ mkc '{"client_id":"C-test-rev-yes","name":"Rev Yes","telegram_chat_id":"90000009
 mkc '{"client_id":"C-test-rev-wa","name":"Rev Wa","phone":"+15550000952","language":"en","status":"active","marketing_consent":true}'
 mkc '{"client_id":"C-test-rev-no","name":"Rev No","telegram_chat_id":"9000000953","language":"en","status":"active"}'
 d=$(date -u -d "-90 days" +%Y-%m-%dT10:00:00.000Z)
-mka() { # appt_id client_id via
+mka() { # appt_id client_id via [start ISO, default 90 days ago] [next_visit_in, default 60]
   local rec; rec=$(at_rec_id Clients "{client_id}='$2'") || { echo "client $2 missing" >&2; failed=1; exit 1; }
-  at_create Appointments "$(jq -nc --arg a "$1" --arg c "$2" --arg r "$rec" --arg d "$d" --arg v "$3" \
-    '{appt_id:$a, client_id:$c, client:[$r], service_id:"hydrafacial", start_iso:$d, end_iso:$d, start_dt:$d, status:"done", next_visit_in:60, created_via:$v}')" > /dev/null ||
+  at_create Appointments "$(jq -nc --arg a "$1" --arg c "$2" --arg r "$rec" --arg d "${4:-$d}" --arg v "$3" --argjson n "${5:-60}" \
+    '{appt_id:$a, client_id:$c, client:[$r], service_id:"hydrafacial", start_iso:$d, end_iso:$d, start_dt:$d, status:"done", next_visit_in:$n, created_via:$v}')" > /dev/null ||
     { echo "cannot create $1" >&2; failed=1; exit 1; }
 }
 mka A-TEST-REV-YES C-test-rev-yes test
 mka A-TEST-REV-WA C-test-rev-wa wa
 mka A-TEST-REV-NO C-test-rev-no test
+mka A-TEST-REV-NO-OLD C-test-rev-no test "$(date -u -d "-150 days" +%Y-%m-%dT10:00:00.000Z)" 30   # a backlog: two due visits
 echo "rows created"
 
 invited() { at_list Appointments "{appt_id}='$1'" | jq -r 'if (.records[0].fields.revisit_invited_at // "") != "" then "marked" else "empty" end'; }
@@ -77,6 +80,7 @@ ok "REVISIT to tg:9000000951" "$(sent tg:9000000951)" 1
 ok "REVISIT to wa:+15550000952" "$(sent wa:+15550000952)" 1
 ok "REVISIT to wa:+15550000952 went the template path (medspa_revisit)" "$(pg_sql "SELECT count(*) FROM test_outbox WHERE contact_id = 'wa:+15550000952' AND template_key = 'REVISIT' AND wa_template LIKE 'medspa_revisit%'")" 1
 ok "nothing to tg:9000000953 (no consent)" "$(sent tg:9000000953)" 0
+ok "A-TEST-REV-NO-OLD NOT marked (no consent)" "$(invited A-TEST-REV-NO-OLD)" empty
 
 run "RUN 2: nothing new (6 Airtable calls expected: Settings, 4 searches, Consenting Clients)"
 ok "still one REVISIT to tg:9000000951" "$(sent tg:9000000951)" 1
@@ -87,5 +91,7 @@ ok "A-TEST-REV-NO still NOT marked" "$(invited A-TEST-REV-NO)" empty
 at_update Clients "$(at_rec_id Clients "{client_id}='C-test-rev-no'")" '{"marketing_consent": true}' > /dev/null || { echo "cannot tick consent" >&2; failed=$((failed + 1)); }
 run "RUN 3: the clinic ticked C-test-rev-no's consent"
 ok "A-TEST-REV-NO marked now" "$(invited A-TEST-REV-NO)" marked
-ok "one REVISIT to tg:9000000953" "$(sent tg:9000000953)" 1
+ok "A-TEST-REV-NO-OLD (the older due visit) marked with it, never sent on its own" "$(invited A-TEST-REV-NO-OLD)" marked
+ok "ONE REVISIT to tg:9000000953 for two due visits (I2: one per client, for the newest)" "$(sent tg:9000000953)" 1
+ok "that REVISIT is built from the NEWEST visit (its next_visit_in 60, not the older one's 30)" "$(pg_sql "SELECT count(*) FROM test_outbox WHERE contact_id = 'tg:9000000953' AND template_key = 'REVISIT' AND text LIKE '% 60 days %'")" 1
 ok "still one REVISIT to tg:9000000951" "$(sent tg:9000000951)" 1

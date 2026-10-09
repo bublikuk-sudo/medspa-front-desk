@@ -132,10 +132,10 @@ berlin_in() { local t=$(( $(date +%s) + $1 * 60 )); t=$(( (t + 1799) / 1800 * 18
 rate_limit_reset() { log "  rate_limit_reset: wf1_rate_limit row of $CID deleted instead of waiting 10 minutes"; pg_sql "DELETE FROM wf1_rate_limit WHERE contact_id = '$CID'" > /dev/null; }
 # reminder_leg: the Task 17 trick, for the client's one booked visit. Waits until the hourly WF-5 run (:05) is far away,
 # refuses when a non-test row would be touched by WF-5, sets Settings.reminder_hours_before = 1 (always restored: right
-# after the run and by the EXIT trap), moves the visit to about an hour ahead in Airtable (the calendar event stays
+# after the run and by the EXIT trap), moves the visit to TOMORROW 11:00 local in Airtable (the calendar event stays
 # where it was booked), waits until WF-5's due-reminder formula selects it, then runs WF-5 (scripts/n8n-run.sh).
 reminder_leg() {
-  local m waited=0 clid rows rec appt dur created s e sid orig bad due n
+  local m waited=0 clid rows rec appt dur s e sid orig bad due n tz
   while m=$((10#$(date -u +%M))); [ "$m" -lt 10 ] || [ "$m" -gt 44 ]; do
     [ "$waited" -ge 2700 ] && { echo "reminder_leg: still near the hourly WF-5 run after 45 min" >&2; return 1; }
     [ "$waited" -eq 0 ] && log "  reminder_leg: waiting for minute 10-44 (the hourly WF-5 run is at :05), now :$(date -u +%M)"
@@ -147,12 +147,12 @@ reminder_leg() {
   [ "$(jq '.records | length' <<< "$rows")" = 1 ] || { echo "reminder_leg: expected exactly one booked visit of $clid" >&2; return 1; }
   rec=$(jq -r '.records[0].id' <<< "$rows"); appt=$(jq -r '.records[0].fields.appt_id' <<< "$rows")
   dur=$(( $(date -d "$(jq -r '.records[0].fields.end_iso' <<< "$rows")" +%s) - $(date -d "$(jq -r '.records[0].fields.start_iso' <<< "$rows")" +%s) ))
-  created=$(date -d "$(jq -r '.records[0].createdTime' <<< "$rows")" +%s)
   # Safety: this extra WF-5 run (at reminder_hours_before = 1) may touch test rows only. WF-5's own send criteria
-  # (tests/lib/airtable.sh wf5_guard): the reminder window 1 + 24 h widened by 1 h for the wait below, expired real pending
+  # (tests/lib/airtable.sh wf5_guard): visits of tomorrow (local date) or within 1 h + 1 h margin, expired real pending
   # offers, due revisits of consenting real clients only (a real client without consent never blocks).
   bad=$(wf5_guard 1 1) || { echo "reminder_leg: refusing, cannot read Airtable for the safety check" >&2; return 1; }
   [ -z "$bad" ] || { printf 'reminder_leg: refusing, a WF-5 run would act on real rows:\n%s\n' "$bad" >&2; return 1; }
+  tz=$(at_timezone) || { echo "reminder_leg: cannot read Settings.timezone" >&2; return 1; }
   sid=$(at_list Settings 1 | jq -r '.records[0].id'); orig=$(at_list Settings 1 | jq -r '.records[0].fields.reminder_hours_before')
   [[ -n "$sid" && "$orig" =~ ^[0-9]+$ ]] || { echo "reminder_leg: cannot read Settings" >&2; return 1; }
   # An original below 2 is most likely a 1 left behind by an earlier leg: never treat it as the value to restore.
@@ -163,13 +163,13 @@ reminder_leg() {
   SETTINGS_REC=$sid; SETTINGS_ORIG=$orig
   at_update Settings "$sid" '{"reminder_hours_before": 1}' > /dev/null || { echo "reminder_leg: cannot set Settings" >&2; return 1; }
   log "  reminder_leg: reminder_hours_before $orig -> 1"
-  # start at least 57 min ahead (inside the 1 h window soon) and at least 62 min after the row was created (the formula
-  # skips visits booked inside the window)
-  s=$(( $(date +%s) + 57 * 60 )); [ "$s" -ge $((created + 62 * 60)) ] || s=$((created + 62 * 60))
+  # TOMORROW 11:00 in Settings.timezone: WF-5 reminds the day before by the local date (tests/lib/airtable.sh wf5_due_formula);
+  # the row was created during the dialog, more than 1 h before that, so the booking-lead rule (>= 1 h) holds
+  s=$(TZ="$tz" date -d "tomorrow 11:00" +%s) || { restore_settings; return 1; }
   e=$((s + dur))
   at_update Appointments "$rec" "$(jq -nc --arg s "$(date -u -d "@$s" +%Y-%m-%dT%H:%M:00.000Z)" --arg e "$(date -u -d "@$e" +%Y-%m-%dT%H:%M:00.000Z)" '{start_iso: $s, end_iso: $e, start_dt: $s}')" > /dev/null || { restore_settings; return 1; }
-  log "  reminder_leg: $appt moved to $(date -u -d "@$s" +%H:%M)Z today"
-  due="AND({appt_id}='$appt',{status}='booked',IS_AFTER({start_dt},NOW()),IS_BEFORE({start_dt},DATEADD(NOW(),1,'hours')),DATETIME_DIFF({start_dt},CREATED_TIME(),'hours')>=1)"
+  log "  reminder_leg: $appt moved to $(TZ="$tz" date -d "@$s" "+%F %H:%M") $tz (tomorrow)"
+  due="AND({appt_id}='$appt',$(wf5_due_formula 1 "$tz"))"
   for _ in $(seq 1 40); do
     n=$(at_list Appointments "$due" | jq '.records | length'); [ "$n" = 1 ] && break; sleep 15
   done

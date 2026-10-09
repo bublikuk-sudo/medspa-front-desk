@@ -61,7 +61,8 @@ for (const [cn, src] of [['Contact', 'Due Reminders'], ['Contact 2', 'Has Appt? 
   const run = cn === 'Contact' ? (client, appt, id) => runEach(cn, client, { [src]: rec(appt, id) }) : runC2;
   const base = { appt_id: 'A-1', created_via: 'tg' };
   let r = run(rec({ phone: '+491701234567', telegram_chat_id: '4242' }, 'recC1'), base, 'recAPPT9');
-  check(cn + ': tg visit, both ids -> tg, rec_id of the APPOINTMENT', same(r, { json: { contact_id: 'tg:4242', appt_id: 'A-1', rec_id: 'recAPPT9' } }), r);
+  const want = { contact_id: 'tg:4242', appt_id: 'A-1', rec_id: 'recAPPT9' };
+  check(cn + ': tg visit, both ids -> tg, rec_id of the APPOINTMENT', same(r, { json: cn === 'Contact' ? want : { ...want, marks: [{ rec_id: 'recAPPT9', appt_id: 'A-1' }] } }), r);
   r = run(rec({ phone: '+491701234567', telegram_chat_id: '4242' }), { ...base, created_via: 'wa' });
   check(cn + ': wa visit, both ids -> wa', r.json.contact_id === 'wa:+491701234567', r);
   r = run(rec({ telegram_chat_id: '4242' }), { ...base, created_via: 'wa' });
@@ -93,7 +94,7 @@ for (const [cn, src] of [['Contact', 'Due Reminders'], ['Contact 2', 'Has Appt? 
   const due = (appt_id, client, extra = {}) => rec({ appt_id, created_via: 'tg', ...(client ? { client: [client] } : {}), ...extra }, 'r-' + appt_id);
   const c2 = (clients, rows) => { try { return runAll('Contact 2', clients, { 'Has Appt? 3': rows }).map((x) => x.json); } catch (e) { return [{ threw: String(e.message) }]; } };
   let x = c2([yes('recC1')], [due('A-1', 'recC1'), due('A-2', 'recC2')]);
-  check('Contact 2: only the visit whose client is in the consent search is sent; the other is skipped (no item, so not sent and not marked)', same(x, [{ contact_id: 'tg:421', appt_id: 'A-1', rec_id: 'r-A-1' }]), x);
+  check('Contact 2: only the visit whose client is in the consent search is sent; the other is skipped (no item, so not sent and not marked)', same(x, [{ contact_id: 'tg:421', appt_id: 'A-1', rec_id: 'r-A-1', marks: [{ rec_id: 'r-A-1', appt_id: 'A-1' }] }]), x);
   x = c2([rec({ telegram_chat_id: '4242' }, 'recC1'), rec({ marketing_consent: false, telegram_chat_id: '4243' }, 'recC2')], [due('A-1', 'recC1'), due('A-2', 'recC2')]);
   check('Contact 2: a client record WITHOUT marketing_consent true is not sent even if the search returned it (defence in depth)', same(x, []), x);
   x = c2([rec({ marketing_consent: 'true', telegram_chat_id: '4242' }, 'recC1')], [due('A-1', 'recC1')]);
@@ -102,8 +103,19 @@ for (const [cn, src] of [['Contact', 'Due Reminders'], ['Contact 2', 'Has Appt? 
   check('Contact 2: nobody consented (the empty item from Always Output Data) -> nothing sent, no alert', same(x, []), x);
   x = c2([yes('recC1')], [due('A-1', 'recC1'), {}, rec({ status: 'done' }, 'r-x')]);
   check('Contact 2: rows without appt_id are ignored', x.length === 1 && x[0].appt_id === 'A-1', x);
-  x = c2([yes('recC1'), yes('recC3')], [due('A-1', 'recC1'), due('A-2', 'recC2'), due('A-3', 'recC1'), due('A-4', 'recC3')]);
-  check('Contact 2: two visits of the same consenting client -> two items, in row order', same(x.map((i) => i.appt_id), ['A-1', 'A-3', 'A-4']) && x.every((i) => !i.key), x);
+  // Fix 1 / I2 (ruling 2026-10-08): a client whose consent is ticked late has a backlog of due visits. At most ONE REVISIT
+  // per client per run, built from the NEWEST due visit (latest start_dt); every due visit of that client is in `marks`,
+  // so after a successful send Invite Marks -> Mark Invited marks them all and the older ones never send later.
+  x = c2([yes('recC1'), yes('recC3')], [due('A-1', 'recC1', { start_dt: '2026-03-01T10:00:00.000Z' }), due('A-2', 'recC2'), due('A-3', 'recC1', { start_dt: '2026-06-01T10:00:00.000Z' }), due('A-5', 'recC1', { start_dt: '2026-04-01T10:00:00.000Z' }), due('A-4', 'recC3', { start_dt: '2026-05-01T10:00:00.000Z' })]);
+  check('I2: three due visits of one consenting client -> ONE item, for the newest (A-3), with all three in marks newest first; one item for the other client',
+    same(x, [
+      { contact_id: 'tg:421', appt_id: 'A-3', rec_id: 'r-A-3', marks: [{ rec_id: 'r-A-3', appt_id: 'A-3' }, { rec_id: 'r-A-5', appt_id: 'A-5' }, { rec_id: 'r-A-1', appt_id: 'A-1' }] },
+      { contact_id: 'tg:423', appt_id: 'A-4', rec_id: 'r-A-4', marks: [{ rec_id: 'r-A-4', appt_id: 'A-4' }] },
+    ]), x);
+  x = c2([yes('recC1')], [due('A-7', 'recC1', { start_dt: '2026-06-01T10:00:00.000Z' }), due('A-6', 'recC1', { start_iso: '2026-07-01T12:00:00+02:00' })]);
+  check('I2: start_dt missing -> start_iso decides "newest"; the contact rule uses the newest visit', x.length === 1 && x[0].appt_id === 'A-6' && x[0].marks.length === 2, x);
+  x = c2([yes('recC1')], [due('A-8', 'recC1', { start_dt: '2026-06-01T10:00:00.000Z', created_via: 'wa' }), due('A-9', 'recC1', { start_dt: '2026-05-01T10:00:00.000Z' })]);
+  check('I2: the channel comes from the newest visit (wa there, but the client has no phone -> tg fallback as before)', x.length === 1 && x[0].appt_id === 'A-8' && x[0].contact_id === 'tg:421', x);
   x = c2([yes('recC1')], [due('A-9'), due('A-1', 'recC1')]);
   check('Contact 2: a visit without a client link -> one owner alert item (key client2:<appt_id>), never a send', x.length === 2 && x[0].key === 'client2:A-9' && /A-9/.test(x[0].text) && /no client/i.test(x[0].text) && !('contact_id' in x[0]) && x[1].appt_id === 'A-1', x);
   x = c2([], [due('A-1', 'recC1')]);
@@ -135,16 +147,66 @@ check('Orphan Alert: 25 ids -> first 20 and "5 more"', r.length === 1 && r[0].js
 
 // ---------------------------------------------------------------- Airtable formulas
 const dr = node('Due Reminders').parameters.filterByFormula;
-const f24 = expr(dr, { fields: { reminder_hours_before: 24 } });
-// P1 (ruling 2026-10-08): the run is daily, so the window is reminder_hours_before + 24 h (the Daily interval): a visit is
-// reminded by the run the day before; the booking-lead rule stays at reminder_hours_before (M2).
-check('Due Reminders formula (24): window H + 24 = 48 h, booked at least H = 24 h ahead (M2)', f24 === "AND({status}='booked',IS_AFTER({start_dt},NOW()),IS_BEFORE({start_dt},DATEADD(NOW(),48,'hours')),DATETIME_DIFF({start_dt},CREATED_TIME(),'hours')>=24)", f24);
-check('Due Reminders formula (6): window 30 h, lead 6 h', expr(dr, { fields: { reminder_hours_before: 6 } }) === "AND({status}='booked',IS_AFTER({start_dt},NOW()),IS_BEFORE({start_dt},DATEADD(NOW(),30,'hours')),DATETIME_DIFF({start_dt},CREATED_TIME(),'hours')>=6)");
-check('Due Reminders formula (1, the live tests\' value): window 25 h, lead 1 h', expr(dr, { fields: { reminder_hours_before: 1 } }) === "AND({status}='booked',IS_AFTER({start_dt},NOW()),IS_BEFORE({start_dt},DATEADD(NOW(),25,'hours')),DATETIME_DIFF({start_dt},CREATED_TIME(),'hours')>=1)");
-check('Due Reminders and Daily name the 24 h interval in their notes, so the two are kept in step', /\b24\b/.test(node('Daily').notes || '') && /Due Reminders/.test(node('Daily').notes || '') && /Daily/.test(node('Due Reminders').notes || '') && /\+ ?24/.test(node('Due Reminders').notes || ''), [node('Daily').notes, node('Due Reminders').notes]);
-check('Due Reminders formula: Airtable number as string "24" gives the same', expr(dr, { fields: { reminder_hours_before: '24' } }) === f24);
+// Fix 1 / I1 (ruling 2026-10-08): "the day before" by the clinic's calendar, not a time window. Due = booked, start ahead,
+// (start's local date in Settings.timezone = tomorrow's local date OR start within reminder_hours_before), booked at least
+// reminder_hours_before ahead (M2). Every visit on day D is reminded by D-1's run; one booked later but still H ahead on
+// the morning of D. The earlier window (now, now + H + 24 h] reminded early-morning visits two days ahead.
+const BER = 'Europe/Berlin';
+const S = (h, tz = BER) => ({ fields: { reminder_hours_before: h, timezone: tz } });
+const due24 = (tz) => "AND({status}='booked',IS_AFTER({start_dt},NOW()),OR(DATETIME_FORMAT(SET_TIMEZONE({start_dt},'" + tz + "'),'YYYY-MM-DD')=DATETIME_FORMAT(SET_TIMEZONE(DATEADD(NOW(),1,'days'),'" + tz + "'),'YYYY-MM-DD'),NOT(IS_AFTER({start_dt},DATEADD(NOW(),24,'hours')))),DATETIME_DIFF({start_dt},CREATED_TIME(),'hours')>=24)";
+const f24 = (() => { try { return expr(dr, S(24)); } catch (e) { return 'threw: ' + e.message; } })();
+check('Due Reminders formula (24, Europe/Berlin), string for string', f24 === due24(BER), f24);
+check('Due Reminders formula takes the zone from Settings.timezone (no literal Berlin)', (() => { try { return expr(dr, S(24, 'America/New_York')) === due24('America/New_York'); } catch (e) { return false; } })() && !dr.includes('Berlin'));
+check('Due Reminders formula: Airtable number as string "24" gives the same', (() => { try { return expr(dr, S('24')) === f24; } catch (e) { return false; } })());
 check('Due Reminders formula: Settings row missing -> throws (run fails loudly -> WF-6)', throws(() => expr(dr, {})));
-check('Due Reminders formula: hours missing -> NaN, which Airtable rejects (not a silent empty window)', expr(dr, { fields: {} }).includes('NaN'));
+check('Due Reminders formula: timezone missing -> throws, not an empty or Berlin default', throws(() => expr(dr, { fields: { reminder_hours_before: 24 } })));
+check('Due Reminders formula: a timezone that is not a plain IANA name (a quote, a formula) -> throws', throws(() => expr(dr, S(24, "Europe/Berlin'),TRUE(),('"))) && throws(() => expr(dr, S(24, 'Europe Berlin'))));
+check('Due Reminders formula: hours missing -> NaN, which Airtable rejects (not a silent empty window)', (() => { try { return expr(dr, { fields: { timezone: BER } }).includes('NaN'); } catch (e) { return false; } })());
+// A model of the Airtable formula functions this formula uses (times as UTC ms; SET_TIMEZONE + DATETIME_FORMAT via Intl,
+// so DST is real; DATEADD(NOW(),1,'days') = + 24 h, as for any GMT datetime; DATETIME_DIFF truncates). It evaluates the
+// formula the workflow actually builds against a record, so the cases below test behaviour, not only the string.
+const atEval = (formula, rec, nowMs) => {
+  const U = { hours: 3600e3, days: 86400e3 };
+  const ms = (v) => (v && typeof v === 'object' ? v.ms : typeof v === 'number' ? v : Date.parse(v));
+  const fn = {
+    AND: (...a) => a.every(Boolean), OR: (...a) => a.some(Boolean), NOT: (a) => !a, NOW: () => nowMs,
+    CREATED_TIME: () => Date.parse(rec.createdTime), IS_AFTER: (a, b) => ms(a) > ms(b), IS_BEFORE: (a, b) => ms(a) < ms(b),
+    DATEADD: (d, n, u) => ms(d) + n * U[u], DATETIME_DIFF: (a, b, u) => Math.trunc((ms(a) - ms(b)) / U[u]),
+    SET_TIMEZONE: (d, tz) => ({ ms: ms(d), tz }),
+    DATETIME_FORMAT: (d, f) => { if (f !== 'YYYY-MM-DD') throw new Error('format ' + f); const o = d && typeof d === 'object' ? d : { ms: ms(d), tz: 'UTC' }; return new Intl.DateTimeFormat('en-CA', { timeZone: o.tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(o.ms)); },
+  };
+  const js = formula.replace(/\{(\w+)\}/g, (_, n) => 'F(' + JSON.stringify(n) + ')').replace(/([^<>!=])=(?!=)/g, '$1==');
+  return new Function(...Object.keys(fn), 'F', 'return (' + js + ');')(...Object.values(fn), (n) => rec.fields[n]);
+};
+const dueAt = (nowIso, startIso, { created = '2026-01-01T00:00:00.000Z', status = 'booked', h = 24, tz = BER } = {}) => {
+  try { return atEval(expr(dr, S(h, tz)), { createdTime: created, fields: { status, start_dt: startIso } }, Date.parse(nowIso)); } catch (e) { return 'threw: ' + e.message; }
+};
+{
+  const RUN = '2026-10-08T07:05:00.000Z'; // Thursday's daily run: 09:05 Berlin (CEST); tomorrow = Fri 2026-10-09
+  check('I1: a visit two days ahead at 07:00 UTC (Sat 09:00 Berlin) is NOT due (the H + 24 window sent it two days early)', dueAt(RUN, '2026-10-10T07:00:00.000Z') === false, dueAt(RUN, '2026-10-10T07:00:00.000Z'));
+  check('I1: a visit two days ahead at 06:30 UTC (Sat 08:30 Berlin, before the run hour) is NOT due', dueAt(RUN, '2026-10-10T06:30:00.000Z') === false);
+  check('I1: tomorrow 19:30 Berlin (17:30 UTC) is due', dueAt(RUN, '2026-10-09T17:30:00.000Z') === true);
+  check('I1: tomorrow 06:30 Berlin (an early clinic, 04:30 UTC) is due', dueAt(RUN, '2026-10-09T04:30:00.000Z') === true);
+  check('I1: tomorrow 00:30 Berlin (22:30 UTC today) is due: the local date decides, not the UTC date', dueAt(RUN, '2026-10-08T22:30:00.000Z') === true);
+  check('I1: the day after tomorrow 00:30 Berlin (22:30 UTC tomorrow) is NOT due', dueAt(RUN, '2026-10-09T22:30:00.000Z') === false);
+  check('I1: later today (15:00 Berlin), booked after yesterday\'s run but >= 24 h ahead, is due (the morning of the visit)', dueAt(RUN, '2026-10-08T13:00:00.000Z', { created: '2026-10-07T12:00:00.000Z' }) === true);
+  check('I1: tomorrow 07:00 Berlin booked 23 h ahead -> NOT due (booking-lead rule M2)', dueAt(RUN, '2026-10-09T05:00:00.000Z', { created: '2026-10-08T06:00:00.000Z' }) === false);
+  check('I1: a visit that already started is NOT due', dueAt(RUN, '2026-10-08T07:00:00.000Z') === false);
+  check('I1: status reminded is NOT due again', dueAt(RUN, '2026-10-09T17:30:00.000Z', { status: 'reminded' }) === false);
+  // DST: Berlin leaves summer time on Sun 2026-10-25 (03:00 CEST -> 02:00 CET) and enters it on Sun 2027-03-28.
+  const AUT = '2026-10-24T07:05:00.000Z'; // Saturday's run, 09:05 CEST
+  check('DST (autumn): tomorrow = the 25-hour Sunday; 19:30 CET (18:30 UTC) is due', dueAt(AUT, '2026-10-25T18:30:00.000Z') === true);
+  check('DST (autumn): 00:30 CEST on that Sunday (22:30 UTC Saturday) is due', dueAt(AUT, '2026-10-24T22:30:00.000Z') === true);
+  check('DST (autumn): Monday 00:30 CET (23:30 UTC Sunday) is NOT due', dueAt(AUT, '2026-10-25T23:30:00.000Z') === false);
+  const SPR = '2027-03-27T07:05:00.000Z'; // Saturday's run, 08:05 CET
+  check('DST (spring): tomorrow = the 23-hour Sunday; 19:30 CEST (17:30 UTC) is due', dueAt(SPR, '2027-03-28T17:30:00.000Z') === true);
+  check('DST (spring): Monday 07:00 CEST (05:00 UTC) is NOT due', dueAt(SPR, '2027-03-29T05:00:00.000Z') === false);
+  check('Settings.timezone decides: 23:30 UTC Fri is Fri 19:30 in New York (tomorrow there, due) but Sat 01:30 in Berlin (not due)', dueAt(RUN, '2026-10-09T23:30:00.000Z', { tz: 'America/New_York' }) === true && dueAt(RUN, '2026-10-09T23:30:00.000Z') === false);
+  // The live tests' trick: reminder_hours_before = 1 and a visit TOMORROW at a clinic hour, created a moment ago.
+  check('live-test seed: H = 1, a visit tomorrow 11:00 Berlin created just now is due at once', dueAt('2026-10-08T14:00:00.000Z', '2026-10-09T09:00:00.000Z', { h: 1, created: '2026-10-08T13:59:00.000Z' }) === true);
+  check('live-test seed: with H = 24 the same new visit is NOT due (booked under 24 h ahead): the trick needs H = 1', dueAt('2026-10-08T14:00:00.000Z', '2026-10-09T09:00:00.000Z', { h: 24, created: '2026-10-08T13:59:00.000Z' }) === false);
+}
+check('Due Reminders note describes the local-date rule and Daily\'s note the run-hour condition', /tomorrow/i.test(node('Due Reminders').notes || '') && /timezone/i.test(node('Due Reminders').notes || '') && /before the clinic/i.test(node('Daily').notes || '') && !/\+ ?24/.test((node('Due Reminders').notes || '') + (node('Daily').notes || '')), [node('Daily').notes, node('Due Reminders').notes]);
 check('Expired Pending formula', node('Expired Pending').parameters.filterByFormula === "AND({status}='pending',IS_BEFORE({pending_expires_at},NOW()),{calendar_event_id}=BLANK())");
 check('Orphan Pending formula', node('Orphan Pending').parameters.filterByFormula === "AND({status}='pending',IS_BEFORE({pending_expires_at},NOW()),NOT({calendar_event_id}=BLANK()))");
 check('Due Revisits formula', node('Due Revisits').parameters.filterByFormula === "AND({status}='done',{next_visit_in}>0,{revisit_invited_at}=BLANK(),IS_BEFORE(DATEADD({start_dt},{next_visit_in},'days'),NOW()))");
@@ -169,7 +231,20 @@ check('Mark Reminded: reminder_sent_at is ISO UTC (WF-1 reminder gate compares i
 const me = node('Mark Expired').parameters.columns.value;
 check('Mark Expired: id from the row, status cancelled, nothing else', expr(me.id, { id: 'recP1' }) === 'recP1' && me.status === 'cancelled' && same(Object.keys(me), ['id', 'status']));
 const mi = node('Mark Invited').parameters.columns.value;
-check('Mark Invited: id from Contact 2, revisit_invited_at ISO', expr(mi.id, {}, { 'Contact 2': { rec_id: 'recAPPT2' } }) === 'recAPPT2' && /Z$/.test(expr(mi.revisit_invited_at, {})));
+check('Mark Invited: id from its own item (one per visit from Invite Marks), revisit_invited_at ISO', (() => { try { return expr(mi.id, { rec_id: 'recAPPT2', appt_id: 'A-2' }) === 'recAPPT2'; } catch (e) { return false; } })() && /Z$/.test(expr(mi.revisit_invited_at, {})));
+block('Invite Marks', () => {
+  // Send Revisit success items -> one item per due visit of that client (Contact 2's marks), paired to the send item.
+  const c2items = [
+    { contact_id: 'tg:1', appt_id: 'A-3', rec_id: 'r3', marks: [{ rec_id: 'r3', appt_id: 'A-3' }, { rec_id: 'r1', appt_id: 'A-1' }] },
+    { contact_id: 'tg:2', appt_id: 'A-4', rec_id: 'r4', marks: [{ rec_id: 'r4', appt_id: 'A-4' }] },
+  ];
+  const out = runAll('Invite Marks', [{ verdict: 'SENT tg' }, { verdict: 'SENT tg' }], { 'Contact 2': c2items });
+  check('Invite Marks: every due visit of each invited client -> one item {rec_id, appt_id}, newest first', same(out.map((o) => o.json), [{ rec_id: 'r3', appt_id: 'A-3' }, { rec_id: 'r1', appt_id: 'A-1' }, { rec_id: 'r4', appt_id: 'A-4' }]), out);
+  check('Invite Marks: each item is paired to its send item (Alert Revisit Mark can name the row)', same(out.map((o) => o.pairedItem), [{ item: 0 }, { item: 0 }, { item: 1 }]), out.map((o) => o.pairedItem));
+  check('Invite Marks: an item without marks (older shape) still marks its own row', same(runAll('Invite Marks', [{}], { 'Contact 2': [{ appt_id: 'A-9', rec_id: 'r9' }] }).map((o) => o.json), [{ rec_id: 'r9', appt_id: 'A-9' }]));
+  check('Invite Marks: a lost pairing throws (the run fails -> WF-6) rather than guess which rows to mark', throws(() => runAll('Invite Marks', [{}, {}], { 'Contact 2': [c2items[0]] })));
+  check('Invite Marks: all-items Code node', node('Invite Marks').parameters.mode === 'runOnceForAllItems');
+});
 check('Mark Invited: does not touch status', !('status' in mi));
 
 // ---------------------------------------------------------------- send_message inputs
@@ -188,7 +263,7 @@ const rowShapes = [
   ['Alert Reminder Send', 'Contact', 'reminder-send:', 'Reminder failed for'],
   ['Alert Revisit Send', 'Contact 2', 'revisit-send:', 'Revisit invite failed for'],
   ['Alert Reminder Mark', 'Contact', 'reminder-mark:', 'SENT'],
-  ['Alert Revisit Mark', 'Contact 2', 'revisit-mark:', 'SENT'],
+  ['Alert Revisit Mark', 'Invite Marks', 'revisit-mark:', 'SENT'],
 ];
 for (const [n, up, prefix, head] of rowShapes) {
   const up2 = [{ appt_id: 'A-1', rec_id: 'r1' }, { appt_id: 'A-2', rec_id: 'r2' }];
@@ -205,8 +280,8 @@ for (const [n, up, prefix, head] of rowShapes) {
   check(n + ': lost pairing (3rd item has no source row) does not throw, falls back to "?"', x.length === 3 && x[2].key === prefix + '?' && !x[2].text.includes('undefined'), x);
   check(n + ': code mode all items', node(n).parameters.mode === 'runOnceForAllItems');
 }
-check('Alert Reminder Mark / Alert Revisit Mark: say the client may get the message again', ['Alert Reminder Mark', 'Alert Revisit Mark'].every((n) => /again/.test(shapeOf(n, [{ error: 'x' }], { Contact: [{ appt_id: 'A' }], 'Contact 2': [{ appt_id: 'A' }] })[0].text)));
-check('Alert Reminder Mark / Alert Revisit Mark: the repeat comes with the next daily run, not "every hour"', ['Alert Reminder Mark', 'Alert Revisit Mark'].every((n) => { const t = shapeOf(n, [{ error: 'x' }], { Contact: [{ appt_id: 'A' }], 'Contact 2': [{ appt_id: 'A' }] })[0].text; return !/hour/.test(t) && /daily/.test(t); }));
+check('Alert Reminder Mark / Alert Revisit Mark: say the client may get the message again', ['Alert Reminder Mark', 'Alert Revisit Mark'].every((n) => /again/.test(shapeOf(n, [{ error: 'x' }], { Contact: [{ appt_id: 'A' }], 'Contact 2': [{ appt_id: 'A' }], 'Invite Marks': [{ appt_id: 'A' }] })[0].text)));
+check('Alert Reminder Mark / Alert Revisit Mark: the repeat comes with the next daily run, not "every hour"', ['Alert Reminder Mark', 'Alert Revisit Mark'].every((n) => { const t = shapeOf(n, [{ error: 'x' }], { Contact: [{ appt_id: 'A' }], 'Contact 2': [{ appt_id: 'A' }], 'Invite Marks': [{ appt_id: 'A' }] })[0].text; return !/hour/.test(t) && /daily/.test(t); }));
 {
   const x = shapeOf('Alert Expiry Mark', [{ message: 'nope' }, { error: 'x' }], { 'Has Appt? 2': [rec({ appt_id: 'A-5' }), rec({ appt_id: 'A-6' })] });
   check('Alert Expiry Mark: key expiry:<appt_id>, text names it', x.length === 2 && x[0].key === 'expiry:A-5' && x[1].key === 'expiry:A-6' && x[0].text.includes('A-5') && x[0].text.includes('nope'), x);
@@ -310,7 +385,7 @@ block('Revisit Alert?', () => {
 });
 check('If false outputs go nowhere (an empty item ends the branch)', ['Has Appt?', 'Has Appt? 2', 'Has Appt? 3'].every((n) => targets(n, 1).length === 0));
 check('Send Reminder: success -> Mark Reminded, error -> Alert Reminder Send', same(targets('Send Reminder', 0), ['Mark Reminded']) && same(targets('Send Reminder', 1), ['Alert Reminder Send']));
-check('Send Revisit: success -> Mark Invited, error -> Alert Revisit Send', same(targets('Send Revisit', 0), ['Mark Invited']) && same(targets('Send Revisit', 1), ['Alert Revisit Send']));
+check('Send Revisit: success -> Invite Marks -> Mark Invited, error -> Alert Revisit Send', same(targets('Send Revisit', 0), ['Invite Marks']) && same(targets('Invite Marks'), ['Mark Invited']) && same(targets('Send Revisit', 1), ['Alert Revisit Send']));
 check('Client -> Alert Client, Consenting Clients -> Alert Client 2 (error outputs)', same(targets('Client', 1), ['Alert Client']) && same(targets('Consenting Clients', 1), ['Alert Client 2']));
 check('I1: Mark Reminded and Mark Invited have an error output into their alert (the send already happened)', node('Mark Reminded').onError === 'continueErrorOutput' && node('Mark Invited').onError === 'continueErrorOutput' && same(targets('Mark Reminded', 1), ['Alert Reminder Mark']) && same(targets('Mark Invited', 1), ['Alert Revisit Mark']));
 check('M1: Mark Expired has an error output into Alert Expiry Mark', node('Mark Expired').onError === 'continueErrorOutput' && same(targets('Mark Expired', 1), ['Alert Expiry Mark']));
@@ -331,18 +406,25 @@ block('wf5_guard mirrors WF-5', () => {
   check('wf5_guard exists in tests/lib/airtable.sh', !!m);
   const body = m ? m[1] : '';
   const quoted = [...body.matchAll(/at_all (\w+) "([^"]+)"/g)].map((x) => ({ table: x[1], f: x[2] }));
-  const rem = (quoted.find((q) => q.f.includes("{status}='booked'")) || {}).f || '';
-  for (const H of [1, 24]) {
-    const g = rem.replace('$((h + 24 + m))', String(H + 24)).replace('$h', String(H));
-    check('wf5_guard reminder formula at hours=' + H + ', margin 0 == Due Reminders at reminder_hours_before=' + H, g === expr(dr, { fields: { reminder_hours_before: H } }), g);
+  // wf5_due_formula <hours> <timezone> [margin]: the reminder formula the guard and the live scripts' seeds use
+  const fm = /\nwf5_due_formula\(\) \{\n  printf '%s' "([^"]+)"\n\}/.exec(LIB);
+  check('wf5_due_formula exists in tests/lib/airtable.sh', !!fm);
+  const tpl = fm ? fm[1] : '';
+  const sh = (H, tz, margin = 0) => tpl.split('$(($1 + ${3:-0}))').join(String(H + margin)).split("'$2'").join("'" + tz + "'").split('$1').join(String(H));
+  for (const [H, tz] of [[1, BER], [24, BER], [24, 'America/New_York']]) {
+    let w; try { w = expr(dr, S(H, tz)); } catch (e) { w = 'threw'; }
+    check('wf5_due_formula ' + H + ' ' + tz + ' == Due Reminders at reminder_hours_before=' + H + ', timezone ' + tz + ' (string for string)', sh(H, tz) === w, sh(H, tz));
   }
-  check('wf5_guard reminder window = hours + 24 + margin (the margin only widens it)', rem.includes("DATEADD(NOW(),$((h + 24 + m)),'hours')"));
+  check('wf5_due_formula: the margin widens only the "start within <hours>" branch', sh(1, BER, 1).replace("DATEADD(NOW(),2,'hours')", "DATEADD(NOW(),1,'hours')") === sh(1, BER) && sh(1, BER, 1) !== sh(1, BER));
+  check('wf5_guard asks the reminder rows with wf5_due_formula and Settings.timezone', /at_all Appointments "\$\(wf5_due_formula "\$h" "\$tz" "\$m"\)"/.test(body) && /tz=\$\(at_timezone\)/.test(body));
+  check('at_timezone accepts exactly what the WF-5 expression accepts', LIB.includes('^[A-Za-z_]+(/[A-Za-z0-9_+-]+){0,2}$') && dr.includes('^[A-Za-z_]+(?:[/][A-Za-z0-9_+-]+){0,2}$'));
   const pend = (quoted.find((q) => q.f.includes("{status}='pending'")) || {}).f;
   check('wf5_guard expired-pending formula == Expired Pending and Orphan Pending without their calendar_event_id clause (both block)',
     !!pend && node('Expired Pending').parameters.filterByFormula === pend.replace(/\)$/, ',{calendar_event_id}=BLANK())') && node('Orphan Pending').parameters.filterByFormula === pend.replace(/\)$/, ',NOT({calendar_event_id}=BLANK()))'), pend);
   check('wf5_guard revisit formula == Due Revisits', (quoted.find((q) => q.f.includes("{status}='done'")) || {}).f === node('Due Revisits').parameters.filterByFormula);
   check('wf5_guard consent formula == Consenting Clients (a real client without consent never blocks)', quoted.some((q) => q.table === 'Clients' && q.f === node('Consenting Clients').parameters.filterByFormula));
   check('wf5_guard counts a revisit only when its client is among the consenting ones', /\$yes \| index\(\$c\)\) != null/.test(body));
+  check('M3: wf5_guard also blocks on a real due revisit without a client link (the run alerts the owner about it)', /if \$c == null then/.test(body) && /without a client link - the run would alert the owner/.test(body));
   check('wf5_guard treats as test rows only A-TEST-* appointments and C-test* clients', body.includes('startswith("A-TEST-")') && body.includes('startswith("C-test")'));
   check('wf5_guard names the row and the reason for each refusal', /would send its reminder/.test(body) && /would " \+ \(if/.test(body) && /cancel it/.test(body) && /revisit invitation/.test(body));
 });

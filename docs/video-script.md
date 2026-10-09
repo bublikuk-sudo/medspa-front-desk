@@ -16,16 +16,17 @@ client name, and crop or blur the phone's own number and the WhatsApp header if 
 
 - **Phone number.** With the Meta test number, the filming phone must be one of the 5 recipients added and verified in
   the Meta dashboard.
-- **Booking.** Book the filmed visit for today, inside `Settings.working_hours`, a little more than an hour ahead (the
-  earliest slot offered is `min_lead_min`, 60 minutes, from now). The confirmation reads "We'll send you a reminder the
-  day before", as in production. Being today, it also shows on "Today" in the last shot.
-- **Making the reminder arrive on camera.** WF-5 runs once a day at 07:05 UTC and reminds visits that start within
-  `reminder_hours_before` + 24 hours and were booked at least `reminder_hours_before` before the visit, so with the
-  default 24 hours a visit booked today is never reminded. After the booking shots, use the method of the live tests:
-  set `Settings.reminder_hours_before` to `1` (a visit booked at least an hour before its start is then due at once),
-  then run WF-5 with `medspa-front-desk/scripts/remote.sh 'scripts/n8n-run.sh wf5-reminders'`.
-  **Set `reminder_hours_before` back to `24` straight after**, and do this only when no real client has a visit in the
-  next 25 hours: with the value 1 the run reminds every visit in that window that was booked an hour or more ahead.
+- **Booking.** Book the filmed visit for TOMORROW, inside `Settings.working_hours`. The confirmation reads "We'll send
+  you a reminder the day before", as in production. The "Today" shot is filmed the next morning (or show the row on
+  "Awaiting confirmation" / in the Appointments table instead).
+- **Making the reminder arrive on camera.** WF-5 runs once a day at 07:05 UTC and reminds every visit of tomorrow (by
+  the clinic's calendar, `Settings.timezone`) that was booked at least `reminder_hours_before` before its start, so with
+  the default 24 hours a visit booked today for tomorrow is reminded only if it was booked a full day ahead. After the
+  booking shots, use the method of the live tests: set `Settings.reminder_hours_before` to `1` (the visit booked a
+  moment ago for tomorrow is then due at once), then run WF-5 with
+  `medspa-front-desk/scripts/remote.sh 'scripts/n8n-run.sh wf5-reminders'`.
+  **Set `reminder_hours_before` back to `24` straight after**, and do this only when no real client has a visit
+  tomorrow or in the next hour: with the value 1 the run reminds every such visit booked an hour or more ahead.
 - On WhatsApp the reminder goes out as the approved template `medspa_reminder`, so it arrives whether or not the
   24-hour window is open.
 - **Clean up** afterwards: cancel the visit through the bot (or in Airtable and the calendar) and remove the demo client.

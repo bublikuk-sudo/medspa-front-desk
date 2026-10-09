@@ -93,10 +93,11 @@ Every account is the clinic's, registered on the clinic's card (see "Handover" b
 - [ ] **Settings**: `business_name`, `timezone`, `working_hours`, `calendar_id`, `owner_contact`, `whatsapp_number`,
       `cancellation_hours`, `intake_form_url` (the clinic's own intake and consent form), and check
       `reminder_hours_before`, `pending_ttl_min`, `slot_step_min`, `min_lead_min`. Reminders: WF-5 runs once a day at
-      07:05 UTC and sends each reminder the day before the visit, at about 08:05 Berlin time in winter and 09:05 in
-      summer (window `reminder_hours_before` + 24 hours); a visit booked less than `reminder_hours_before` ahead gets
-      none. For a clinic in another time zone, check that 07:05 UTC falls in its morning (the hour is in the `Daily`
-      node of `workflows/wf5-reminders.json`, the 24 next to it in `Due Reminders`).
+      07:05 UTC and reminds every visit of tomorrow by the clinic's calendar (`Settings.timezone`), at about 08:05 Berlin
+      time in winter and 09:05 in summer; a visit booked after that run but still `reminder_hours_before` ahead is
+      reminded on its own morning, and one booked less than `reminder_hours_before` ahead gets none. Condition: in the
+      clinic's time zone the run hour must come before the clinic's first appointment of the day (opening time). For
+      another time zone, change the hour in the `Daily` node of `workflows/wf5-reminders.json`.
 - [ ] **Services**: the clinic's price list (`service_id` lowercase, duration, price, `active`).
 - [ ] **Knowledge**: the clinic's document, one paragraph per row with a `topic`. No medical advice in it: the bot
       answers only from these rows.
@@ -150,7 +151,8 @@ What changes per client: one Settings row, the Services and Knowledge tables, an
       above 0, once that many days have passed. Agree with the clinic where the opt-in is collected (a consent line in
       its intake and consent form is the usual place) and who ticks the box in Airtable; the bot never ticks it. A
       client without the box gets no invitation and the visit stays due, so ticking it later still sends the invitation
-      on the next daily run. Unticking it stops further invitations.
+      on the next daily run (one per client, for the newest due visit; the older due visits are marked with it).
+      Unticking it stops further invitations.
 - [ ] **Knowledge edits are re-indexed by hand.** After the clinic changes the Knowledge table, run
       `medspa-front-desk/scripts/remote.sh 'scripts/n8n-run.sh wf4-knowledge-ingest'`; the owner gets "Knowledge base
       re-indexed: N paragraphs". Without it the bot uses the old text until the daily WF-4 run (06:35 UTC) repairs the

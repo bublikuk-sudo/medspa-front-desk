@@ -45,18 +45,18 @@ echo "variant $vid active"
 
 at_update Settings "$sid" '{"reminder_hours_before": 1}' > /dev/null || { echo "cannot set Settings" >&2; exit 1; }
 oc=$(at_rec_id Clients "{client_id}='C-test-owner'") || { echo "C-test-owner client missing" >&2; exit 1; }
-iso() { date -u -d "$1" +%Y-%m-%dT%H:%M:00.000Z; }
-s=$(iso "+62 minutes"); e=$(iso "+92 minutes")
+tz=$(at_timezone) || exit 1   # TOMORROW at clinic hours: WF-5 reminds the day before (local date in Settings.timezone)
+s=$(at_tomorrow_utc "$tz" 11:00); e=$(at_tomorrow_utc "$tz" 11:30)
 at_create Appointments "$(jq -nc --arg oc "$oc" --arg s "$s" --arg e "$e" '{appt_id:"A-TEST-MARKFAIL", client_id:"C-test-owner", client:[$oc], service_id:"botox", start_iso:$s, end_iso:$e, start_dt:$s, status:"booked", created_via:"test"}')" > /dev/null
 echo "A-TEST-MARKFAIL created, starts $s"
-due="AND({status}='booked',IS_AFTER({start_dt},NOW()),IS_BEFORE({start_dt},DATEADD(NOW(),1,'hours')),DATETIME_DIFF({start_dt},CREATED_TIME(),'hours')>=1)"
+due=$(wf5_due_formula 1 "$tz")   # WF-5's own Due Reminders formula at reminder_hours_before = 1
 ok=0
 for _ in $(seq 1 32); do
   n=$(at_list Appointments "$due" | jq '[.records[].fields.appt_id] | length')
   [ "$n" = 1 ] && { ok=1; break; }
   sleep 15
 done
-[ "$ok" = 1 ] || { echo "the row never entered the 1-hour window (n=$n)" >&2; exit 1; }
+[ "$ok" = 1 ] || { echo "WF-5's formula never selected the row (n=$n)" >&2; exit 1; }
 
 execs() { curl -fsS -H "X-N8N-API-KEY: $N8N_API_KEY" "$API/executions?workflowId=$(jq -r --arg n "$1" '.[$n]' deploy/workflow-ids.json)&limit=30&includeData=true" | jq -c --arg t "$2" '.data[] | select(.startedAt >= $t)'; }
 report() {

@@ -4,7 +4,7 @@
     {
       "id": "5a0e0017-0001-4c00-8000-000000000001",
       "name": "Daily",
-      "notes": "Once a day at 07:05 UTC (GENERIC_TIMEZONE=UTC): 08:05 in Berlin in winter (CET), 09:05 in summer (CEST), before the clinic opens. Once a day for the Airtable Free plan (1,000 API calls a month per workspace): one run is 5 searches when nothing is due. The interval (24 h) is also written into Due Reminders' window (reminder_hours_before + 24): change both together.",
+      "notes": "Once a day at 07:05 UTC (GENERIC_TIMEZONE=UTC): 08:05 in Berlin in winter (CET), 09:05 in summer (CEST), before the clinic opens. Once a day for the Airtable Free plan (1,000 API calls a month per workspace): one run is 5 searches when nothing is due. Condition on the hour: in the clinic's time zone the run must come before the clinic's first appointment of the day, because a visit booked after the previous run is reminded on its own morning (Due Reminders); every visit of tomorrow is reminded by today's run whatever the hour.",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.4,
       "position": [0, 300],
@@ -62,7 +62,7 @@
     {
       "id": "5a0e0017-0004-4c00-8000-000000000004",
       "name": "Due Reminders",
-      "notes": "Booked, start inside the next reminder_hours_before + 24 hours, and booked at least reminder_hours_before hours ahead. The + 24 is the Daily trigger's interval: the run the day before reminds the visit (BOOKED says 'a reminder the day before'); keep it equal to the schedule. A client who books a visit inside reminder_hours_before is not sent 'Reply YES to confirm' later.",
+      "notes": "Booked, start ahead, and (the visit's local date in Settings.timezone is tomorrow's local date OR it starts within reminder_hours_before hours), booked at least reminder_hours_before ahead. So the daily run reminds every visit of tomorrow, by the clinic's calendar (BOOKED says 'a reminder the day before'); a visit booked after that run but still reminder_hours_before ahead is reminded on its own morning; a visit booked inside reminder_hours_before gets none. Settings.timezone must be a plain IANA name, else this expression throws (run fails -> WF-6). tests/lib/airtable.sh wf5_due_formula builds the same string for the live tests' guards (the stub suite pins the two).",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
@@ -79,7 +79,7 @@
         "operation": "search",
         "base": { "__rl": true, "value": "ATBASE", "mode": "id" },
         "table": { "__rl": true, "value": "ATTBL:Appointments", "mode": "id" },
-        "filterByFormula": "={{ \"AND({status}='booked',IS_AFTER({start_dt},NOW()),IS_BEFORE({start_dt},DATEADD(NOW(),\" + (Number($json.fields.reminder_hours_before) + 24) + \",'hours')),DATETIME_DIFF({start_dt},CREATED_TIME(),'hours')>=\" + Number($json.fields.reminder_hours_before) + \")\" }}",
+        "filterByFormula": "={{ \"AND({status}='booked',IS_AFTER({start_dt},NOW()),OR(DATETIME_FORMAT(SET_TIMEZONE({start_dt},'\" + String($json.fields.timezone || '').match(/^[A-Za-z_]+(?:[/][A-Za-z0-9_+-]+){0,2}$/)[0] + \"'),'YYYY-MM-DD')=DATETIME_FORMAT(SET_TIMEZONE(DATEADD(NOW(),1,'days'),'\" + String($json.fields.timezone || '').match(/^[A-Za-z_]+(?:[/][A-Za-z0-9_+-]+){0,2}$/)[0] + \"'),'YYYY-MM-DD'),NOT(IS_AFTER({start_dt},DATEADD(NOW(),\" + Number($json.fields.reminder_hours_before) + \",'hours')))),DATETIME_DIFF({start_dt},CREATED_TIME(),'hours')>=\" + Number($json.fields.reminder_hours_before) + \")\" }}",
         "returnAll": true,
         "options": {}
       }
@@ -419,14 +419,14 @@
     {
       "id": "5a0e0017-0021-4c00-8000-000000000021",
       "name": "Contact 2",
-      "notes": "Joins the due visits (Has Appt? 3) with the consenting clients (Consenting Clients) by the Clients record id. A visit whose client did not consent gets no item: not sent, not marked, so ticking the consent later still lets the invitation go out. A visit without a client link gets an alert item (Revisit Alert? -> Dedupe Alerts).",
+      "notes": "Joins the due visits (Has Appt? 3) with the consenting clients (Consenting Clients) by the Clients record id. At most ONE invitation per client per run, built from the client's NEWEST due visit (latest start); marks lists all of that client's due visits, which Invite Marks -> Mark Invited mark after the send succeeds, so a backlog (consent ticked late) never sends stale invitations. A visit whose client did not consent gets no item: not sent, not marked. A visit without a client link gets an alert item (Revisit Alert? -> Dedupe Alerts).",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [1100, 860],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// Marketing consent: a due visit is invited only when its client is among the consenting clients ($input = the one\n// Consenting Clients search; marketing_consent must be the checkbox value true, checked again here). A visit whose client\n// did not consent gets no item, so it is neither sent nor marked and goes out on a later run once the clinic ticks the box.\n// Same contact rule as Contact. A visit without a client link cannot be matched to anyone: an owner alert item, never a send.\nconst consent = new Map($input.all().map(i => i.json || {}).filter(c => c.id && (c.fields || {}).marketing_consent === true).map(c => [c.id, c.fields]));\nconst out = [];\nfor (const ar of $('Has Appt? 3').all(0).map(i => i.json || {})) {\n  const a = ar.fields || {};\n  if (!a.appt_id) continue;\n  const cid = (a.client || [])[0];\n  if (!cid) { out.push({ json: { key: 'client2:' + a.appt_id, text: '❌ WF-5 skipped the revisit invite of ' + a.appt_id + ': the visit has no client link, so no client (and no marketing consent) can be found' } }); continue; }\n  const c = consent.get(cid);\n  if (!c) continue;\n  const phone = String(c.phone || '').trim();\n  const chat = String(c.telegram_chat_id || '').trim();\n  const contact_id = (a.created_via === 'wa' && phone) ? 'wa:' + phone : (chat ? 'tg:' + chat : (phone ? 'wa:' + phone : ''));\n  out.push({ json: { contact_id, appt_id: a.appt_id, rec_id: ar.id } });\n}\nreturn out;"
+        "jsCode": "// Marketing consent: a due visit is invited only when its client is among the consenting clients ($input = the one\n// Consenting Clients search; marketing_consent must be the checkbox value true, checked again here). A visit whose client\n// did not consent gets no item, so it is neither sent nor marked and goes out on a later run once the clinic ticks the box.\n// At most ONE invitation per client per run: the NEWEST due visit (latest start) is the one sent; marks = every due visit\n// of that client, newest first, so Invite Marks -> Mark Invited mark them all after the send and an older one never sends a\n// second, stale invitation. Same contact rule as Contact, on the newest visit. A visit without a client link cannot be\n// matched to anyone: an owner alert item, never a send.\nconst consent = new Map($input.all().map(i => i.json || {}).filter(c => c.id && (c.fields || {}).marketing_consent === true).map(c => [c.id, c.fields]));\nconst out = [], byClient = new Map();\nfor (const ar of $('Has Appt? 3').all(0).map(i => i.json || {})) {\n  const a = ar.fields || {};\n  if (!a.appt_id) continue;\n  const cid = (a.client || [])[0];\n  if (!cid) { out.push({ json: { key: 'client2:' + a.appt_id, text: '❌ WF-5 skipped the revisit invite of ' + a.appt_id + ': the visit has no client link, so no client (and no marketing consent) can be found' } }); continue; }\n  if (!consent.has(cid)) continue;\n  if (!byClient.has(cid)) byClient.set(cid, []);\n  byClient.get(cid).push({ rec_id: ar.id, appt_id: a.appt_id, created_via: a.created_via, start: Date.parse(a.start_dt || a.start_iso || '') || 0 });\n}\nfor (const [cid, rows] of byClient) {\n  rows.sort((x, y) => (y.start - x.start) || String(y.appt_id).localeCompare(String(x.appt_id)));\n  const n = rows[0], c = consent.get(cid);\n  const phone = String(c.phone || '').trim();\n  const chat = String(c.telegram_chat_id || '').trim();\n  const contact_id = (n.created_via === 'wa' && phone) ? 'wa:' + phone : (chat ? 'tg:' + chat : (phone ? 'wa:' + phone : ''));\n  out.push({ json: { contact_id, appt_id: n.appt_id, rec_id: n.rec_id, marks: rows.map(r => ({ rec_id: r.rec_id, appt_id: r.appt_id })) } });\n}\nreturn out;"
       }
     },
     {
@@ -490,16 +490,29 @@
       }
     },
     {
+      "id": "5a0e0017-0037-4c00-8000-000000000037",
+      "name": "Invite Marks",
+      "notes": "Send Revisit success -> one item per due visit of that client (Contact 2's marks: the invited newest one and the older ones), each paired to its send item, so Mark Invited marks them all. A lost pairing throws (the run fails -> WF-6) rather than guess which rows to mark.",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, 860],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// One item per due visit of each invited client: the newest (the one sent) and the older ones, which must never send a\n// second, stale invitation. itemMatching(i) finds the Contact 2 item behind send item i; it throws on a lost pairing.\nconst out = [];\n$input.all().forEach((it, i) => {\n  const c = $('Contact 2').itemMatching(i).json;\n  for (const m of (c.marks || [{ rec_id: c.rec_id, appt_id: c.appt_id }])) out.push({ json: { rec_id: m.rec_id, appt_id: m.appt_id }, pairedItem: { item: i } });\n});\nreturn out;"
+      }
+    },
+    {
       "id": "5a0e0017-0023-4c00-8000-000000000023",
       "name": "Mark Invited",
-      "notes": "Error output: the invitation is already SENT, a failed mark means it goes out again on the next run (Alert Revisit Mark tells the owner).",
+      "notes": "One update per item from Invite Marks (each due visit of an invited client). Error output: the invitation is already SENT, a failed mark means it goes out again on the next run (Alert Revisit Mark tells the owner).",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
       "onError": "continueErrorOutput",
       "type": "n8n-nodes-base.airtable",
       "typeVersion": 2.2,
-      "position": [1760, 860],
+      "position": [1980, 780],
       "credentials": {
         "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
       },
@@ -512,7 +525,7 @@
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
-            "id": "={{ $('Contact 2').item.json.rec_id }}",
+            "id": "={{ $json.rec_id }}",
             "revisit_invited_at": "={{ $now.toUTC().toISO() }}"
           },
           "matchingColumns": ["id"],
@@ -583,11 +596,11 @@
       "notes": "Mark Invited error output: the invitation WAS sent but revisit_invited_at stays empty, so it is sent again on the next run.",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1980, 860],
+      "position": [2200, 780],
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const err = j => String((j && (j.message || (j.error && (j.error.message || j.error)))) || 'see WF-6').slice(0, 300);\nconst who = i => { try { return String($('Contact 2').itemMatching(i).json.appt_id || '?'); } catch (e) { return '?'; } };\nreturn $input.all().map((it, i) => { const a = who(i); return { json: { key: 'revisit-mark:' + a, text: '⚠️ The revisit invitation for ' + a + ' WAS SENT but marking it as invited failed (' + err(it.json) + '). The client may receive the same invitation again with every daily WF-5 run until the row is fixed.' } }; });"
+        "jsCode": "const err = j => String((j && (j.message || (j.error && (j.error.message || j.error)))) || 'see WF-6').slice(0, 300);\nconst who = i => { try { return String($('Invite Marks').itemMatching(i).json.appt_id || '?'); } catch (e) { return '?'; } };\nreturn $input.all().map((it, i) => { const a = who(i); return { json: { key: 'revisit-mark:' + a, text: '⚠️ The revisit invitation for ' + a + ' WAS SENT but marking it as invited failed (' + err(it.json) + '). The client may receive the same invitation again with every daily WF-5 run until the row is fixed.' } }; });"
       }
     },
     {
@@ -733,10 +746,11 @@
     },
     "Send Revisit": {
       "main": [
-        [{ "node": "Mark Invited", "type": "main", "index": 0 }],
+        [{ "node": "Invite Marks", "type": "main", "index": 0 }],
         [{ "node": "Alert Revisit Send", "type": "main", "index": 0 }]
       ]
     },
+    "Invite Marks": { "main": [[{ "node": "Mark Invited", "type": "main", "index": 0 }]] },
     "Mark Invited": { "main": [[], [{ "node": "Alert Revisit Mark", "type": "main", "index": 0 }]] },
     "Alert Reminder Send": { "main": [[{ "node": "Dedupe Alerts", "type": "main", "index": 0 }]] },
     "Alert Revisit Send": { "main": [[{ "node": "Dedupe Alerts", "type": "main", "index": 0 }]] },

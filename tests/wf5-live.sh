@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Live test of WF-5 (Task 17 phase 2). Runs ON THE VPS (cwd /opt/medspa), Telegram only.
-#   scripts/remote.sh 'tests/wf5-live.sh run'      create the rows, wait for the window, run WF-5 twice, print the result
+#   scripts/remote.sh 'tests/wf5-live.sh run'      create the rows (booked visits TOMORROW 11:00 local), run WF-5 twice, print
 #   scripts/remote.sh 'tests/wf5-live.sh clean'    delete every A-TEST-* row and the C-test-* clients (A-TEST-REM goes too)
-# It sets Settings.reminder_hours_before to 1 and ALWAYS restores the original value (trap). It refuses to start when a real
-# (non A-TEST) row would be touched by WF-5 or the hourly :05 run is near. It sends real Telegram messages to the owner.
+# It sets Settings.reminder_hours_before to 1 (so a visit booked a moment ago for tomorrow is due) and ALWAYS restores the
+# original value (trap). It refuses to start when WF-5 would act on a real row (tests/lib/airtable.sh wf5_guard) or near the
+# daily 07:05 UTC run (its minute guard is older and stricter). It sends real Telegram messages to the owner.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 source tests/lib/airtable.sh
@@ -56,7 +57,8 @@ at_create Clients "$(jq -nc --arg t "$owner_chat" '{client_id:"C-test-owner", na
 at_create Clients '{"client_id":"C-test-nocontact","name":"No Contact","language":"en","status":"active"}' > /dev/null
 oc=$(at_rec_id Clients "{client_id}='C-test-owner'"); nc=$(at_rec_id Clients "{client_id}='C-test-nocontact'")
 iso() { date -u -d "$1" +%Y-%m-%dT%H:%M:00.000Z; }
-s=$(iso "+62 minutes"); e=$(iso "+92 minutes"); d=$(iso "-90 days")
+tz=$(at_timezone) || exit 1   # the visits go to TOMORROW at clinic hours: WF-5 reminds the day before (local date in Settings.timezone)
+s=$(at_tomorrow_utc "$tz" 11:00); e=$(at_tomorrow_utc "$tz" 11:30); d=$(iso "-90 days")
 mk() { at_create Appointments "$(jq -nc "$1")" > /dev/null; }
 mk "{appt_id:\"A-TEST-REM\", client_id:\"C-test-owner\", client:[\"$oc\"], service_id:\"botox\", start_iso:\"$s\", end_iso:\"$e\", start_dt:\"$s\", status:\"booked\", created_via:\"test\"}"
 mk "{appt_id:\"A-TEST-NOCONTACT\", client_id:\"C-test-nocontact\", client:[\"$nc\"], service_id:\"botox\", start_iso:\"$s\", end_iso:\"$e\", start_dt:\"$s\", status:\"booked\", created_via:\"test\"}"
@@ -66,16 +68,16 @@ mk '{appt_id:"A-TEST-ORPH", client_id:"C-test-orph", service_id:"botox", start_i
 mk "{appt_id:\"A-TEST-DONE90\", client_id:\"C-test-owner\", client:[\"$oc\"], service_id:\"hydrafacial\", start_iso:\"$d\", end_iso:\"$d\", start_dt:\"$d\", status:\"done\", next_visit_in:60, created_via:\"test\"}"
 echo "rows created; A-TEST-REM starts $s"
 
-# ---- wait (bounded, 8 min) until the three booked rows are inside the 1-hour window
-due="AND({status}='booked',IS_AFTER({start_dt},NOW()),IS_BEFORE({start_dt},DATEADD(NOW(),1,'hours')),DATETIME_DIFF({start_dt},CREATED_TIME(),'hours')>=1)"
+# ---- wait (bounded, 8 min) until WF-5's own Due Reminders formula (at reminder_hours_before = 1) selects the three booked rows
+due=$(wf5_due_formula 1 "$tz")
 ok=0
 for _ in $(seq 1 32); do
   n=$(at_list Appointments "$due" | jq '[.records[].fields.appt_id | select(startswith("A-TEST-"))] | length')
   [ "$n" = 3 ] && { ok=1; break; }
   sleep 15
 done
-[ "$ok" = 1 ] || { echo "the rows never entered the 1-hour window (n=$n)" >&2; exit 1; }
-echo "window open at $(date -u +%H:%M:%S)"
+[ "$ok" = 1 ] || { echo "WF-5's formula never selected the three rows (n=$n)" >&2; exit 1; }
+echo "rows due at $(date -u +%H:%M:%S)"
 
 t0=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
 echo "== RUN 1"; scripts/n8n-run.sh wf5-reminders

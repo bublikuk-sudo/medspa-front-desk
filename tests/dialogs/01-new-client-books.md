@@ -5,8 +5,10 @@ then the reminder arrives and the client answers YES. Played in both channels by
 `tg:9000000101` and `wa:+15550000101`).
 
 **Preconditions.** `tests/cleanup.sh` has run: no Clients row for the contact, no appointments, no chat memory, no
-test_outbox rows. 2030-01-07 (a Monday) has free morning slots. No real appointment is due for a WF-5 action in the next
-2 hours (`reminder_leg` refuses otherwise).
+test_outbox rows. 2030-01-07 (a Monday) has free morning slots. A WF-5 run at `reminder_hours_before = 1` would act on
+no real row: no real visit tomorrow (local date in `Settings.timezone`) or within the next 2 hours, no expired real
+pending offer, no due revisit of a real client who consented or has no client link (`reminder_leg` refuses otherwise,
+naming the row; `tests/lib/airtable.sh` `wf5_guard`).
 
 | # | Client writes | Expected reaction | Expected state |
 |---|---|---|---|
@@ -15,7 +17,7 @@ test_outbox rows. 2030-01-07 (a Monday) has free morning slots. No real appointm
 | 3 | Monday, January 7, 2030, in the morning, please. | agent lists free slots with times | the offer saved on the client |
 | 4 | The earliest one, please. | `PENDING_SUMMARY` only (the agent's own text after PENDING is suppressed), with the cancellation policy ("Free cancellation up to 24 hours before.") before "Reply YES to confirm" | Appointments `pending` |
 | 5 | YES | `BOOKED` ("We'll send you a reminder the day before", how to cancel and "cancellation is free up to 24 hours before your visit"), then `BOOKED_INTAKE` (first visit); the list YES goes to Confirm, no Agent | `booked`, event `Botox — <name>` |
-| 6 | *(runner: `reminder_leg`)* the visit is moved to about an hour ahead in Airtable, `reminder_hours_before = 1` behind an EXIT trap, WF-5 Run Now | `REMINDER`; on WhatsApp through the template path `medspa_reminder` (wa_template), on Telegram free-form | `reminded`, `reminder_sent_at` set; Settings restored |
+| 6 | *(runner: `reminder_leg`)* the visit is moved to TOMORROW 11:00 local in Airtable, `reminder_hours_before = 1` behind an EXIT trap, WF-5 Run Now | `REMINDER`; on WhatsApp through the template path `medspa_reminder` (wa_template), on Telegram free-form | `reminded`, `reminder_sent_at` set; Settings restored |
 | 7 | YES | `REMINDER_CONFIRMED`; Reminder Reply, no Agent | `confirmed` |
 
 **Final state.** Clients `client_id` starts with `C-test-` (WF-1 marks a client created through Test Inbound), `status=active`, `language=en`, the name contains "Dana"; exactly one appointment, `confirmed`,

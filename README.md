@@ -152,7 +152,8 @@ What an EU deployment needs. This is a checklist, not legal advice.
   `Appointments.next_visit_in` > 0, once that many days have passed. The checkbox is empty by default and only the
   clinic ticks it, when the client has opted in (for example in the intake and consent form); the bot never sets it.
   A visit of a client without consent is neither sent nor marked, so ticking the box later still lets the invitation
-  go out on the next daily run. Withdrawn consent: untick the box.
+  go out on the next daily run: one invitation per client, for the newest due visit, and all of that client's due
+  visits are then marked, so a backlog never sends a stack of stale invitations. Withdrawn consent: untick the box.
 - **Privacy notice.** The clinic's patient privacy notice names the AI assistant and the processors above.
 - **AI disclosure.** The bot tells a new client in its first reply that it is the clinic's AI assistant, and answers
   truthfully when asked (EU AI Act Art. 50).
@@ -228,8 +229,8 @@ and a licence (see the contract checklist in the onboarding document).
   message after 1,000 free per number per month, and stops delivering them for businesses with no payment method on
   file.
 - **Airtable: the demo runs on the Free plan; a clinic needs a paid one.** The Free plan allows 1,000 public API calls
-  per month per workspace and 5 requests per second; Team allows 100,000 (support.airtable.com, "Managing API call
-  limits in Airtable"). The scheduled jobs were cut for Free: WF-5 runs once a day (5 Airtable searches, 6 once a
+  per month per workspace and 5 requests per second per base; Team allows 100,000 calls per month
+  (support.airtable.com, "Managing API call limits in Airtable", checked 2026-10-09). The scheduled jobs were cut for Free: WF-5 runs once a day (5 Airtable searches, 6 once a
   visit waits for a client's consent), WF-4 checks Knowledge once a day (1 search) and is re-indexed by hand after an
   edit (`scripts/n8n-run.sh wf4-knowledge-ingest`). Idle load: 180 to 210 calls in a 30-day month, down from 7,200
   (hourly WF-5 3,600, WF-4's 15-minute Airtable trigger 2,880, its hourly check 720). Counted from the workflow JSON, a
@@ -290,11 +291,11 @@ silent for everyone; here a workflow that throws stays active, the owner gets an
 - Two clients and one slot: if the second confirms after the first, they get `SLOT_TAKEN` with alternatives; two
   confirmations at the same instant could both succeed (not reproduced).
 - A visit booked less than `reminder_hours_before` ahead gets no reminder.
-- WF-5 runs once a day (Airtable Free plan), at 07:05 UTC, and reminds every visit that starts within the next
-  `reminder_hours_before` + 24 hours (48 by default): the reminder arrives the day before the visit, at about 08:05
-  Berlin time in winter and 09:05 in summer, so about 25 to 35 hours ahead for a clinic open 10:00-20:00 (the booking
-  confirmation says "We'll send you a reminder the day before"). A visit booked after that run but still at least
-  `reminder_hours_before` ahead is reminded on the morning of the visit day. Expired `pending` offers are marked
+- WF-5 runs once a day (Airtable Free plan), at 07:05 UTC, and reminds every visit of tomorrow by the clinic's
+  calendar (`Settings.timezone`): the reminder arrives the day before the visit, at about 08:05 Berlin time in winter
+  and 09:05 in summer (the booking confirmation says "We'll send you a reminder the day before"). A visit booked after
+  that run but still at least `reminder_hours_before` ahead is reminded on the morning of the visit day, so the run
+  hour must come before the clinic's first appointment of the day. Expired `pending` offers are marked
   cancelled by the same daily run; until then a late YES gets "That offer has expired" from `confirm_booking`.
 - A Knowledge edit reaches the bot after `scripts/n8n-run.sh wf4-knowledge-ingest`, or with the next daily WF-4 run.
 - An exhausted Anthropic credit reaches the owner as "Bad request - please check your parameters"; a fix that passes
