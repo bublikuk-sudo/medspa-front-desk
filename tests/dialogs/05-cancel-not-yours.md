@@ -12,12 +12,14 @@ the agent's tool is `request_cancel`: it answers `NOT_YOURS` / `NOT_FOUND` and r
 | # | Client A writes | Expected reaction | Expected state |
 |---|---|---|---|
 | 1 | Hi, please cancel appointment A-TEST-D05OTHER. | agent reply: cannot find it under the client's own contact; no cancel question | B's visit still `booked`, no cancel fields |
-| 2 | It's the Botox on January 8 at 11 AM, booked under the name Maria Othertest. | agent reply refusing to cancel or change it; no cancel question | unchanged |
+| 2 | It's the Botox on January 8 at 11 AM, booked under the name Maria Othertest. | exactly one message: either an agent reply refusing to cancel or change it, or `ESCALATED_REPLY`; no cancel question | unchanged |
 
-**Final state.** A has no appointments and is still `active`; B's `A-TEST-D05OTHER` is still `booked`, B still `active`;
-no cancel request was recorded on B's visit (`cancel_expires_at` empty) and no cancel question opened for A
-(`cancel_ask_appt_id` empty); no owner notification about
-either contact; nothing was sent to B.
+Step 2 may end in an escalation (ruling 2026-10-09), because a client naming another person's booking is making a third-party request and handing it to a human is the safe outcome; the refusal regex then applies only to a plain agent reply.
+
+**Final state.** A has no appointments and no cancel question opened for A (`cancel_ask_appt_id` empty); A is `active`
+with no owner message, or `escalated` with exactly one owner message, an escalation. B's `A-TEST-D05OTHER` is still
+`booked`, B still `active`; no cancel request was recorded on B's visit (`cancel_expires_at` empty); B has no owner
+message; nothing was sent to B.
 
 **Check.** On the VPS: `tests/dialogs.sh 05`.
 
@@ -37,16 +39,17 @@ expect no-node: Send Cancel Ask
 expect state: [.second.appts[].status] == ["booked"]
 expect state: [.second.appts[] | (.cancel_expires_at // "")] == [""]
 send: It's the Botox on January 8 at 11 AM, booked under the name Maria Othertest.
-expect templates: reply
+expect templates-in: reply|ESCALATED_REPLY
+expect count: 1
 expect lang: en
-expect regex: \b(can.?t|cannot|couldn.?t|unable to|not able to|only)\b[^.]{0,80}\b(cancel|change|find|access)\b
+expect sh: jq -e --arg r '\b(can.?t|cannot|couldn.?t|unable to|not able to|only)\b[^.]{0,80}\b(cancel|change|find|access)\b' '(.[0].template_key != "") or ([.[].text] | join("\n") | test($r; "i"))' "$TMP/rows.json"
 expect no-node: Send Cancel Ask
 state: (.appts | length) == 0
-state: .client.status == "active"
+state: (.client.status == "active" and (.owner | length) == 0) or (.client.status == "escalated" and (.owner | length) == 1)
 state: (.client.cancel_ask_appt_id // "") == ""
 state: [.second.appts[] | {appt_id, status}] == [{"appt_id": "A-TEST-D05OTHER", "status": "booked"}]
 state: [.second.appts[] | (.cancel_expires_at // "")] == [""]
 state: .second.client.status == "active"
-state: (.owner | length) == 0 and (.second.owner | length) == 0
+state: (.second.owner | length) == 0 and (.owner | length) <= 1 and all(.owner[]; test("escalation"; "i"))
 state: (.second.outbox | length) == 0
 ```

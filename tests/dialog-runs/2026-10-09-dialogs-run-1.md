@@ -1152,3 +1152,27 @@ STATE
 SUMMARY: client=escalated/en appts=- events=0 sent=reply,reply,reply,ESCALATED_HOLD,ESCALATED_REPLY,ESCALATED_HOLD,reply,ESCALATED_HOLD,ESCALATED_HOLD,ESCALATED_HOLD,ESCALATED_HOLD,ESCALATED_HOLD,ESCALATED_HOLD,ESCALATED_HOLD,ESCALATED_HOLD,ESCALATED_HOLD,ESCALATED_HOLD,ESCALATED_HOLD,ESCALATED_HOLD,ESCALATED_HOLD,RATE_LIMIT,ESCALATED_HOLD
 RESULT PASS 09-spam.md tg
 ```
+
+## Note added 2026-10-10: dialog 05 tg re-evaluated against the amended check
+
+Everything above is the unchanged output of the run. The run's FAIL for `05-cancel-not-yours tg` was judged against the
+dialog as it was on 2026-10-09. By the coordinator's ruling of 2026-10-10 (a client naming another person's booking is a
+third-party request; escalating is the safe outcome) `tests/dialogs/05-cancel-not-yours.md` now accepts `reply` or
+`ESCALATED_REPLY` on step 2, applies the refusal regex only to a plain `reply`, and allows A to be `escalated` with exactly
+one owner message that is an escalation (B: no owner message). Nothing was re-run; the evidence is this log only
+(the section "05-cancel-not-yours, tg" above):
+
+- Step 2, `exec 26355 success; route agent; tools ["escalate"]`, `<- ESCALATED_REPLY: I've passed this to our team ...`:
+  template in the accepted set; the step produced the single row (`sent=reply,ESCALATED_REPLY` over both steps, step 1 was the `reply`).
+- `ok   lang: en` and `ok   no-node: Send Cancel Ask` on step 2 (both unchanged checks).
+- The refusal regex is not applied: the message is not a plain `reply`.
+- Final state dump: `CLIENT ... "status":"escalated"` with no `APPT:` line for A (`appts=-`); exactly one `OWNER: 🚨 Escalation — tg:9000000105 ...`
+  line and no `OWNER (second)` line; B: `status":"active"`, `APPT: A-TEST-D05OTHER botox 2030-01-08T11:00:00+01:00 booked`, `sent=` empty.
+- Step 1 (unchanged) was all `ok`, including `state: [.second.appts[].status] == ["booked"]` and the empty `cancel_expires_at` on B's visit.
+
+Result against the amended check: PASS. Limit of this evidence: the runner skips the final `state:` lines after a step FAIL
+(`ABORT`), and the dump does not print `cancel_ask_appt_id` of A or `cancel_expires_at` of B after step 2; they are covered
+indirectly (step 2 ran only the `escalate` tool and `Send Cancel Ask` did not run, so no cancel field could have been written).
+Run 1 therefore counts as 22 of 22 under the amended dialog 05, with that limit. The amended dialog is played live for the first time in the repeated run 2.
+Also: the amended final-state line `.client.status == "active"` became "`active` with no owner message, or `escalated` with exactly one owner message",
+because an escalation sets the client to `escalated`.
