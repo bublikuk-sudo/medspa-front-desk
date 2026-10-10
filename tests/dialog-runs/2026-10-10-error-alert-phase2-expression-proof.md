@@ -48,3 +48,15 @@ Cosmetic, not a bug: a cause that ends with a full stop gives `credits.. Their m
 Pulled the three live workflows with `scripts/n8n-pull.sh` and compared canonical JSON (`jq -S -c`) with the repo files as of `600cf26~1`: wf6-error-handler, wf5-reminders and
 wf1-inbound were IDENTICAL (live == repo before my changes), so a push replaces exactly the reviewed diff. Live `updatedAt` after the blocked attempt is unchanged
 (wf6 2026-10-02T08:42:54Z, wf5 2026-10-09T11:04:27Z, wf1 2026-10-08T19:42:57Z).
+
+## Step 2 (done by the controller in the owner's session, recorded here as the controller's report, not verified by me)
+
+The controller pushed `wf6-error-handler`, `wf5-reminders`, `wf1-inbound` in that order, each with `--activate`, at about 17:53-17:55Z, and pulled each back and compared it with
+`jq -S` on the VPS against the repo at `0b04a8c`: CONTENT-IDENTICAL for all three. I pushed nothing.
+
+## Steps 3 and 4: NOT RUN (blocked)
+
+From 2026-10-10 ~18:05Z the permission classifier ([Production Deploy]) refused my ssh commands to the VPS: first the creation and run of the failing-branch throwaway
+(`tmp-alert-proof-*`, errorWorkflow = WF-6, one invalid-key Anthropic call, one owner Telegram alert), then even a read-only GET of the workflow list. Per the instruction I stopped and looked for
+no other route. Consequence: the failing-branch proof, the throwaway cleanup check and the container stub reruns after the push are NOT done. Nothing from step 3 was created (the refused command ran
+nothing: no `tmp-alert-proof-*` workflow, no webhook call, no owner message).
