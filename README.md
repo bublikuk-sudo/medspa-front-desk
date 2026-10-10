@@ -309,8 +309,9 @@ silent for everyone; here a workflow that throws stays active, the owner gets an
   cancelled by the same daily run; until then a late YES gets "That offer has expired" from `confirm_booking`.
 - A Knowledge edit reaches the bot after `scripts/n8n-run.sh wf4-knowledge-ingest`, or with the next daily WF-4 run.
 - An exhausted Anthropic credit is named in the WF-6 alert for `wf2-agent` ("Bad request - please check your parameters —
-  Your credit balance is too low ..."). WF-1's own "Reply failed ... (step: Agent)" alert still shows only n8n's generic
-  message: an Execute Workflow node hands its error output a plain string, the description does not travel with it.
+  Your credit balance is too low ..."). WF-1's own "Reply failed ... (step: Agent)" alert shows only n8n's generic
+  message (an Execute Workflow node hands its error output a plain string, the description does not travel with it) and
+  points the owner there: "(cause: see the ⚠️ wf2-agent alert)".
 - The conversation history in Postgres has no retention job yet.
 - `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`: Code nodes can read the environment, including the encryption key and database
   password. Run one clinic per instance.

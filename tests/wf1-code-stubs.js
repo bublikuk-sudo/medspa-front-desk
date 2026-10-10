@@ -540,7 +540,7 @@ T('Notify Failure is reached from Cancel Visit, Cancel Row and Mark Cancel Asked
   ]) {
     const al = (error, prev) => alertOf(nodeName, error === undefined ? {} : { error }, prev);
     const body = (s) => (s.startsWith(head) && s.endsWith(tail) ? s.slice(head.length, s.length - tail.length) : 'WRONG-FRAME:' + s);
-    T(nodeName + ': string error (an Execute Workflow node) -> the text as before, nothing else', () => al(GENERIC) === head + GENERIC + tail || al(GENERIC));
+    T(nodeName + ': string error (an Execute Workflow node) -> the text as before, nothing else', () => al(GENERIC, 'Confirm') === (head + GENERIC + tail).replace('step: Agent', 'step: Confirm') || al(GENERIC, 'Confirm'));
     T(nodeName + ': the step is named from the previous node', () => al(GENERIC, 'Confirm').includes('(step: Confirm') || al(GENERIC, 'Confirm'));
     T(nodeName + ': error missing -> "see WF-6"', () => body(al(undefined)) === 'see WF-6' || al(undefined));
     T(nodeName + ': error item with message only (object) -> the message, as before', () => body(al({ message: 'Record not found' })) === 'Record not found' || al({ message: 'Record not found' }));
@@ -555,10 +555,23 @@ T('Notify Failure is reached from Cancel Visit, Cancel Row and Mark Cancel Asked
     T(nodeName + ': JSON description without a human message, or unparsable -> the message alone', () =>
       body(al(stored({ description: '{"a":{"b":1},"body":"RAW"}' }))) === GENERIC && body(al(stored({ description: '{"error":{"message":"cut' }))) === GENERIC || [al(stored({ description: '{"a":1}' })), al(stored({ description: '{"error":{"message":"cut' }))]);
     T(nodeName + ': over-long description -> the cause is cut to 300 characters, one line', () => { const b = body(al(stored({ description: 'word\n'.repeat(400) }))); const c = b.slice((GENERIC + ' — ').length); return b.startsWith(GENERIC + ' — word word') && c.length === 300 && !/\n/.test(b) || b.length; });
-    T(nodeName + ': over-long message -> cut to 300 characters', () => body(al('e'.repeat(1000))).length === 300 || body(al('e'.repeat(1000))).length);
+    T(nodeName + ': over-long message -> cut to 300 characters', () => body(al('e'.repeat(1000), 'Confirm').replace('step: Confirm', 'step: Agent')).length === 300 || al('e'.repeat(1000), 'Confirm').length);
     T(nodeName + ': secrets in a description are redacted', () => { const b = al(stored({ description: 'key sk-ant-api03-AbCdEf123456789 and Authorization: Bearer abc.def.ghi and x-api-key: topsecret99' })); return !/sk-ant|abc\.def|topsecret/.test(b) && b.includes('[redacted]') || b; });
     T(nodeName + ': a getter that throws on the error -> does not throw out of the expression', () => { const e = { message: GENERIC }; Object.defineProperty(e, 'description', { get() { throw new Error('boom'); } }); return body(al(e)) === GENERIC || al(e); });
   }
+  // Ruling 2026-10-10 (option b): the Agent step's error is a plain string (Execute Workflow), so its description cannot reach WF-1; Notify Failure points the owner
+  // at the WF-6 alert for wf2-agent, for that step and that shape only.
+  const PTR = ' (cause: see the ⚠️ wf2-agent alert)';
+  const NF = (error, prev) => alertOf('Notify Failure', error === undefined ? {} : { error }, prev);
+  const NFH = '❌ Reply failed for tg:4242: ', NFT = ' (step: Agent; the client got the ERROR message)';
+  T('Notify Failure: Agent step + string error -> the message, the pointer to the wf2-agent alert, then the step', () => NF(GENERIC, 'Agent') === NFH + GENERIC + PTR + NFT || NF(GENERIC, 'Agent'));
+  T('Notify Failure: Agent step + object error with a description -> message — cause, no pointer', () => NF(stored(), 'Agent') === NFH + GENERIC + ' — ' + CREDIT + NFT || NF(stored(), 'Agent'));
+  T('Notify Failure: Agent step + object error without a description -> the message, no pointer', () => NF({ message: GENERIC }, 'Agent') === NFH + GENERIC + NFT || NF({ message: GENERIC }, 'Agent'));
+  T('Notify Failure: Agent step + no error at all -> "see WF-6", no pointer', () => NF(undefined, 'Agent') === NFH + 'see WF-6' + NFT || NF(undefined, 'Agent'));
+  for (const step of ['Confirm', 'Cancel Visit', 'Reminder Reply', 'Client', 'Gate', 'Rate Limit']) {
+    T('Notify Failure: ' + step + ' step + string error -> no pointer', () => NF(GENERIC, step) === NFH + GENERIC + NFT.replace('Agent', step) || NF(GENERIC, step));
+  }
+  T('Notify Send Failure: string error from the Agent-named step -> no pointer (only Notify Failure has it)', () => !alertOf('Notify Send Failure', { error: GENERIC }, 'Agent').includes('cause:') || 'pointer present');
 }
 
 console.log('\nWF1_STUBS passed ' + pass + ', failed ' + fail);
