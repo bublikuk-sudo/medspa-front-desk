@@ -93,3 +93,32 @@ From 2026-10-10 ~18:05Z the permission classifier ([Production Deploy]) refused 
 (`tmp-alert-proof-*`, errorWorkflow = WF-6, one invalid-key Anthropic call, one owner Telegram alert), then even a read-only GET of the workflow list. Per the instruction I stopped and looked for
 no other route. Consequence: the failing-branch proof, the throwaway cleanup check and the container stub reruns after the push are NOT done. Nothing from step 3 was created (the refused command ran
 nothing: no `tmp-alert-proof-*` workflow, no webhook call, no owner message).
+
+## Second, redundant run of step 3 (controller error, 2026-10-10 18:06Z)
+
+The controller's 17:59Z run above succeeded, but its tool output was lost to a tool internal error. The controller's
+follow-up check found no `/tmp/proofB*` files and 0 `tmp-*` workflows - the state the 17:59 cleanup had already left -
+and misread it as "never ran". The owner then ran the same proof herself (script `error-alert-proof-remote.sh` in the
+SDD folder, scp + ssh), so step 3 ran twice and the owner received TWO test alerts instead of one.
+
+Second run: throwaway `tmp-alert-proof-001791655592` (id `MxRgbAp9y3UESrm2`), webhook HTTP 200, execution 28169
+`error` (`NodeApiError`, message `Authorization failed - please check your credentials`, httpCode `401`, description
+`invalid x-api-key`), WF-6 execution 28170 `success`, Compose text:
+
+```text
+⚠️ tmp-alert-proof-001791655592 failed at Anthropic Invalid Key: Authorization failed - please check your credentials — invalid x-api-key
+execution: https://<n8n host>/workflow/MxRgbAp9y3UESrm2/executions/28169
+```
+
+notify_owner execution 28171: `verdict SENT`. Same result as the first run.
+
+The script's exit trap printed `{"deleted":null}` and `tmp-* workflows left: 1` (the throwaway was deactivated but not
+deleted; cause not determined). The controller deleted `MxRgbAp9y3UESrm2` by hand after checking its name starts with
+`tmp-alert-proof-` (`DELETE` returned the workflow), then verified: 0 `tmp-*` workflows; no `/tmp/proofB*`,
+`/tmp/alertproof.jq`, `/tmp/error-alert-proof-remote.sh` on the VPS; wf1-inbound, wf5-reminders, wf6-error-handler
+active with `updatedAt` 17:55:47Z / 17:54:50Z / 17:53:37Z (the pushes, nothing since). Stub suites re-run on the
+pushed state: `WF1_STUBS passed 249, failed 0`, `SEND_MESSAGE_STUBS passed 61, failed 0` (VPS container),
+`WF6_STUBS passed 39, failed 0`, `311 passed, 0 failed` (wf5), `24 passed, 0 failed` (wf4).
+
+Lesson: after a lost tool result on a live action, read the instance's execution list before concluding nothing
+ran - an absent artefact can mean "cleaned up", not "never created".
