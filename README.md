@@ -49,7 +49,8 @@ WF-4  Knowledge   ingest: Airtable Knowledge → OpenAI embeddings → pgvector 
                   query: top 5 by vector distance → Claude Haiku relevance gate → ≤ 3 passages | NOT_FOUND
 WF-5  Reminders   daily (07:05 UTC): reminders the day before the visit, revisit invitations (only with marketing
                   consent), expiry of stale pending bookings
-WF-6  Errors      Error Trigger → owner's Telegram; the failing workflow stays active
+WF-6  Errors      Error Trigger → owner's Telegram; the failing workflow stays active. The alert carries the provider's own
+                  error text: n8n's message plus the node error's description ("Your credit balance is too low ...")
 Shared            send_message (template, translation, channel formatting, WhatsApp template vs free text)
                   notify_owner (owner's Telegram; a direct fallback when Airtable is unreachable)
 * key-protected webhook used only by the automated dialog tests, for test contacts only
@@ -307,8 +308,9 @@ silent for everyone; here a workflow that throws stays active, the owner gets an
   hour must come before the clinic's first appointment of the day. Expired `pending` offers are marked
   cancelled by the same daily run; until then a late YES gets "That offer has expired" from `confirm_booking`.
 - A Knowledge edit reaches the bot after `scripts/n8n-run.sh wf4-knowledge-ingest`, or with the next daily WF-4 run.
-- An exhausted Anthropic credit reaches the owner as "Bad request - please check your parameters"; a fix that passes
-  the real cause through is planned.
+- An exhausted Anthropic credit is named in the WF-6 alert for `wf2-agent` ("Bad request - please check your parameters —
+  Your credit balance is too low ..."). WF-1's own "Reply failed ... (step: Agent)" alert still shows only n8n's generic
+  message: an Execute Workflow node hands its error output a plain string, the description does not travel with it.
 - The conversation history in Postgres has no retention job yet.
 - `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`: Code nodes can read the environment, including the encryption key and database
   password. Run one clinic per instance.

@@ -521,5 +521,45 @@ T('Send Cancel Ask: template = request_cancel verdict, appt_id from the row; suc
 T('Notify Failure is reached from Cancel Visit, Cancel Row and Mark Cancel Asked errors (the client gets ERROR)', () =>
   outs('Cancel Visit', 1).includes('Notify Failure') && outs('Cancel Row', 1).includes('Notify Failure') && outs('Mark Cancel Asked', 1).includes('Notify Failure') || 'wrong');
 
+// ---- owner failure alerts built from an error item: Notify Failure and Notify Send Failure carry the provider's own error text ----
+// Evidence (wf1-inbound execution 27314, wf2-agent 27315, 2026-10-09): an Execute Workflow node (Agent, Confirm, send_message, ...) hands its
+// error output a plain STRING in `error` (the sub-workflow's message only), so the description cannot reach these two nodes on that path - WF-6
+// carries it. A node that hands an object (`{message, description}`, as a Postgres/Airtable/HTTP node error does) gets message + cause.
+{
+  const GENERIC = 'Bad request - please check your parameters';
+  const CREDIT = 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.';
+  const anth = '{"type":"error","error":{"type":"invalid_request_error","message":"' + CREDIT + '"},"request_id":"req_1"}';
+  const stored = (over = {}) => ({ message: GENERIC, description: CREDIT, name: 'NodeOperationError', stack: 'NodeOperationError: x\n    at /usr/local/lib/node_modules/n8n/x.js:1:1', messages: ['400 ' + anth], node: { name: 'Agent' }, ...over });
+  const alertOf = (nodeName, json, prev = 'Agent') => {
+    const body = P(nodeName).workflowInputs.value.text.replace(/^=\{\{\s*/, '').replace(/\s*\}\}$/, '');
+    return new Function('$json', '$', '$prevNode', 'return (' + body + ');')(json, () => ({ first: () => ({ json: { contact_id: 'tg:4242', text: 'I want a facial' } }) }), { name: prev });
+  };
+  for (const [nodeName, head, tail] of [
+    ['Notify Failure', '❌ Reply failed for tg:4242: ', ' (step: Agent; the client got the ERROR message)'],
+    ['Notify Send Failure', '❌ Could not send a message to tg:4242 (step: Agent): ', '. Their message: I want a facial'],
+  ]) {
+    const al = (error, prev) => alertOf(nodeName, error === undefined ? {} : { error }, prev);
+    const body = (s) => (s.startsWith(head) && s.endsWith(tail) ? s.slice(head.length, s.length - tail.length) : 'WRONG-FRAME:' + s);
+    T(nodeName + ': string error (an Execute Workflow node) -> the text as before, nothing else', () => al(GENERIC) === head + GENERIC + tail || al(GENERIC));
+    T(nodeName + ': the step is named from the previous node', () => al(GENERIC, 'Confirm').includes('(step: Confirm') || al(GENERIC, 'Confirm'));
+    T(nodeName + ': error missing -> "see WF-6"', () => body(al(undefined)) === 'see WF-6' || al(undefined));
+    T(nodeName + ': error item with message only (object) -> the message, as before', () => body(al({ message: 'Record not found' })) === 'Record not found' || al({ message: 'Record not found' }));
+    T(nodeName + ': object error with the credit shape as stored -> generic message AND the real cause', () => body(al(stored())) === GENERIC + ' — ' + CREDIT || al(stored()));
+    T(nodeName + ': object error -> no stack, no raw body, no request id, no JSON', () => !/node_modules|request_id|invalid_request|[{}]/.test(al(stored())) || al(stored()));
+    T(nodeName + ': description equal to the message -> shown once', () => body(al(stored({ message: 'Boom', description: 'Boom' }))) === 'Boom' || al(stored({ message: 'Boom', description: 'Boom' })));
+    for (const [label, d] of [['missing', undefined], ['null', null], ['empty', ''], ['a number', 7], ['an object', { a: 1 }], ['the text "null"', 'null']]) {
+      T(nodeName + ': description ' + label + ' -> the message alone', () => { const e = stored(); if (d === undefined) delete e.description; else e.description = d; return body(al(e)) === GENERIC || al(e); });
+    }
+    T(nodeName + ': JSON-string description -> its error.message, not the JSON', () => body(al(stored({ description: anth }))) === GENERIC + ' — ' + CREDIT || al(stored({ description: anth })));
+    T(nodeName + ': "400 {json}" description -> its error.message', () => body(al(stored({ description: '400 ' + anth }))) === GENERIC + ' — ' + CREDIT || al(stored({ description: '400 ' + anth })));
+    T(nodeName + ': JSON description without a human message, or unparsable -> the message alone', () =>
+      body(al(stored({ description: '{"a":{"b":1},"body":"RAW"}' }))) === GENERIC && body(al(stored({ description: '{"error":{"message":"cut' }))) === GENERIC || [al(stored({ description: '{"a":1}' })), al(stored({ description: '{"error":{"message":"cut' }))]);
+    T(nodeName + ': over-long description -> the cause is cut to 300 characters, one line', () => { const b = body(al(stored({ description: 'word\n'.repeat(400) }))); const c = b.slice((GENERIC + ' — ').length); return b.startsWith(GENERIC + ' — word word') && c.length === 300 && !/\n/.test(b) || b.length; });
+    T(nodeName + ': over-long message -> cut to 300 characters', () => body(al('e'.repeat(1000))).length === 300 || body(al('e'.repeat(1000))).length);
+    T(nodeName + ': secrets in a description are redacted', () => { const b = al(stored({ description: 'key sk-ant-api03-AbCdEf123456789 and Authorization: Bearer abc.def.ghi and x-api-key: topsecret99' })); return !/sk-ant|abc\.def|topsecret/.test(b) && b.includes('[redacted]') || b; });
+    T(nodeName + ': a getter that throws on the error -> does not throw out of the expression', () => { const e = { message: GENERIC }; Object.defineProperty(e, 'description', { get() { throw new Error('boom'); } }); return body(al(e)) === GENERIC || al(e); });
+  }
+}
+
 console.log('\nWF1_STUBS passed ' + pass + ', failed ' + fail);
 process.exit(fail ? 1 : 0);

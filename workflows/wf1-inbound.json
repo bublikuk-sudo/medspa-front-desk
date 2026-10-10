@@ -1354,7 +1354,7 @@
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
-            "text": "={{ '❌ Reply failed for ' + $('Normalize').first().json.contact_id + ': ' + String(($json.error && ($json.error.message || $json.error)) || 'see WF-6').slice(0, 300) + ' (step: ' + $prevNode.name + '; the client got the ERROR message)' }}"
+            "text": "={{ (() => { const fmt = (msg, h) => { try { const d = h && h.description; if (typeof d !== 'string') return msg; let t = d.trim(); if (/^(\\d{3}\\s*)?\\{/.test(t)) { const o = JSON.parse(t.slice(t.indexOf('{'))); const s = (v) => (typeof v === 'string' ? v : ''); t = s(o && o.error && o.error.message) || s(o && o.error) || s(o && o.message); } t = t.replace(/\\b(?:sk|pk|xox[abp]|xapp)-[A-Za-z0-9_-]{8,}|\\bBearer\\s+\\S+|\\b\\d{6,}:[A-Za-z0-9_-]{25,}|(?:x-api-key|api[-_ ]?key|authorization)\\s*[:=]\\s*(?:bearer\\s+|basic\\s+)?\\S+/gi, '[redacted]').replace(/\\s+/g, ' ').trim().slice(0, 300); if (!t || /^(null|undefined)$/i.test(t) || msg.toLowerCase().includes(t.toLowerCase())) return msg; return msg ? msg + ' — ' + t : t; } catch (x) { return msg; } }; const e = $json.error; const m = String((e && (e.message || e)) || 'see WF-6').slice(0, 300); return '❌ Reply failed for ' + $('Normalize').first().json.contact_id + ': ' + fmt(m, e) + ' (step: ' + $prevNode.name + '; the client got the ERROR message)'; })() }}"
           },
           "matchingColumns": [],
           "schema": [
@@ -1669,7 +1669,7 @@
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
-            "text": "={{ '❌ Could not send a message to ' + $('Normalize').first().json.contact_id + ' (step: ' + $prevNode.name + '): ' + String(($json.error && ($json.error.message || $json.error)) || 'see WF-6').slice(0, 300) + '. Their message: ' + String($('Normalize').first().json.text || '(not text)').slice(0, 200) }}"
+            "text": "={{ (() => { const fmt = (msg, h) => { try { const d = h && h.description; if (typeof d !== 'string') return msg; let t = d.trim(); if (/^(\\d{3}\\s*)?\\{/.test(t)) { const o = JSON.parse(t.slice(t.indexOf('{'))); const s = (v) => (typeof v === 'string' ? v : ''); t = s(o && o.error && o.error.message) || s(o && o.error) || s(o && o.message); } t = t.replace(/\\b(?:sk|pk|xox[abp]|xapp)-[A-Za-z0-9_-]{8,}|\\bBearer\\s+\\S+|\\b\\d{6,}:[A-Za-z0-9_-]{25,}|(?:x-api-key|api[-_ ]?key|authorization)\\s*[:=]\\s*(?:bearer\\s+|basic\\s+)?\\S+/gi, '[redacted]').replace(/\\s+/g, ' ').trim().slice(0, 300); if (!t || /^(null|undefined)$/i.test(t) || msg.toLowerCase().includes(t.toLowerCase())) return msg; return msg ? msg + ' — ' + t : t; } catch (x) { return msg; } }; const e = $json.error; const m = String((e && (e.message || e)) || 'see WF-6').slice(0, 300); return '❌ Could not send a message to ' + $('Normalize').first().json.contact_id + ' (step: ' + $prevNode.name + '): ' + fmt(m, e) + '. Their message: ' + String($('Normalize').first().json.text || '(not text)').slice(0, 200); })() }}"
           },
           "matchingColumns": [],
           "schema": [

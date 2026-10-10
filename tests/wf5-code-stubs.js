@@ -314,6 +314,40 @@ for (const [n, cl, ap, prefix, what] of [['Alert Client', 'Client', 'Has Appt?',
   check(n + ': asks the success output explicitly (all(0)) for both the clients and the visits', node(n).parameters.jsCode.includes("$('" + cl + "').all(0)") && node(n).parameters.jsCode.includes("$('" + ap + "').all(0)"));
 }
 
+// The owner alert carries the provider's own error text: message AND cause (description) when the error item is an object
+// that has one. An Execute Workflow node hands a plain string (nothing more to carry). Bounded, one line, no secrets, never throws.
+block('owner alerts: the error item\'s description is the cause', () => {
+  const GENERIC = 'Bad request - please check your parameters';
+  const CREDIT = 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.';
+  const anth = '{"type":"error","error":{"type":"invalid_request_error","message":"' + CREDIT + '"},"request_id":"req_1"}';
+  const two = [{ appt_id: 'A-1', rec_id: 'r1' }, { appt_id: 'A-2', rec_id: 'r2' }];
+  const rows = [rec({ appt_id: 'A-1', client: ['recC1'] }, 'a1'), rec({ appt_id: 'A-2', client: ['recC2'] }, 'a2'), {}];
+  const ctx = {
+    'Alert Reminder Send': { Contact: two }, 'Alert Revisit Send': { 'Contact 2': two }, 'Alert Reminder Mark': { Contact: two }, 'Alert Revisit Mark': { 'Invite Marks': two },
+    'Alert Expiry Mark': { 'Has Appt? 2': [rec({ appt_id: 'A-5' }), rec({ appt_id: 'A-6' })] },
+    'Alert Client': { Client: [{ id: 'recC1', fields: { name: 'X' } }], 'Has Appt?': rows },
+    'Alert Client 2': { 'Has Appt? 3': rows },
+  };
+  for (const n of Object.keys(ctx)) {
+    const one = (item) => (shapeOf(n, [item], ctx[n])[0] || {}).text || '';
+    const obj = (over) => ({ message: GENERIC, description: CREDIT, name: 'NodeOperationError', stack: 'at /usr/local/lib/node_modules/n8n/x.js:1:1', messages: ['400 ' + anth], ...over });
+    check(n + ': object error with the credit shape as stored -> generic message AND the real cause', one({ error: obj() }).includes(GENERIC + ' — ' + CREDIT), one({ error: obj() }));
+    check(n + ': item {message, description} (Airtable-style) -> message AND cause', one(obj()).includes(GENERIC + ' — ' + CREDIT), one(obj()));
+    check(n + ': no stack, no raw body, no request id', !/node_modules|request_id|invalid_request/.test(one({ error: obj() })), one({ error: obj() }));
+    check(n + ': string error (Execute Workflow) -> as before', one({ error: 'Not found' }).includes('Not found') && !one({ error: 'Not found' }).includes(' — Not found'), one({ error: 'Not found' }));
+    check(n + ': description equal to the message -> shown once', one({ error: obj({ message: 'Boom', description: 'Boom' }) }).split('Boom').length === 2, one({ error: obj({ message: 'Boom', description: 'Boom' }) }));
+    for (const [label, d] of [['missing', undefined], ['null', null], ['empty', ''], ['a number', 7], ['an object', { a: 1 }], ['the text "null"', 'null']]) {
+      const e = obj(); if (d === undefined) delete e.description; else e.description = d;
+      const x = one({ error: e });
+      check(n + ': description ' + label + ' -> the message alone', x.includes(GENERIC) && !x.includes(' — ' + 'Your') && !/undefined|\[object/.test(x), x);
+    }
+    check(n + ': JSON-string description -> its error.message, not the JSON', one({ error: obj({ description: anth }) }).includes(GENERIC + ' — ' + CREDIT) && !/request_id|invalid_request/.test(one({ error: obj({ description: anth }) })), one({ error: obj({ description: anth }) }));
+    check(n + ': unparsable JSON description -> the message alone', (() => { const x = one({ error: obj({ description: '{"error":{"message":"cut' }) }); return x.includes(GENERIC) && !x.includes('cut'); })());
+    check(n + ': over-long description -> the cause is cut to 300 characters', (() => { const x = one({ error: obj({ description: 'word\n'.repeat(400) }) }); const k = (x.match(/word/g) || []).length; return x.includes(GENERIC + ' — word word') && k >= 50 && k <= 60 && x.length < 900; })(), one({ error: obj({ description: 'word\n'.repeat(400) }) }).length);
+    check(n + ': secrets in a description are redacted', (() => { const x = one({ error: obj({ description: 'sk-ant-api03-AbCdEf123456789 Authorization: Bearer abc.def.ghi' }) }); return !/sk-ant|abc\.def/.test(x) && x.includes('[redacted]'); })());
+  }
+});
+
 const dd = (items, sd) => runAll('Dedupe Alerts', items, {}, sd);
 {
   const sd = {};
