@@ -54,7 +54,40 @@ wf1-inbound were IDENTICAL (live == repo before my changes), so a push replaces 
 The controller pushed `wf6-error-handler`, `wf5-reminders`, `wf1-inbound` in that order, each with `--activate`, at about 17:53-17:55Z, and pulled each back and compared it with
 `jq -S` on the VPS against the repo at `0b04a8c`: CONTENT-IDENTICAL for all three. I pushed nothing.
 
-## Steps 3 and 4: NOT RUN (blocked)
+## Steps 3 and 4: run by the controller (2026-10-10, 17:59-18:05Z, owner's go-ahead "да, делай проверку сама")
+
+The implementer's blocked script (below) was read in full and run unchanged by the controller in the owner's session.
+
+Step 3, failing-branch proof. Throwaway `tmp-alert-proof-001791655156` (id `p0xs6N60jf44VplY`, errorWorkflow `trsMOjXdObkwO7DE` = WF-6, active),
+ONE webhook call -> HTTP 200. Throwaway execution 28166: `status error`. Its stored error:
+
+```text
+{"name":"NodeApiError","message":"Authorization failed - please check your credentials","httpCode":"401","keys":["context","description","functionality","httpCode","level","message","messages","name","node","shouldReport","stack","tags","timestamp"],"description":"invalid x-api-key","has_cause":false}
+```
+
+WF-6 execution 28167 (`success`, started 2026-10-10T17:59:20.097Z). Error Trigger payload carried the same `message` and `description`.
+Compose output, the text the owner received:
+
+```text
+⚠️ tmp-alert-proof-001791655156 failed at Anthropic Invalid Key: Authorization failed - please check your credentials — invalid x-api-key
+execution: https://<n8n host>/workflow/p0xs6N60jf44VplY/executions/28166
+```
+
+Notify (notify_owner): `executionStatus success`, `verdict SENT`. Leak check: the literal key value `invalid-key-for-alert-proof` is NOT in the
+Compose text; the script's marker grep counted 1 line because Anthropic's own message contains the header NAME `x-api-key`. The key value does
+appear once in WF-6's stored execution data (the Error Trigger payload carries the failing node's definition, including its literal header) -
+n8n's own stored data, not the alert; a real key lives in a credential, not in node parameters.
+
+Step 4. Throwaway deactivated and deleted (`DELETE` returned it), `GET /workflows`: 0 `tmp-*` workflows; VPS `/tmp/proofB.*` and
+`/tmp/alertproof.jq` removed. Stub suites on the pushed state (repo at 48c5d17 == live, per the step-2 read-back), container Node:
+`WF1_STUBS passed 249, failed 0`, `311 passed, 0 failed` (wf5), `WF6_STUBS passed 39, failed 0`, `24 passed, 0 failed` (wf4),
+`SEND_MESSAGE_STUBS passed 61, failed 0`.
+
+What this proves: WF-6 Compose live on a real n8n 2.41.5 Error Trigger payload shows `message — cause`; notify_owner delivered it. Not proven live:
+the Anthropic credit-error text itself (evidence: stored execution 27315 + stubs); WF-1's and WF-5's alert wiring end to end (stubs; WF-1's
+expressions proven in the real engine by step 1).
+
+## Steps 3 and 4 as first attempted by the implementer: NOT RUN (blocked)
 
 From 2026-10-10 ~18:05Z the permission classifier ([Production Deploy]) refused my ssh commands to the VPS: first the creation and run of the failing-branch throwaway
 (`tmp-alert-proof-*`, errorWorkflow = WF-6, one invalid-key Anthropic call, one owner Telegram alert), then even a read-only GET of the workflow list. Per the instruction I stopped and looked for
