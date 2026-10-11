@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # usage: tests/dialogs.sh [--log <file.md>] [--label <text>] [--note <text>]... [NN ...]   (on the VPS, cwd /opt/medspa; long: run detached)
-# Runs the Task 20 dialogs with tests/dialog.sh: the given numbers in the given order, or all 12 in the plan's order
-# (01 02 03 04 05 06 07 08 12 11 10 09). Each dialog runs in the channels named by its file's `channels:` line inside the
+# Runs the Task 20 dialogs with tests/dialog.sh: the given numbers in the given order, or all 13 in the plan's order
+# (01 02 03 04 05 06 07 08 12 11 13 10 09; 13, the German client, was added by mini-task B). Each dialog runs in the channels named by its file's `channels:` line inside the
 # ```dialog block (default "tg wa"; 09 and 10 run once, as the plan says), with tests/cleanup.sh before each run and once
 # at the end. Writes a markdown log: a table dialog | channel | PASS/FAIL | state | notes, then the raw output of every
 # run. Exit 0 only when every run passed. The log is scanned for the values in deploy/secrets.env before it is kept.
@@ -20,7 +20,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$logf" ] || logf="tests/dialog-runs/$(date -u +%Y-%m-%d)-dialogs.md"
-order=("$@"); [ ${#order[@]} -gt 0 ] || order=(01 02 03 04 05 06 07 08 12 11 10 09)
+order=("$@"); [ ${#order[@]} -gt 0 ] || order=(01 02 03 04 05 06 07 08 12 11 13 10 09)
 raw=$(mktemp); rows=$(mktemp)
 trap 'rm -f "$raw" "$rows"' EXIT
 pass=0; failn=0; t0=$(date -u +%Y-%m-%dT%H:%M:%SZ); stopped=""

@@ -27,7 +27,7 @@
 #                                  "none" = no message at all; "X*20" = 20 times X
 #       count: <n>                 the step produced exactly n outbound rows
 #       templates-in: A|B|C        every outbound row of the step is one of these (order free; use with count)
-#       lang: en|es|ru             language of the step's free-form/translated texts (WhatsApp template rows excluded)
+#       lang: en|es|ru|de          language of the step's free-form/translated texts (WhatsApp template rows excluded)
 #       regex: <re> / no-regex: <re>   Oniguruma regex, case-insensitive, must / must not match the step's texts
 #       tool: <name>               the Agent's tools_used in the step's wf1-inbound execution(s) contains <name>
 #       node: <name> / no-node: <name>   that wf1-inbound node ran / did not run in the step's execution(s)
@@ -325,6 +325,7 @@ check() {
       jq -e --arg l "$v" '[.[] | select(.wa_template == "") | .text] as $x | ($x | join("\n")) as $t | ($x | length) > 0 and (
           if $l == "ru" then ($t | test("\\p{Cyrillic}"))
           elif $l == "es" then ($t | test("\\p{Cyrillic}") | not) and ($t | test("[ñ¿¡áéíóú]|\\b(el|la|los|las|de|que|para|su|usted|tu|una|cita|gracias|hola)\\b"; "i")) and ($t | test("\\b(the|you|your|and|with|please)\\b"; "i") | not)
+          elif $l == "de" then ($t | test("\\p{Cyrillic}") | not) and ($t | test("[äöüß]|\\b(der|die|das|und|ist|nicht|sie|ihr|ihre|ihren|ihnen|bitte|termin|danke|mit|zu|am|um|wurde|storniert)\\b"; "i")) and ($t | test("\\b(the|you|your|and|with|please)\\b"; "i") | not)
           elif $l == "en" then ($t | test("\\p{Cyrillic}") | not) and ($t | test("\\b(the|you|your|and|to|is|we|for|of|it|this|can|our|with)\\b"; "i")) and ($t | test("[ñ¿¡]|\\b(usted|gracias|hola|para|cita|está|tiene)\\b"; "i") | not)
           else false end)' "$TMP/rows.json" > /dev/null || ok=0 ;;
     regex) jq -e --arg r "$v" '[.[].text] | join("\n") | test($r; "i")' "$TMP/rows.json" > /dev/null 2>&1 || ok=0 ;;

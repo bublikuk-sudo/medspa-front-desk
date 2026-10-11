@@ -291,11 +291,13 @@ and a licence (see the contract checklist in the onboarding document).
   expression; each case builds and removes its own data. 105 cases: 105 passed on 2026-10-09
   (`tests/dialog-runs/2026-10-09-free-airtable-level1.md`); the 96 cases before `escalate_already_escalated` was added passed twice
   in a row on 2026-10-03 (`tests/dialog-runs/2026-10-03-level1.md`). Code nodes also have stub suites (`tests/*-stubs.sh`).
-- **Level 2, dialogs** (`tests/dialogs.sh`, scripts in `tests/dialogs/`): 12 end-to-end dialogs through the real WF-1,
-  in Telegram and WhatsApp payload formats (dialogs 09 and 10 run once), 22 runs per pass. A key-protected test inbound
+- **Level 2, dialogs** (`tests/dialogs.sh`, scripts in `tests/dialogs/`): 13 end-to-end dialogs through the real WF-1,
+  in Telegram and WhatsApp payload formats (dialogs 09 and 10 run once), 24 runs per pass. A key-protected test inbound
   feeds the same `Normalize` as the real triggers; `send_message` writes outbound messages for test contacts to a
   Postgres table `test_outbox` instead of sending them. Checks are on state, template keys and language, never on the
-  model's wording. Run 1 (2026-10-05): 22 passed. Run 2 (2026-10-05): 20 passed, 2 failed, both because the Anthropic
+  model's wording. Dialog 13 (German client) and the cancellation legs of dialogs 11 (Spanish) and 12 (Russian) were
+  added on 2026-10-11 for the client's language: every step also checks that no English word, weekday, month or AM/PM
+  reached the client. They have not run yet; the results below are for the 12 dialogs before that. Run 1 (2026-10-05): 22 passed. Run 2 (2026-10-05): 20 passed, 2 failed, both because the Anthropic
   credit ran out mid-run, not because of a bot defect.
   Final runs on the final configuration (two-step cancel, day-before reminders, free-Airtable budget): run 1
   (2026-10-09, `tests/dialog-runs/2026-10-09-dialogs-run-1.md`) passed 21 of 22 runs; the one failure was dialog 05 on
