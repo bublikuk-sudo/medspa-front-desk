@@ -102,3 +102,42 @@ true, status `active` after step 5 and `escalated_at` unchanged by the hold (ste
 printed; the execution JSON goes to a `mktemp` directory removed on exit. The output above is from the script as it
 was before these changes. The revised script has not been run: a run costs about 3 agent answers, and the controller
 decides whether to spend them.
+
+## Re-run of the revised script (2026-10-11 09:48Z, controller)
+
+The controller ran the revised script (commit `8b732e5`) once, under the same owner go-ahead. Verdict lines:
+
+```text
+== 1. first message
+  exec 28312 success; nodes: Agent, Escalated?, Escalation Resolved?
+PASS: agent memory written
+== 2. escalate (deterministic, escalate tool)
+PASS: status escalated + escalated_at set
+== 3. message while escalated
+  exec 28319 success; nodes: Escalated?, Send Hold
+PASS: hold, no agent, no reset
+PASS: hold reply not written to agent memory
+PASS: marker and status unchanged by the hold
+== 4. owner resolves: status -> active
+== 5. first message after resolution
+  exec 28321 success; nodes: Agent, Clear Marker, Escalated?, Escalation Resolved?, Marker Cleared?, Reset Memory
+PASS: Escalation Resolved? true
+PASS: reset path ran, no failure alert
+PASS: Marker Cleared? true
+PASS: escalated_at cleared (typecast null reached Airtable)
+PASS: status still active
+PASS: deleted exactly the 4 old rows
+PASS: no row of the old conversation left (id <= 2624); 4 rows are this turn's
+PASS: agent did not escalate
+== 6. next message: no second reset
+  exec 28325 success; nodes: Agent, Escalated?, Escalation Resolved?
+PASS: no reset, agent answered
+PASS: memory kept growing (4 -> 6)
+== cleanup
+PASS: test contact fully removed
+RESULT: PASS
+```
+
+The revised checks (contact-matched executions, cleanup asserted, both IFs and the marker asserted) all ran and
+passed; the jq filters of the revision are therefore proven on a real run. One more `🚨 … [TEST]` owner alert was sent
+by step 2.
