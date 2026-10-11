@@ -64,8 +64,9 @@ RESULT: FAIL (1)
 The one FAIL is a wrong threshold in the script, not a defect: the check expected at most 2 history rows after the
 reset, but one agent turn with a tool call writes 4 (step 1 shows the same 4 for a first turn). Step 5 shows
 `Reset Memory` deleted exactly the 4 rows that existed before the message (N = 4) and the 4 rows left are that turn's.
-The script's check is now "deleted exactly N, at most one turn's rows remain"; it was not re-run (each run costs about
-3 agent answers).
+The script's check is now "deleted exactly N, and no row of the old conversation (id at or below the session's newest
+id before the message) is left"; see the revision section below. It was not re-run (each run costs about 3 agent
+answers).
 
 ## What this proves
 
@@ -78,6 +79,26 @@ The script's check is now "deleted exactly N, at most one turn's rows remain"; i
   asked for a name - no "сотрудник свяжется", no escalate call.
 - The next message did not reset again; memory grew 4 -> 6.
 
-Not proven live: the failure branches (`Reset Memory` or `Clear Marker` error, `Marker Cleared?` false ->
-`Notify Reset Failure`) - stubs only. One owner Telegram alert was sent by the escalate step (`🚨 … [TEST] escalation
-reset proof`).
+Not proven live:
+
+- the failure branches (`Reset Memory` or `Clear Marker` error, `Marker Cleared?` false -> `Notify Reset Failure`) -
+  stubs only;
+- the level-1 tool cases `escalate_ok` and `escalate_already_escalated`, edited in phase 1 to assert the marker, were
+  not run (step 2 above calls escalate once, with the same effect as `escalate_ok`, but not the case's teardown checks);
+- the count of 0 clients with status `escalated` before the deploy was a read by the controller; its output is not
+  committed anywhere.
+
+One owner Telegram alert was sent by the escalate step (`🚨 … [TEST] escalation reset proof`).
+
+## Script revised after this run (not re-run)
+
+The phase-2 review found defects in `tests/escalation-reset-live.sh` (not in the deployed workflows), fixed afterwards:
+a failed cleanup is now a FAIL (at the start it aborts) and the end asserts 0 client rows and 0 history rows; the
+execution under test must carry this message's `update_id` in `Test Inbound` and `tg:9000000101` as `Normalize`'s
+`contact_id` (other new executions are skipped, polling goes on); step 5 asserts no row with an id at or below the
+session's newest id before the message survives, instead of a row-count bound; history counts must be numbers;
+step 4 touches the row only if its `client_id` starts with `C-test-`; `Escalation Resolved?` and `Marker Cleared?`
+true, status `active` after step 5 and `escalated_at` unchanged by the hold (step 3 vs step 2) are asserted, not only
+printed; the execution JSON goes to a `mktemp` directory removed on exit. The output above is from the script as it
+was before these changes. The revised script has not been run: a run costs about 3 agent answers, and the controller
+decides whether to spend them.
