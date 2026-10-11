@@ -231,7 +231,7 @@
             {
               "id": "a7a11ab1-2002-4c00-8000-000000000002",
               "name": "slots_local",
-              "value": "={{ $('Compute').first().json.slots_local }}",
+              "value": "={{ (() => { const tz = $('Settings').first().json.fields.timezone; const lang = String((($('Client').first().json || {}).fields || {}).language || '').trim().toLowerCase(); let loc = 'en'; try { if (lang && Intl.DateTimeFormat.supportedLocalesOf([lang]).length) loc = lang; } catch (e) {} const slots = JSON.parse($('Compute').first().json.offered_json || '{}').slots || []; const f = new Intl.DateTimeFormat(loc, { timeZone: tz, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }); return slots.map(x => f.format(new Date(x)).replace(/[  ]/g, ' ')).join('; '); })() }}",
               "type": "string"
             }
           ]

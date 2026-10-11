@@ -32,7 +32,8 @@ Every account is the clinic's, registered on the clinic's card (see "Handover" b
 - [ ] **Meta templates**: create `medspa_reminder` (category UTILITY) and `medspa_revisit` (Meta may classify it
       MARKETING), language English, bodies matching `REMINDER` and `REVISIT` in `templates/messages.en.json`, and wait
       for approval. For the demo, approval took two days (submitted 2026-10-03, approved 2026-10-05). The template
-      bodies use the number of days as a parameter: `{{2}} days` where `REVISIT` has `{days_text}`.
+      bodies use the number of days as a parameter: `{{2}} days` where `REVISIT` has `{days_text}`, and the words YES
+      and NO where `REMINDER` has `{yes}` and `{no}`.
 - [ ] **Meta templates in the clinic's languages** (optional, owner decision 2026-10-11): outside the 24-hour window the
       reminder and the revisit invitation can only go out as approved templates, and the template only exists in English,
       so a German or Spanish client gets them in English, the date included. For each language the clinic's clients

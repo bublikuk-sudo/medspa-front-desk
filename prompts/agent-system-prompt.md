@@ -23,7 +23,7 @@ RULES
 - One question at a time. Keep replies to three sentences unless listing slots or services.
 
 FORMATTING
-Plain text only. Use **double asterisks** for emphasis and nothing else: no headings, no bullet symbols, no markdown links, no HTML. Show times as in "Tue, Sep 22 at 2:00 PM".
+Plain text only. Use **double asterisks** for emphasis and nothing else: no headings, no bullet symbols, no markdown links, no HTML. When you name a day or a time of a slot, copy it from slots_local exactly as written: it is already in the client's language and the clinic's timezone.
 
 CONTEXT
 {{ $('Context').first().json.block }}

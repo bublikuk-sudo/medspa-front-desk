@@ -61,7 +61,7 @@ Shared            send_message (template with dates and units in the client's la
 | Tool | Named inputs | Returns |
 |---|---|---|
 | `find_client` | `contact_id`* | `NEW`, or `KNOWN` with name, language, last visit and service, `next_visit_in`, upcoming appointments with their `appt_id`, the owner's notes |
-| `check_availability` | `contact_id`*, `service_id`, `date`, `part_of_day?` | `FREE <ISO slots>` plus `slots_local` (weekday and local time computed by the tool), `NONE <alternatives or reason>`, `UNKNOWN_SERVICE <active services>`. The offer is saved on the client as `{service_id, slots}` |
+| `check_availability` | `contact_id`*, `service_id`, `date`, `part_of_day?` | `FREE <ISO slots>` plus `slots_local` (weekday, date and local time computed by the tool, in the client's language), `NONE <alternatives or reason>`, `UNKNOWN_SERVICE <active services>`. The offer is saved on the client as `{service_id, slots}` |
 | `propose_booking` | `contact_id`*, `channel`*, `service_id`, `start_iso`, `name?`, `replaces_appt_id?` | `PENDING <appt_id>`: an Airtable row with status `pending`, calendar untouched. `SLOT_NOT_OFFERED` if the slot or service is not in the saved offer, `UNKNOWN_SERVICE`, `NO_CLIENT_ROW` |
 | `request_cancel` | `contact_id`*, `appt_id` | `CANCEL_PENDING <appt_id>` / `LATE_CANCEL_PENDING <appt_id>` (the cancellation would be late): a pending cancellation is recorded, nothing is cancelled. `NOT_YOURS` / `NOT_FOUND` |
 | `search_knowledge` | `question` | `FOUND` with up to 3 passages and their topic, or `NOT_FOUND` |
@@ -94,11 +94,19 @@ and units are not left to the translation: `send_message` writes them in the cli
 Spanish or Russian) and `Intl.NumberFormat` units with the locale's plural rules ("20 мин", "24 Stunden", "1 час").
 `Intl` was chosen over a hand-kept word list because the n8n image's Node carries full ICU, so any language a client
 writes in is covered with no list to maintain; a language ICU does not know falls back to English. The translation
-(Claude Haiku) then translates every word except people's names, the clinic's name, links and ids; YES and NO become
-the language's own one-word yes and no, which WF-1's YES/NO word lists accept. If the translation fails, the English
-message is sent: an English message is better than none. The agent's own reply is checked too: a line that reads as
-English in a reply to a non-English client is dropped (the model once wrote "On which day would they like it?" above its
-Russian question), and the rest goes through the same translation; this costs a Haiku call only for such a reply.
+(Claude Haiku) then translates every word except people's names, the clinic's name, links and ids. The words the client
+is asked to reply with ("Reply YES to confirm", the cancel question, the reminder's YES / NO) are not the translator's
+choice: `send_message` puts them in from a short per-language list (ДА / НЕТ, JA / NEIN, SÍ / NO, OUI / NON, SI / NO,
+...) that holds only words WF-1's YES/NO word lists already accept, and the translation keeps them as written. A
+language without such a pair keeps YES / NO, which WF-1 accepts from every client. This matters most for a Telegram
+reminder: an answer WF-1 did not recognise would go to the agent, which cannot record it. If the translation fails, the
+English message is sent: an English message is better than none. The slots the agent offers come from
+`check_availability`'s `slots_local`, which is written in the client's language the same way, and the agent copies them
+as written. The agent's own reply is checked too: in a reply to a client whose language is not written in Latin letters
+(Russian, Ukrainian, Arabic, ...), a line that reads as English is dropped when a line in the client's script remains
+(the model once wrote "On which day would they like it?" above its Russian question); a reply that reads as English
+otherwise is translated whole, nothing dropped. Either way it goes through the same translation; this costs a Haiku call
+only for such a reply.
 WhatsApp's reminder and revisit invitation outside the 24-hour window are approved Meta templates and stay in English,
 parameters included (owner decision 2026-10-11); a clinic adds templates in its own languages at onboarding
 ([docs/onboarding-checklist.md](docs/onboarding-checklist.md)). Inside the window and on Telegram they are translated
@@ -329,8 +337,10 @@ silent for everyone; here a workflow that throws stays active, the owner gets an
   they go out as templates (outside the 24-hour window; WF-5 always sends them as templates). Owner decision
   2026-10-11; per-language templates are an onboarding step for the clinic's languages.
 - The English-line guard on agent replies counts English function words per line, so a short English line ("Thank
-  you!") or an English date copied from a tool result is not caught; the agent is still told to reply in the client's
-  language.
+  you!") is not caught, and a line that mixes English with the client's script ("On which day? Какой день?") is never
+  treated as English; the agent is still told to reply in the client's language.
+- Italian clients are asked to reply "SI" (WF-1's word list has `si`, not `sì`); Turkish clients keep YES / NO (WF-1's
+  `hayır` cannot be shown in capitals that lower-case back to it).
 - A Google OAuth app in Testing mode issues a token that expires every 7 days; publish the app (it needs a home page
   and a privacy policy on a domain the clinic owns).
 - A retried send can deliver a message twice (a timeout after Meta or Telegram already delivered it). Accepted: a

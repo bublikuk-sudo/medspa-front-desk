@@ -4,7 +4,7 @@
 // guard, the Translate prompt, and confirm_booking's SLOT_TAKEN alternatives.
 // Runs in a Node (see tests/send-message-stubs.sh), which prepends:
 //   const WF = <workflows/shared/send_message.json>;  const TEMPLATES = <templates/messages.en.json>;
-//   const CONFIRM = <workflows/wf3-tools/confirm_booking.json>;
+//   const CONFIRM = <workflows/wf3-tools/confirm_booking.json>;  const WF1 = <workflows/wf1-inbound.json>;
 // No network, no n8n runtime: $, $json and DateTime are stubbed; Intl is the real one (the language checks expect the n8n
 // container's full ICU).
 const node = (n) => WF.nodes.find((x) => x.name === n) || {};
@@ -153,24 +153,24 @@ const L = (name, o, want, wantTr) => {
 L('lang en: PENDING_SUMMARY unchanged for an English client (12-hour clock), not translated', { key: 'PENDING_SUMMARY', language: 'en' },
   'Consultation (20 min) — Mon, Oct 12, 10:30 AM. Free cancellation up to 24 hours before. Reply YES to confirm.', false);
 L('lang de: PENDING_SUMMARY date, time (24h) and units in German before translation', { key: 'PENDING_SUMMARY', language: 'de' },
-  'Consultation (20 Min.) — Mo., 12. Okt., 10:30. Free cancellation up to 24 Stunden before. Reply YES to confirm.', true);
+  'Consultation (20 Min.) — Mo., 12. Okt., 10:30. Free cancellation up to 24 Stunden before. Reply JA to confirm.', true);
 L('lang es: PENDING_SUMMARY in Spanish', { key: 'PENDING_SUMMARY', language: 'es' },
-  'Consultation (20 min) — lun, 12 oct, 10:30. Free cancellation up to 24 horas before. Reply YES to confirm.', true);
+  'Consultation (20 min) — lun, 12 oct, 10:30. Free cancellation up to 24 horas before. Reply SÍ to confirm.', true);
 L('lang ru: PENDING_SUMMARY in Russian (the owner\'s case: no "Oct", "AM", "min", "hours" left for the translator to keep)', { key: 'PENDING_SUMMARY', language: 'ru' },
-  'Consultation (20 мин) — пн, 12 окт., 10:30. Free cancellation up to 24 часа before. Reply YES to confirm.', true);
+  'Consultation (20 мин) — пн, 12 окт., 10:30. Free cancellation up to 24 часа before. Reply ДА to confirm.', true);
 L('lang pl (no special handling anywhere in the code, ICU alone): Polish date and plural', { key: 'PENDING_SUMMARY', language: 'pl' },
-  'Consultation (20 min) — pon., 12 paź, 10:30. Free cancellation up to 24 godziny before. Reply YES to confirm.', true);
+  'Consultation (20 min) — pon., 12 paź, 10:30. Free cancellation up to 24 godziny before. Reply TAK to confirm.', true);
 L('lang xx (unknown to ICU): falls back to English formatting, no throw (still sent for translation)', { key: 'PENDING_SUMMARY', language: 'xx' },
   'Consultation (20 min) — Mon, Oct 12, 10:30 AM. Free cancellation up to 24 hours before. Reply YES to confirm.', true);
 L('lang "e n!" (not a language tag): falls back to English formatting, no throw', { key: 'CANCEL_PENDING', language: 'e n!' },
   'Cancel your Consultation on Mon, Oct 12, 10:30 AM? Reply YES to cancel.');
 L('lang ru: BOOKED (the owner saw "Mon, Oct 12, 10:30 AM" and "24 hours" in it)', { key: 'BOOKED', language: 'ru' },
   "You're booked: Consultation (20 мин) — пн, 12 окт., 10:30. We'll send you a reminder the day before. To change or cancel, just message me here — cancellation is free up to 24 часа before your visit.", true);
-L('lang ru: CANCEL_PENDING', { key: 'CANCEL_PENDING', language: 'ru' }, 'Cancel your Consultation on пн, 12 окт., 10:30? Reply YES to cancel.', true);
+L('lang ru: CANCEL_PENDING', { key: 'CANCEL_PENDING', language: 'ru' }, 'Cancel your Consultation on пн, 12 окт., 10:30? Reply ДА to cancel.', true);
 L('lang ru: CANCELLED', { key: 'CANCELLED', language: 'ru' }, 'Your Consultation on пн, 12 окт., 10:30 has been cancelled. Message me any time to book again.', true);
 L('lang de: CANCELLED', { key: 'CANCELLED', language: 'de' }, 'Your Consultation on Mo., 12. Okt., 10:30 has been cancelled. Message me any time to book again.', true);
 L('lang es: LATE_CANCEL_PENDING names the window in Spanish', { key: 'LATE_CANCEL_PENDING', language: 'es' },
-  'Cancel your Consultation on lun, 12 oct, 10:30? This is less than 24 horas before your visit, so it will be recorded as a late cancellation. Reply YES to cancel.', true);
+  'Cancel your Consultation on lun, 12 oct, 10:30? This is less than 24 horas before your visit, so it will be recorded as a late cancellation. Reply SÍ to cancel.', true);
 L('lang ru: LATE_CANCEL with a 1-hour window uses the singular ("1 час")', { key: 'LATE_CANCEL', language: 'ru', settings: { cancellation_hours: 1 } },
   'Your Consultation on пн, 12 окт., 10:30 has been cancelled. It was less than 1 час before the visit, so it is recorded as a late cancellation. Message me any time to book again.', true);
 L('lang en: LATE_CANCEL with a 1-hour window says "1 hour"', { key: 'LATE_CANCEL', language: 'en', settings: { cancellation_hours: 1 } },
@@ -184,15 +184,15 @@ L('lang ru: BOOKED_INTAKE states the form time in Russian', { key: 'BOOKED_INTAK
 L('lang de: REVISIT on Telegram (outside_window=true, not WhatsApp) counts the days in German', { key: 'REVISIT', language: 'de', outside_window: 'true' },
   'Hi Carl, it has been 30 Tage since your Consultation at Glow Aesthetics Med-Spa. Would you like to book your next visit?', true);
 L('lang de: 24-hour clock (14:00, not 2:00 PM)', { key: 'CANCEL_PENDING', language: 'de', start_iso: '2026-10-12T14:00:00+02:00' },
-  'Cancel your Consultation on Mo., 12. Okt., 14:00? Reply YES to cancel.');
+  'Cancel your Consultation on Mo., 12. Okt., 14:00? Reply JA to cancel.');
 L('lang en: 12-hour clock kept (2:00 PM)', { key: 'CANCEL_PENDING', language: 'en', start_iso: '2026-10-12T14:00:00+02:00' },
   'Cancel your Consultation on Mon, Oct 12, 2:00 PM? Reply YES to cancel.');
 L('Settings.timezone decides the local time (a UTC start_iso shows as 10:30 Berlin)', { key: 'CANCEL_PENDING', language: 'ru', start_iso: '2026-10-12T08:30:00.000Z' },
-  'Cancel your Consultation on пн, 12 окт., 10:30? Reply YES to cancel.');
+  'Cancel your Consultation on пн, 12 окт., 10:30? Reply ДА to cancel.');
 L('Settings.timezone decides the local time (America/New_York shows 4:30 AM)', { key: 'CANCEL_PENDING', language: 'en', start_iso: '2026-10-12T08:30:00.000Z', settings: { timezone: 'America/New_York' } },
   'Cancel your Consultation on Mon, Oct 12, 4:30 AM? Reply YES to cancel.');
 L('lang ru: Telegram REMINDER (WF-5, outside_window=true on tg) is localized and translated', { key: 'REMINDER', language: 'ru', outside_window: 'true' },
-  'Reminder: Consultation — пн, 12 окт., 10:30 at Glow Aesthetics Med-Spa. Reply YES to confirm or NO to cancel.', true);
+  'Reminder: Consultation — пн, 12 окт., 10:30 at Glow Aesthetics Med-Spa. Reply ДА to confirm or НЕТ to cancel.', true);
 L('lang ru: WhatsApp inside the 24-hour window (outside_window empty) is localized and translated', { key: 'CANCELLED', language: 'ru', contact_id: 'wa:+15550000104' },
   'Your Consultation on пн, 12 окт., 10:30 has been cancelled. Message me any time to book again.', true);
 try {
@@ -239,15 +239,30 @@ if (typeof CONFIRM !== 'undefined') {
 // ---- The agent's reply (free text) for a non-English client: an English line is never sent ----
 // Evidence (wf2-agent execution 28237, send_message 28238, 2026-10-11T08:17:29Z, ru client): Claude's single text block was
 // "On which day would they like it?\n\nКакой день вам удобен для консультации?" - a planning line the model wrote in English,
-// third person, before the Russian question. Render now drops a line that reads as English and sends the rest through the
-// translation (one Haiku call, only when this happens); a reply with no Russian/German/... line left is translated whole.
+// third person, before the Russian question. Render drops a line that reads as English only when a kept line has a letter
+// outside the Latin script (the answer in Russian, Greek, Arabic ... is there), and then sends the reply through the
+// translation (one Haiku call, only when an English line was found). Otherwise nothing is dropped and the whole reply is
+// translated. A line with any non-Latin letter is never English (fix round 1, I-1 ruling).
 const LEAK = 'On which day would they like it?\n\nКакой день вам удобен для консультации?';
 L('agent reply regression (execution 28237): the English planning line is dropped, the Russian question is sent (and translated)', { language: 'ru', text: LEAK },
   'Какой день вам удобен для консультации?', true);
 L('agent reply wholly in English for a German client: kept and translated whole (nothing is lost)', { language: 'de', text: 'Which day would you like to come in for your consultation?' },
   'Which day would you like to come in for your consultation?', true);
-L('agent reply: English and Russian on ONE line -> nothing left without English, so the whole reply is translated', { language: 'ru', text: 'On which day would they like it? Какой день вам удобен?' },
-  'On which day would they like it? Какой день вам удобен?', true);
+L('agent reply: English and Russian on ONE line -> the line has Cyrillic, so it is never English: sent as is (a known limit)', { language: 'ru', text: 'On which day would they like it? Какой день вам удобен?' },
+  'On which day would they like it? Какой день вам удобен?', false);
+// Review fix round 1 (I-1): a wholly English multi-line reply must not be cut to fragments, and real lines must not be dropped.
+const EN_LIST = 'Here are our services:\n**HydraFacial** — 60 min — $200\n**Botox** — 30 min — $350\nWhich one would you like to book?';
+L('I-1: wholly English multi-line services list for a ru client: nothing dropped (no Cyrillic line), translated whole', { language: 'ru', text: EN_LIST }, EN_LIST, true);
+const EN_FORM = 'Please complete the intake form before your visit, it only takes a few minutes:\nhttps://example.com/intake-form-demo';
+L('I-1: English intake sentence + URL line for a ru client: not cut to a bare URL, translated whole', { language: 'ru', text: EN_FORM }, EN_FORM, true);
+const EN_HI = 'Hi Carl,\nWhat day would you like to come in?';
+L('I-1: English greeting + question for a ru client: not cut to "Hi Carl,", translated whole', { language: 'ru', text: EN_HI }, EN_HI, true);
+L('I-1: Dutch line with we / of / is (shared with English) is not English: sent as is, no Haiku call', { language: 'nl', text: 'We kunnen 10:30 of 11:00 doen, is dat goed?' },
+  'We kunnen 10:30 of 11:00 doen, is dat goed?', false);
+const RU_SVC = 'Вот что у нас есть:\n**Laser Hair Removal for the face and neck** — 30 мин — 120 €\nКакое время вам удобно?';
+L('I-1: ru service line with an English service name (for / the / and) keeps its line: it has Cyrillic, never English', { language: 'ru', text: RU_SVC }, RU_SVC, false);
+L('I-1: an English planning line inside a longer Russian reply is still dropped', { language: 'ru', text: 'They want a consultation, so I should ask which day they would like.\nКакой день вам удобен?\nУ нас есть время в понедельник.' },
+  'Какой день вам удобен?\nУ нас есть время в понедельник.', true);
 const SERVICES_RU = 'Конечно, вот наши услуги:\n\n**Консультация** — 20 мин — $0\n**Лазерная эпиляция (малая зона)** — 30 мин — $120\n**HydraFacial** — 60 мин — $200\n\nЧто из этого вас интересует?';
 L('agent reply in Russian with Latin brand / service names (execution 28181) is sent as is, no Haiku call', { language: 'ru', text: SERVICES_RU }, SERVICES_RU, false);
 for (const [language, t] of [
@@ -269,7 +284,30 @@ L('agent reply for an English client: never touched', { language: 'en', text: 'O
 const tr = node('Translate'); const trText = String((tr.parameters || {}).text || '');
 check('Translate prompt: target language, the text and the clinic name come from Render', /\{\{ \$json\.language \}\}/.test(trText) && /\{\{ \$json\.text \}\}/.test(trText) && /\{\{ \$json\.brand \}\}/.test(trText), trText);
 check('Translate prompt no longer tells the model to keep dates, times and numbers "exactly as written" (the cause of "пн, Oct 12, 10:30 AM")', !/Keep names, dates, times, numbers/.test(trText), trText);
-check('Translate prompt: YES and NO become the language\'s own one-word yes and no (WF-1\'s word lists accept them)', /YES and NO/.test(trText) && /one-word/.test(trText) && !/the words YES and NO exactly as written/.test(trText), trText);
+check('Translate prompt keeps the reply words Render chose exactly as written (I-2: the translation never picks them)',
+  /Leave exactly as written: the reply words \{\{ \$json\.yes_word \}\} and \{\{ \$json\.no_word \}\}/.test(trText) && !/one-word/.test(trText), trText);
+
+// ---- Fix round 1 (I-2): the reply words are only words WF-1's Classify takes as yes / no ----
+// Classify is run as it is in wf1-inbound.json (read from WF1, not copied): a Telegram REMINDER whose YES / NO word Classify
+// did not know would reach the agent, which has no reminder_reply, and the client's answer would be lost.
+const yesnoMap = (() => { const m = /const YESNO = (\{.*?\});/.exec(CODE.render || ''); try { return m ? new Function('return ' + m[1])() : null; } catch (e) { return null; } })();
+const classifyCode = (((typeof WF1 !== 'undefined' ? WF1.nodes : []).find((x) => x.name === 'Classify') || {}).parameters || {}).jsCode;
+const classify = (word) => { try { return new Function('$', classifyCode)(() => ({ first: () => ({ json: { text: word } }) }))[0].json.kind; } catch (e) { return 'THROW ' + e.message; } };
+check('YESNO map found in Render and Classify found in wf1-inbound.json (WF1 piped in)', !!yesnoMap && !!classifyCode && classify('yes') === 'yes' && classify('no') === 'no', [!!yesnoMap, !!classifyCode]);
+for (const [lang, [y, n]] of Object.entries(yesnoMap || {})) {
+  check('I-2 ' + lang + ': "' + y + '" and "' + n + '" as the client types them (as shown, lower case, with punctuation) are yes / no for WF-1 Classify',
+    [y, y.toLowerCase(), y + '!'].every((w) => classify(w) === 'yes') && [n, n.toLowerCase(), n + '.'].every((w) => classify(w) === 'no'), [classify(y), classify(n)]);
+}
+try {
+  const r = run({ key: 'REMINDER', language: 'it', outside_window: 'true' });
+  check('I-2 REMINDER path (Telegram, it): the question names SI / NO, which Classify takes as yes / no, so the answer reaches Reminder Reply',
+    /Reply SI to confirm or NO to cancel\.$/.test(r.text) && classify('si') === 'yes' && classify('no') === 'no' && r.yes_word === 'SI' && r.no_word === 'NO', r.text);
+  const t = run({ key: 'REMINDER', language: 'tr', outside_window: 'true' });
+  check('I-2 a language with no safe pair (tr: HAYIR lower-cases to "hayir", not Classify\'s "hayır") keeps YES / NO, which Classify accepts',
+    /Reply YES to confirm or NO to cancel\.$/.test(t.text) && t.yes_word === 'YES' && t.no_word === 'NO' && classify('HAYIR') !== 'no', [t.text, classify('HAYIR')]);
+  const w = run({ key: 'REMINDER', language: 'ru', contact_id: 'wa:+15550000104', outside_window: 'true' });
+  check('I-2 WhatsApp template outside the window: YES / NO (English template)', w.yes_word === 'YES' && w.no_word === 'NO', [w.yes_word, w.no_word]);
+} catch (e) { check('I-2 REMINDER path', false, String(e.message)); }
 check('Translate prompt: everything else is translated, including service names and any sentence in another language', /service names/.test(trText) && /another language/.test(trText), trText);
 check('translation failure keeps the English text: Translate continues on error and Merge Text falls back to Render\'s text',
   tr.onError === 'continueRegularOutput' && /\$\('Render'\)\.first\(\)\.json\.text/.test(String((((node('Merge Text').parameters || {}).assignments || {}).assignments || [])[0].value)), [tr.onError]);
