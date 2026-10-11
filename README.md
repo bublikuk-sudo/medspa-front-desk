@@ -52,7 +52,8 @@ WF-5  Reminders   daily (07:05 UTC): reminders the day before the visit, revisit
                   consent), expiry of stale pending bookings
 WF-6  Errors      Error Trigger → owner's Telegram; the failing workflow stays active. The alert carries the provider's own
                   error text: n8n's message plus the node error's description ("Your credit balance is too low ...")
-Shared            send_message (template, translation, channel formatting, WhatsApp template vs free text)
+Shared            send_message (template with dates and units in the client's language, translation, the English-line
+                  guard on agent replies, channel formatting, WhatsApp template vs free text)
                   notify_owner (owner's Telegram; a direct fallback when Airtable is unreachable)
 * key-protected webhook used only by the automated dialog tests, for test contacts only
 ```
@@ -85,6 +86,23 @@ Reply YES to cancel.", with the late-cancellation notice when it applies), and o
 the bot's last message and has not expired, makes n8n run `cancel_booking` (event deleted, `cancelled` or
 `late_cancel`, a late canceller flagged, the owner notified). NO or anything else goes to the agent and the visit stays
 booked. The reminder's own "Reply YES to confirm or NO to cancel" works as before.
+
+**The client's language.** The bot writes to a client only in `Clients.language` (detected from their first message).
+The agent is told to reply in it. A template message is rendered in English and then translated, but its dates, times
+and units are not left to the translation: `send_message` writes them in the client's language itself, with
+`Intl.DateTimeFormat` in `Settings.timezone` (weekday, day, month, and the locale's own clock, 24-hour for German,
+Spanish or Russian) and `Intl.NumberFormat` units with the locale's plural rules ("20 мин", "24 Stunden", "1 час").
+`Intl` was chosen over a hand-kept word list because the n8n image's Node carries full ICU, so any language a client
+writes in is covered with no list to maintain; a language ICU does not know falls back to English. The translation
+(Claude Haiku) then translates every word except people's names, the clinic's name, links and ids; YES and NO become
+the language's own one-word yes and no, which WF-1's YES/NO word lists accept. If the translation fails, the English
+message is sent: an English message is better than none. The agent's own reply is checked too: a line that reads as
+English in a reply to a non-English client is dropped (the model once wrote "On which day would they like it?" above its
+Russian question), and the rest goes through the same translation; this costs a Haiku call only for such a reply.
+WhatsApp's reminder and revisit invitation outside the 24-hour window are approved Meta templates and stay in English,
+parameters included (owner decision 2026-10-11); a clinic adds templates in its own languages at onboarding
+([docs/onboarding-checklist.md](docs/onboarding-checklist.md)). Inside the window and on Telegram they are translated
+like any other message.
 
 ## Data model
 
@@ -235,7 +253,8 @@ and a licence (see the contract checklist in the onboarding document).
   per million input and $25 per million output tokens (platform.claude.com/docs/en/about-claude/pricing, checked
   2026-10-08), that is about $0.044 per agent answer: 7,850 × $5 / 1M ≈ $0.039 plus 193 × $25 / 1M ≈ $0.005, at the
   base input price with no caching discount. Translation, language detection and the YES check (Haiku) are not in
-  these numbers.
+  these numbers. Translation is one Haiku call per template message to a non-English client, plus one for an agent
+  reply in which the English-line guard found a line to drop; an agent reply in the client's language costs none.
 - **Claude (knowledge gate).** About 0.0011 USD per knowledge question: 901 input and 46.9 output tokens per call on
   average, at Haiku 4.5's $1 / $5 per million (same pricing page). An estimate from measured tokens, not an invoice.
 - **OpenAI embeddings.** Negligible: one full re-index of the 14 demo paragraphs is 856 tokens of
@@ -306,7 +325,12 @@ silent for everyone; here a workflow that throws stays active, the owner gets an
   not reply YES; no booking is created.
 - The Meta test number is a demo (5 recipients). Production needs the clinic's own verified WhatsApp number.
 - One calendar, one location. No payment or deposit. Voice is phase 2.
-- WhatsApp templates are English only: a non-English client gets the reminder and the revisit invitation in English.
+- WhatsApp templates are English only: a non-English client gets the reminder and the revisit invitation in English when
+  they go out as templates (outside the 24-hour window; WF-5 always sends them as templates). Owner decision
+  2026-10-11; per-language templates are an onboarding step for the clinic's languages.
+- The English-line guard on agent replies counts English function words per line, so a short English line ("Thank
+  you!") or an English date copied from a tool result is not caught; the agent is still told to reply in the client's
+  language.
 - A Google OAuth app in Testing mode issues a token that expires every 7 days; publish the app (it needs a home page
   and a privacy policy on a domain the clinic owns).
 - A retried send can deliver a message twice (a timeout after Meta or Telegram already delivered it). Accepted: a

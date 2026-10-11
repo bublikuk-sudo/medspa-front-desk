@@ -31,7 +31,15 @@ Every account is the clinic's, registered on the clinic's card (see "Handover" b
       clinic's real business number**: the test number reaches at most 5 recipients and is for demos only.
 - [ ] **Meta templates**: create `medspa_reminder` (category UTILITY) and `medspa_revisit` (Meta may classify it
       MARKETING), language English, bodies matching `REMINDER` and `REVISIT` in `templates/messages.en.json`, and wait
-      for approval. For the demo, approval took two days (submitted 2026-10-03, approved 2026-10-05).
+      for approval. For the demo, approval took two days (submitted 2026-10-03, approved 2026-10-05). The template
+      bodies use the number of days as a parameter: `{{2}} days` where `REVISIT` has `{days_text}`.
+- [ ] **Meta templates in the clinic's languages** (optional, owner decision 2026-10-11): outside the 24-hour window the
+      reminder and the revisit invitation can only go out as approved templates, and the template only exists in English,
+      so a German or Spanish client gets them in English, the date included. For each language the clinic's clients
+      write in, add a translation of both templates to Meta (same names, one language each) and wait for approval.
+      `send_message` still sends the English one (`WA_TPL` in its Format node names `lang: 'en'`, and Render writes the
+      date in English for it): picking the template language from `Clients.language`, with the date written in that
+      language, is a change to make together with the new templates.
 - [ ] **Telegram**: a new bot from @BotFather for the clinic. The owner opens the bot and presses Start once, so the bot
       can message them; owner alerts arrive there.
 - [ ] **Contract** signed (see "Contract checklist for the developer" at the end).

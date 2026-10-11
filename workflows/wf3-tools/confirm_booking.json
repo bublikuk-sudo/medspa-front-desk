@@ -705,7 +705,7 @@
             {
               "id": "9c0f0001-2005-4c00-8000-000000000005",
               "name": "alternatives",
-              "value": "={{ (() => { const m = String($json.verdict || '').match(/^(?:FREE|NONE nearest:) (.+)$/); if (!m) return ''; const tz = $('Settings').first().json.fields.timezone; return m[1].split(', ').slice(0, 3).map(x => DateTime.fromISO(x).setZone(tz)).filter(d => d.isValid).map(d => d.toFormat('ccc, LLL d, h:mm a')).join('; '); })() }}",
+              "value": "={{ (() => { const m = String($json.verdict || '').match(/^(?:FREE|NONE nearest:) (.+)$/); if (!m) return ''; return m[1].split(', ').slice(0, 3).filter(x => DateTime.fromISO(x).isValid).join(', '); })() }}",
               "type": "string"
             }
           ]
