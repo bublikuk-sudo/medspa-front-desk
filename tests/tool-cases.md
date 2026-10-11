@@ -367,7 +367,7 @@ Every test escalation is a real Telegram message to the owner; the reasons start
 
 | case | why |
 |---|---|
-| `escalate_ok` | a Telegram client goes from `active` to `escalated`; the teardown compares the whole row before and after and allows only `status` to differ |
+| `escalate_ok` | a Telegram client goes from `active` to `escalated` and gets `escalated_at` (the escalation-reset marker, no older than a minute before the setup) in the same write; the teardown compares the whole row before and after and allows only `status` and the new `escalated_at` to differ |
 | `escalate_whatsapp_client` | a `wa:+...` contact is found by `phone` and flagged |
 | `escalate_unknown_contact` | an unknown contact still gives `ESCALATED`; no `Clients` row is created for it and a bystander client stays `active` |
 | `escalate_malformed_id`, `escalate_empty_id`, `escalate_bare_wa_prefix` | `xyz`, `""` and `wa:` escalate to the owner but flag nobody: the bystander (blank `phone`, the row a `{phone}=''` formula would hit) stays `active` |
@@ -378,7 +378,7 @@ Every test escalation is a real Telegram message to the owner; the reasons start
 | `escalate_history_present` | the history path with a real table: seeded rows (human, junk string, tool row, ai, plus a row of ANOTHER session) give `Client: ...` then `Bot: ...` in conversation order, with no junk, no tool noise and nothing from the other session |
 | `escalate_history_none` | table present, no rows for the contact (a row of another session exists): `(no conversation history yet)` |
 | `escalate_history_unreadable` | 3 rows present but none readable: `(history rows present but unreadable: 3)` |
-| `escalate_already_escalated` | (Task 20, dialog 09) a client whose row is already `escalated` (an overlapping agent run escalated it a moment earlier) gets `ESCALATED` without a second owner message: no notify_owner run, the row stays `escalated` |
+| `escalate_already_escalated` | (Task 20, dialog 09) a client whose row is already `escalated` (an overlapping agent run escalated it a moment earlier) gets `ESCALATED` without a second owner message: no notify_owner run, the row stays `escalated` and no `escalated_at` is written |
 
 The history cases need the table, which the Postgres Chat Memory node (Task 12) normally creates. `tests/lib/pg.sh` creates it with the node's own DDL
 (`CREATE TABLE IF NOT EXISTS n8n_chat_histories (id SERIAL PRIMARY KEY, session_id VARCHAR(255) NOT NULL, message JSONB NOT NULL)`), seeds rows under

@@ -121,6 +121,16 @@ Clients the bot has stopped answering on its own, or flagged after a late cancel
 The owner clears an escalation by changing `status` to `active` (or `new`). The row then leaves the page. `notes` is
 read-only here on purpose, see the paragraph at the end.
 
+Changing `status` away from `escalated` also resets the bot's memory of that conversation. On the client's next
+message the bot deletes its chat history with that client (and only that client), then answers as usual: the client
+is greeted afresh, as if writing for the first time, while their name, notes and visits stay in Airtable and the bot
+still finds them. Without the reset the bot kept reading its own earlier "a team member will contact you" and went on
+deferring. The same happens when the owner chooses `flagged`: any status other than `escalated` counts as resolved. If
+the reset fails, the client is still answered, the owner gets a Telegram message starting "⚠️ Escalation reset", and
+the client's next message tries again. The reset only follows an escalation the bot made (it stamps the hidden field
+`escalated_at`); a client the owner set to `escalated` by hand keeps the old conversation. `escalated_at` is not shown
+on this page; it needs a hand only when a "⚠️ Escalation reset" message asks to empty it (in the `Clients` table).
+
 ## Page 4. After visit
 
 Visits whose time has passed and that still sit in a pre-visit status, so the owner can close them.

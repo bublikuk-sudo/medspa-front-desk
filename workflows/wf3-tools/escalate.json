@@ -164,6 +164,7 @@
     {
       "id": "e5ca1a7e-0006-4c00-8000-000000000006",
       "name": "Flag Escalated",
+      "notes": "escalated_at is written in the same update as the status: it is the marker WF-1 reads to notice that the owner resolved this escalation (status no longer escalated) and to reset the agent's chat memory of the conversation once. Already Escalated? keeps an overlapping second run from moving it.",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
@@ -184,7 +185,8 @@
           "mappingMode": "defineBelow",
           "value": {
             "id": "={{ $('Client').first().json.id }}",
-            "status": "escalated"
+            "status": "escalated",
+            "escalated_at": "={{ $now.toUTC().toISO() }}"
           },
           "matchingColumns": ["id"],
           "schema": [
@@ -204,7 +206,8 @@
                 { "name": "escalated", "value": "escalated" }
               ],
               "removed": false
-            }
+            },
+            { "id": "escalated_at", "displayName": "escalated_at", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "dateTime", "removed": false }
           ],
           "attemptToConvertTypes": false,
           "convertFieldsToString": false

@@ -37,6 +37,7 @@ WF-1  Inbound     Telegram Trigger ─┐
                                            YES to a live pending summary → confirm_booking
                                            yes/no answering a reminder   → reminder_reply
                                            client already escalated      → "a team member will contact you"
+                                           escalation resolved by owner  → delete that chat memory once, go on
                                        → otherwise WF-2 → reply, or instead the pending summary / the cancel
                                          question built from the row → send_message
 WF-2  Agent       AI Agent on Claude (claude-opus-5), Postgres chat memory per contact_id, guardrail
@@ -96,7 +97,8 @@ Airtable base `MedSpa Front Desk` (`airtable/schema.json`):
 - **Services** (the price list, edited by the clinic): `service_id`, `name`, `duration_min`, `price`,
   `deposit_required`, `active`.
 - **Clients** (one person, several channels): `client_id`, `name`, `phone`, `telegram_chat_id`, `email`, `language`,
-  `first_seen`, `last_visit`, `status` (`new | active | flagged | escalated`), `intake_completed`, `notes` (written by
+  `first_seen`, `last_visit`, `status` (`new | active | flagged | escalated`), `escalated_at` (set by `escalate` with the
+  status, emptied by WF-1 after it reset the chat memory of a resolved escalation), `intake_completed`, `notes` (written by
   the clinic, read by the agent), `last_offer_json`, `last_offer_at`, `last_agent_reply_at`, `cancel_ask_appt_id` (the
   open cancel question; send_message clears it on any other message to the client), `marketing_consent` (ticked by
   the clinic when the client opted in to marketing messages; the bot never sets it).
@@ -110,6 +112,17 @@ Airtable base `MedSpa Front Desk` (`airtable/schema.json`):
 
 The owner works in an Airtable Interface (today's visits, pending confirmations, flagged and escalated clients, after
 visit, clients with their marketing consent): [docs/airtable-interface.md](docs/airtable-interface.md).
+
+**Resolving an escalation.** While a client is `escalated` the bot only answers "a team member will contact you". When
+the owner has dealt with it, she changes `status` away from `escalated` (to `active`, or `flagged` if it should stay on
+her list). That also resets the bot's memory of the conversation: on the client's next message WF-1 deletes that
+client's chat history (`n8n_chat_histories`, that contact only), empties `escalated_at`, and answers as usual. The
+client is greeted afresh, as if the conversation were new, while their name, notes and visits stay in Airtable and
+reach the agent through `find_client`. Nothing the bot needs lives only in the chat history; what is lost is the
+wording of the earlier conversation, including the question that was escalated. If the history cannot be deleted, the
+client is still answered, the owner gets "⚠️ Escalation reset failed for …", and the next message tries again. Only an
+escalation made by the bot carries `escalated_at`: a client the owner set to `escalated` by hand keeps the old
+conversation when the status is changed back.
 
 ## What we deliberately do not store, and why
 

@@ -33,6 +33,7 @@
       { "name": "first_seen", "type": "dateTime", "options": { "timeZone": "utc", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } },
       { "name": "last_visit", "type": "date", "options": { "dateFormat": { "name": "iso" } } },
       { "name": "status", "type": "singleSelect", "options": { "choices": [ { "name": "new" }, { "name": "active" }, { "name": "flagged" }, { "name": "escalated" } ] } },
+      { "name": "escalated_at", "type": "dateTime", "options": { "timeZone": "utc", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } },
       { "name": "intake_completed", "type": "checkbox", "options": { "icon": "check", "color": "greenBright" } },
       { "name": "notes", "type": "multilineText" },
       { "name": "last_offer_json", "type": "multilineText" },

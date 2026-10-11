@@ -3,6 +3,7 @@
 // Guardrail/Result hand WF-1 the visit request_cancel recorded, WF-1 asks the client, and Gate routes the client's YES.
 // Runs in a Node (see tests/wf1-code-stubs.sh), which prepends:
 //   const WF = <workflows/wf1-inbound.json>;  const WF2 = <workflows/wf2-agent.json>;  const SM = <workflows/shared/send_message.json>;
+//   const ESC = <workflows/wf3-tools/escalate.json>;
 // No network, no n8n runtime: $input / $ / $now are stubbed. No jq and no luxon needed, so it also runs offline.
 
 const nodeIn = (wf, n) => wf.nodes.find((x) => x.name === n) || {};
@@ -572,6 +573,130 @@ T('Notify Failure is reached from Cancel Visit, Cancel Row and Mark Cancel Asked
     T('Notify Failure: ' + step + ' step + string error -> no pointer', () => NF(GENERIC, step) === NFH + GENERIC + NFT.replace('Agent', step) || NF(GENERIC, step));
   }
   T('Notify Send Failure: string error from the Agent-named step -> no pointer (only Notify Failure has it)', () => !alertOf('Notify Send Failure', { error: GENERIC }, 'Agent').includes('cause:') || 'pointer present');
+}
+
+// ==== Escalation reset (owner decision 2026-10-11: "да, делай сброс памяти при снятии эскалации") ==========================
+// escalate stamps Clients.escalated_at in the same write that sets status = escalated. When the owner later changes the
+// status away from escalated, the next message of that client deletes exactly that session's rows from the agent's chat
+// memory, then clears the marker, then takes the normal path. A failed delete never drops the message: the owner is alerted
+// and the marker stays, so the next message retries.
+{
+  const ESC_NODES = ['Escalation Resolved?', 'Reset Memory', 'Clear Marker', 'Notify Reset Failure'];
+  const ESC_FLAG = nodeIn(ESC, 'Flag Escalated');
+  const flagCols = (((ESC_FLAG.parameters || {}).columns) || {});
+  const flagVal = flagCols.value || {};
+  T('escalate: Flag Escalated writes status = escalated AND escalated_at = now, in the same update', () =>
+    flagVal.status === 'escalated' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/.test(String(ev(flagVal.escalated_at || '""', {}))) &&
+    same(Object.keys(flagVal).sort(), ['escalated_at', 'id', 'status']) || flagVal);
+  T('escalate: escalated_at is in the Flag Escalated schema as a dateTime column', () =>
+    ((flagCols.schema || []).find((s) => s.id === 'escalated_at') || {}).type === 'dateTime' || flagCols.schema);
+  T('escalate: Flag Escalated is the only Airtable write in escalate (no other path sets the status)', () =>
+    ESC.nodes.filter((x) => x.type === 'n8n-nodes-base.airtable' && (x.parameters || {}).operation !== 'search').map((x) => x.name).join() === 'Flag Escalated' || 'other writes');
+
+  const NJ = { contact_id: 'tg:9000000101', channel: 'tg', text: 'Хочу записаться' };
+  const cdOf = (fields, nj = NJ) => new Function('$input', '$', P('Client Data').jsCode)({}, dollar({ Normalize: nj, Client: { id: 'recC', createdTime: '', fields } }))[0].json;
+  const MARK = '2026-10-11T08:00:00.000Z';
+  T('Client Data passes escalated_at on ("" when absent)', () => cdOf({ client_id: 'C-test-1', status: 'active', escalated_at: MARK }).escalated_at === MARK &&
+    cdOf({ client_id: 'C-test-1', status: 'active' }).escalated_at === '' || cdOf({ client_id: 'C-test-1', status: 'active', escalated_at: MARK }));
+
+  // Walk the graph from Client Data the way n8n would: an IF node takes output 0 when its condition is true; any other node
+  // takes output 0, or its error output 1 when the scenario makes it fail. Stops at Classify (the normal path) or Send Hold.
+  const evPrev = (e, json, nodes, prev) => new Function('$json', '$', '$prevNode', 'return (' + strip(e) + ');')(json, dollar(nodes), { name: prev });
+  const walk = (fields, fail = {}) => {
+    const cd = cdOf(fields);
+    const nodes = { Normalize: NJ, 'Client Data': cd };
+    const seen = [];
+    const alerts = [];
+    let cur = target('Client Data', 0), prev = 'Client Data', json = cd;
+    for (let i = 0; i < 12 && cur !== 'none'; i++) {
+      seen.push(cur);
+      if (cur === 'Classify' || cur === 'Send Hold') break;
+      const nd = node(cur);
+      if (cur === 'Notify Reset Failure') alerts.push(evPrev(inputsOf(cur).text, json, nodes, prev));
+      let out = 0;
+      if (nd.type === 'n8n-nodes-base.if') out = ev(leftOf(cur), json, nodes) === true ? 0 : 1;
+      else if (fail[cur]) { out = 1; json = { error: { message: fail[cur] } }; }
+      else json = { ok: true };
+      prev = cur;
+      cur = target(cur, out);
+    }
+    return { seen, alerts };
+  };
+  const base = { client_id: 'C-test-1', name: 'Dana Test', language: 'ru' };
+  const RESET = ['Escalated?', 'Escalation Resolved?', 'Reset Memory', 'Clear Marker', 'Classify'];
+  for (const st of ['active', 'flagged', 'new']) {
+    const w = walk({ ...base, status: st, escalated_at: MARK });
+    T('resolved escalation (status ' + st + ', marker set) -> delete history, then clear the marker, then the normal path, no alert', () =>
+      same(w.seen, RESET) && w.alerts.length === 0 || w);
+  }
+  {
+    const w = walk({ ...base, status: 'escalated', escalated_at: MARK });
+    T('still escalated (marker set) -> the hold reply as today, no delete, no clear', () => same(w.seen, ['Escalated?', 'Send Hold']) || w);
+    const w2 = walk({ ...base, status: 'escalated' });
+    T('escalated without a marker (set by hand) -> the hold reply as today', () => same(w2.seen, ['Escalated?', 'Send Hold']) || w2);
+  }
+  for (const [label, f] of [['active, no marker', { status: 'active' }], ['new client row', { status: 'new' }], ['empty marker', { status: 'active', escalated_at: '' }], ['null marker', { status: 'active', escalated_at: null }]]) {
+    const w = walk({ ...base, ...f });
+    T('no marker (' + label + ') -> untouched: straight to the normal path, no delete, no clear', () =>
+      w.seen[w.seen.length - 1] === 'Classify' && !w.seen.includes('Reset Memory') && !w.seen.includes('Clear Marker') && w.alerts.length === 0 || w);
+  }
+  {
+    const w = walk({ ...base, status: 'active', escalated_at: MARK }, { 'Reset Memory': 'connection refused' });
+    T('delete fails -> owner alert, the message is still handled (normal path), the marker is NOT cleared', () =>
+      same(w.seen, ['Escalated?', 'Escalation Resolved?', 'Reset Memory', 'Notify Reset Failure', 'Classify']) && w.alerts.length === 1 || w);
+    const a = w.alerts[0] || '';
+    T('delete-failure alert names the client (contact_id and client_id), the step and the error, and says the next message retries', () =>
+      a.includes('tg:9000000101') && a.includes('C-test-1') && a.includes('step: Reset Memory') && a.includes('connection refused') && /next message/i.test(a) && !a.includes('Dana') || a);
+    const w2 = walk({ ...base, status: 'active', escalated_at: MARK }, { 'Reset Memory': 'boom', 'Notify Reset Failure': 'telegram down' });
+    T('delete fails AND the alert fails -> the message is still handled', () => w2.seen[w2.seen.length - 1] === 'Classify' && !w2.seen.includes('Clear Marker') || w2);
+    const w3 = walk({ ...base, status: 'active', escalated_at: MARK }, { 'Clear Marker': 'INVALID_VALUE_FOR_COLUMN' });
+    T('clear fails after the delete -> owner alert naming the step, the message is still handled', () =>
+      same(w3.seen, ['Escalated?', 'Escalation Resolved?', 'Reset Memory', 'Clear Marker', 'Notify Reset Failure', 'Classify']) &&
+      (w3.alerts[0] || '').includes('step: Clear Marker') && (w3.alerts[0] || '').includes('C-test-1') && (w3.alerts[0] || '').includes('escalated_at') || w3);
+  }
+  T('Notify Reset Failure: both outputs continue to Classify; it calls notify_owner and never stops the run', () =>
+    target('Notify Reset Failure', 0) === 'Classify' && target('Notify Reset Failure', 1) === 'Classify' &&
+    (P('Notify Reset Failure').workflowId || {}).value === 'WFID:notify_owner' && node('Notify Reset Failure').onError === 'continueErrorOutput' || 'wrong');
+
+  // The delete: parameterised, exactly the session the agent's memory uses, never a pattern
+  const rm = node('Reset Memory');
+  const q = String(P('Reset Memory').query || '');
+  T('Reset Memory: Postgres, one parameterised DELETE on n8n_chat_histories by session_id = $1, one count row out', () =>
+    rm.type === 'n8n-nodes-base.postgres' && P('Reset Memory').operation === 'executeQuery' &&
+    q === "WITH d AS (DELETE FROM n8n_chat_histories WHERE session_id = $1 AND $1 <> '' RETURNING 1) SELECT count(*)::int AS deleted FROM d" || q);
+  T('Reset Memory: no LIKE / regex / interpolation in the SQL', () => !/like|~|similar|\{\{|\+/i.test(q) || q);
+  T('Reset Memory: error output (not a stop), retried once', () => rm.onError === 'continueErrorOutput' && rm.retryOnFail === true && rm.maxTries === 2 && rm.alwaysOutputData !== true || rm);
+  const qr = (cid) => ev(((P('Reset Memory').options || {}).queryReplacement), {}, { Normalize: { contact_id: cid } });
+  T('Reset Memory parameter: the contact_id itself for tg / wa ids', () => same(qr('tg:9000000101'), ['tg:9000000101']) && same(qr('wa:+15550000101'), ['wa:+15550000101']) || [qr('tg:9000000101'), qr('wa:+15550000101')]);
+  T('Reset Memory parameter: a malformed or pattern-like id becomes \'\' (deletes nothing)', () =>
+    ['', 'tg:%', "tg:1' OR '1'='1", 'tg:9000000101%', 'wa:+1555_', 'xyz', undefined].every((c) => same(qr(c), [''])) || qr('tg:%'));
+  const mem = (WF2.nodes.find((x) => x.type === '@n8n/n8n-nodes-langchain.memoryPostgresChat') || {}).parameters || {};
+  T('the deleted session is the agent\'s: WF-2 memory table n8n_chat_histories, key = the contact_id WF-1 hands the agent', () =>
+    mem.tableName === 'n8n_chat_histories' && mem.sessionIdType === 'customKey' && mem.sessionKey === "={{ $('Trigger').first().json.contact_id }}" &&
+    ev(inputsOf('Agent').contact_id, {}, { 'Client Data': cdOf({ ...base, status: 'active' }) }) === NJ.contact_id || mem);
+
+  // Clear the marker: one Clients update, only escalated_at, after the delete
+  const cm = node('Clear Marker');
+  const cmCols = P('Clear Marker').columns || {};
+  T('Clear Marker: Clients update of THIS row, escalated_at = null, nothing else written', () =>
+    cm.type === 'n8n-nodes-base.airtable' && P('Clear Marker').operation === 'update' && (P('Clear Marker').table || {}).value === 'ATTBL:Clients' &&
+    same(Object.keys(cmCols.value || {}).sort(), ['escalated_at', 'id']) && ev(cmCols.value.id, {}, { 'Client Data': { client_rec: 'recC' } }) === 'recC' &&
+    ev(cmCols.value.escalated_at, {}) === null && same(cmCols.matchingColumns, ['id']) &&
+    ((cmCols.schema || []).find((s) => s.id === 'escalated_at') || {}).type === 'dateTime' || cmCols);
+  T('Clear Marker: error output to the alert (never stops the run), retried once', () => cm.onError === 'continueErrorOutput' && cm.retryOnFail === true && target('Clear Marker', 1) === 'Notify Reset Failure' || cm);
+  T('order: only Reset Memory\'s success output leads to Clear Marker; its error output never does', () =>
+    same(outs('Reset Memory', 0), ['Clear Marker']) && same(outs('Reset Memory', 1), ['Notify Reset Failure']) && !outs('Notify Reset Failure', 0).includes('Clear Marker') || [outs('Reset Memory', 0), outs('Reset Memory', 1)]);
+  T('only WF-1 writes on the reset path are Clear Marker (Airtable) and Reset Memory (Postgres)', () =>
+    ESC_NODES.filter((n) => ['n8n-nodes-base.airtable', 'n8n-nodes-base.postgres'].includes(node(n).type)).sort().join() === 'Clear Marker,Reset Memory' || 'wrong');
+
+  // Classify now reads Client Data by name: on the reset path its input item is the Postgres / Airtable / notify output
+  const classify = (inputJson) => runCode(P('Classify').jsCode, inputJson, { 'Client Data': { ...cdOf({ ...base, status: 'active', cancel_ask_appt_id: 'A-C' }), text: 'да' } })[0].json;
+  for (const [label, inp] of [['the Client Data item (ordinary path)', null], ['the Reset Memory count row', { deleted: 4 }], ['the Clear Marker record', { id: 'recC', fields: { client_id: 'C-test-1' } }], ['a notify_owner result', { ok: true }]]) {
+    const c = classify(inp || { ...cdOf({ ...base, status: 'active', cancel_ask_appt_id: 'A-C' }), text: 'да' });
+    T('Classify after ' + label + ' -> the Client Data fields, kind computed from the client text', () =>
+      c.client_id === 'C-test-1' && c.cancel_ask_appt_id === 'A-C' && c.kind === 'yes' && c.contact_id === NJ.contact_id && !('deleted' in c) && !('fields' in c) || c);
+    T('Pending formula after ' + label + ' is the client\'s', () => pf(c) === "AND({client_id}='C-test-1',OR({status}='pending',{appt_id}='A-C'))" || pf(c));
+  }
 }
 
 console.log('\nWF1_STUBS passed ' + pass + ', failed ' + fail);
