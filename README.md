@@ -120,7 +120,9 @@ client's chat history (`n8n_chat_histories`, that contact only), empties `escala
 client is greeted afresh, as if the conversation were new, while their name, notes and visits stay in Airtable and
 reach the agent through `find_client`. Nothing the bot needs lives only in the chat history; what is lost is the
 wording of the earlier conversation, including the question that was escalated. If the history cannot be deleted, the
-client is still answered, the owner gets "⚠️ Escalation reset failed for …", and the next message tries again. Only an
+client is still answered, the owner gets "⚠️ Escalation reset failed for …", and the next message tries again. If the
+history was deleted but `escalated_at` could not be emptied (checked on Airtable's answer), she gets "⚠️ Escalation
+reset for …" asking her to empty it by hand, because until then each message deletes the history again. Only an
 escalation made by the bot carries `escalated_at`: a client the owner set to `escalated` by hand keeps the old
 conversation when the status is changed back.
 

@@ -581,7 +581,7 @@ T('Notify Failure is reached from Cancel Visit, Cancel Row and Mark Cancel Asked
 // memory, then clears the marker, then takes the normal path. A failed delete never drops the message: the owner is alerted
 // and the marker stays, so the next message retries.
 {
-  const ESC_NODES = ['Escalation Resolved?', 'Reset Memory', 'Clear Marker', 'Notify Reset Failure'];
+  const ESC_NODES = ['Escalation Resolved?', 'Reset Memory', 'Clear Marker', 'Marker Cleared?', 'Notify Reset Failure'];
   const ESC_FLAG = nodeIn(ESC, 'Flag Escalated');
   const flagCols = (((ESC_FLAG.parameters || {}).columns) || {});
   const flagVal = flagCols.value || {};
@@ -602,7 +602,11 @@ T('Notify Failure is reached from Cancel Visit, Cancel Row and Mark Cancel Asked
   // Walk the graph from Client Data the way n8n would: an IF node takes output 0 when its condition is true; any other node
   // takes output 0, or its error output 1 when the scenario makes it fail. Stops at Classify (the normal path) or Send Hold.
   const evPrev = (e, json, nodes, prev) => new Function('$json', '$', '$prevNode', 'return (' + strip(e) + ');')(json, dollar(nodes), { name: prev });
-  const walk = (fields, fail = {}) => {
+  // fail[node]: a string -> error item { error: { message } } (a Postgres / Airtable node error); an object -> that error item
+  // as is (e.g. { error: 'text' }, the plain-string shape). ok[node]: the success output (default: Clear Marker answers with
+  // the updated record, which Airtable returns WITHOUT empty fields).
+  const CLEARED = { id: 'recC', createdTime: '', fields: { client_id: 'C-test-1', status: 'active' } };
+  const walk = (fields, fail = {}, ok = {}) => {
     const cd = cdOf(fields);
     const nodes = { Normalize: NJ, 'Client Data': cd };
     const seen = [];
@@ -615,15 +619,15 @@ T('Notify Failure is reached from Cancel Visit, Cancel Row and Mark Cancel Asked
       if (cur === 'Notify Reset Failure') alerts.push(evPrev(inputsOf(cur).text, json, nodes, prev));
       let out = 0;
       if (nd.type === 'n8n-nodes-base.if') out = ev(leftOf(cur), json, nodes) === true ? 0 : 1;
-      else if (fail[cur]) { out = 1; json = { error: { message: fail[cur] } }; }
-      else json = { ok: true };
+      else if (fail[cur]) { out = 1; json = typeof fail[cur] === 'object' ? fail[cur] : { error: { message: fail[cur] } }; }
+      else json = ok[cur] || (cur === 'Clear Marker' ? CLEARED : { ok: true });
       prev = cur;
       cur = target(cur, out);
     }
     return { seen, alerts };
   };
   const base = { client_id: 'C-test-1', name: 'Dana Test', language: 'ru' };
-  const RESET = ['Escalated?', 'Escalation Resolved?', 'Reset Memory', 'Clear Marker', 'Classify'];
+  const RESET = ['Escalated?', 'Escalation Resolved?', 'Reset Memory', 'Clear Marker', 'Marker Cleared?', 'Classify'];
   for (const st of ['active', 'flagged', 'new']) {
     const w = walk({ ...base, status: st, escalated_at: MARK });
     T('resolved escalation (status ' + st + ', marker set) -> delete history, then clear the marker, then the normal path, no alert', () =>
@@ -653,7 +657,26 @@ T('Notify Failure is reached from Cancel Visit, Cancel Row and Mark Cancel Asked
     T('clear fails after the delete -> owner alert naming the step, the message is still handled', () =>
       same(w3.seen, ['Escalated?', 'Escalation Resolved?', 'Reset Memory', 'Clear Marker', 'Notify Reset Failure', 'Classify']) &&
       (w3.alerts[0] || '').includes('step: Clear Marker') && (w3.alerts[0] || '').includes('C-test-1') && (w3.alerts[0] || '').includes('escalated_at') || w3);
+    // fix round 1, Minor 3: an error item whose `error` is a plain string (the Execute Workflow shape)
+    const w4 = walk({ ...base, status: 'active', escalated_at: MARK }, { 'Reset Memory': { error: 'pool exhausted (string)' } });
+    T('delete fails with a plain-string error -> the alert carries that text, marker kept, message handled', () =>
+      same(w4.seen, ['Escalated?', 'Escalation Resolved?', 'Reset Memory', 'Notify Reset Failure', 'Classify']) &&
+      (w4.alerts[0] || '').includes('pool exhausted (string)') && (w4.alerts[0] || '').includes('step: Reset Memory') || w4);
+    // fix round 1, Important 1: the update "succeeds" but the marker is still there (a silent no-op) -> alert, not silence
+    const w5 = walk({ ...base, status: 'active', escalated_at: MARK }, {}, { 'Clear Marker': { id: 'recC', createdTime: '', fields: { client_id: 'C-test-1', status: 'active', escalated_at: MARK } } });
+    const a5 = w5.alerts[0] || '';
+    T('Clear Marker answers with escalated_at still set -> Marker Cleared? false -> alert naming Clear Marker and escalated_at -> message handled', () =>
+      same(w5.seen, ['Escalated?', 'Escalation Resolved?', 'Reset Memory', 'Clear Marker', 'Marker Cleared?', 'Notify Reset Failure', 'Classify']) &&
+      a5.includes('step: Clear Marker') && a5.includes('escalated_at') && a5.includes('C-test-1') && a5.includes('still set') && !/no error text/.test(a5) || w5);
+    const w6 = walk({ ...base, status: 'active', escalated_at: MARK }, {}, { 'Clear Marker': {} });
+    T('Clear Marker answers with no record at all -> treated as not cleared (alert)', () => w6.seen.includes('Notify Reset Failure') && w6.seen[w6.seen.length - 1] === 'Classify' || w6);
+    const w7 = walk({ ...base, status: 'active', escalated_at: MARK }, {}, { 'Clear Marker': { id: 'recC', createdTime: '', fields: { client_id: 'C-test-1', escalated_at: null } } });
+    T('Clear Marker answers with escalated_at null -> cleared, no alert', () => same(w7.seen, RESET) && w7.alerts.length === 0 || w7);
   }
+  T('Clear Marker sends typecast (options.typecast = true): without it n8n 2.41.5 validation turns null into undefined and the field is dropped', () =>
+    (P('Clear Marker').options || {}).typecast === true || P('Clear Marker').options);
+  T('Marker Cleared?: true -> Classify, false -> Notify Reset Failure; Clear Marker success -> Marker Cleared?', () =>
+    same(outs('Clear Marker', 0), ['Marker Cleared?']) && target('Marker Cleared?', 0) === 'Classify' && target('Marker Cleared?', 1) === 'Notify Reset Failure' || [outs('Clear Marker', 0), outs('Marker Cleared?', 0), outs('Marker Cleared?', 1)]);
   T('Notify Reset Failure: both outputs continue to Classify; it calls notify_owner and never stops the run', () =>
     target('Notify Reset Failure', 0) === 'Classify' && target('Notify Reset Failure', 1) === 'Classify' &&
     (P('Notify Reset Failure').workflowId || {}).value === 'WFID:notify_owner' && node('Notify Reset Failure').onError === 'continueErrorOutput' || 'wrong');

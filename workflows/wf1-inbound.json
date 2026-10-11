@@ -703,7 +703,7 @@
     {
       "id": "e1a10013-0071-4c00-8000-000000000071",
       "name": "Clear Marker",
-      "notes": "Only after Reset Memory succeeded: empties Clients.escalated_at so the reset happens once. Error output -> Notify Reset Failure (the memory WAS reset; until the marker is empty every message resets it again) -> the message is still handled.",
+      "notes": "Only after Reset Memory succeeded: empties Clients.escalated_at so the reset happens once. typecast is on because it makes the node skip n8n's resource-mapper validation: in n8n 2.41.5 that validation turns a null value into undefined (validateFieldType returns no newValue for null) and the field is dropped from the PATCH, a silent no-op. With typecast the PATCH carries escalated_at: null, which Airtable clears. Marker Cleared? checks the answer. Error output -> Notify Reset Failure (the memory WAS reset; until the marker is empty every message resets it again) -> the message is still handled.",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
@@ -734,13 +734,36 @@
           "attemptToConvertTypes": false,
           "convertFieldsToString": false
         },
+        "options": { "typecast": true }
+      }
+    },
+    {
+      "id": "e1a10013-0073-4c00-8000-000000000073",
+      "name": "Marker Cleared?",
+      "notes": "Zero-cost read-back: the update answers with the record, and Airtable leaves empty fields out of it. A record without escalated_at -> Classify. Still set (the write was a no-op) or no record -> Notify Reset Failure, so a marker that did not clear is reported instead of wiping the memory on every message in silence.",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [3740, 640],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "e1a10013-1029-4c00-8000-000000000029",
+              "leftValue": "={{ !!$json.id && !String((($json.fields || {}).escalated_at) || '').trim() }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
         "options": {}
       }
     },
     {
       "id": "e1a10013-0072-4c00-8000-000000000072",
       "name": "Notify Reset Failure",
-      "notes": "Reached from the error output of Reset Memory or Clear Marker. Names the client (contact_id, client_id; not the client-written name) and the step. Both outputs go to Classify: the client's message is handled even if this alert failed.",
+      "notes": "Reached from the error output of Reset Memory or Clear Marker, or from Marker Cleared? false (the update answered with escalated_at still set). Names the client (contact_id, client_id; not the client-written name) and the step. Both outputs go to Classify: the client's message is handled even if this alert failed.",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
       "position": [3520, 840],
@@ -751,7 +774,7 @@
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
-            "text": "={{ (() => { const c = $('Client Data').first().json; const e = $json.error; const m = String((e && (e.message || e)) || 'no error text').replace(/\\s+/g, ' ').trim().slice(0, 300); const who = c.contact_id + ' (client ' + c.client_id + ')'; return $prevNode.name === 'Clear Marker' ? '⚠️ Escalation reset for ' + who + ': the memory the bot keeps of the conversation was deleted, but escalated_at could not be emptied (step: Clear Marker): ' + m + '. Until it is empty, every message from this client deletes that memory again: empty escalated_at in their Clients row by hand. The client was answered.' : '⚠️ Escalation reset failed for ' + who + ': the memory the bot keeps of the conversation could not be deleted (step: ' + $prevNode.name + '): ' + m + '. The client was answered, but the bot may still tell them a team member will contact them. Their next message retries the reset.'; })() }}"
+            "text": "={{ (() => { const c = $('Client Data').first().json; const prev = $prevNode.name; const e = $json.error; const m = prev === 'Marker Cleared?' ? 'the update answered with escalated_at still set' : String((e && (e.message || e)) || 'no error text').replace(/\\s+/g, ' ').trim().slice(0, 300); const who = c.contact_id + ' (client ' + c.client_id + ')'; return (prev === 'Clear Marker' || prev === 'Marker Cleared?') ? '⚠️ Escalation reset for ' + who + ': the memory the bot keeps of the conversation was deleted, but escalated_at could not be emptied (step: Clear Marker): ' + m + '. Until it is empty, every message from this client deletes that memory again: empty escalated_at in their Clients row by hand. The client was answered.' : '⚠️ Escalation reset failed for ' + who + ': the memory the bot keeps of the conversation could not be deleted (step: ' + $prevNode.name + '): ' + m + '. The client was answered, but the bot may still tell them a team member will contact them. Their next message retries the reset.'; })() }}"
           },
           "matchingColumns": [],
           "schema": [
@@ -2218,6 +2241,12 @@
       ]
     },
     "Clear Marker": {
+      "main": [
+        [{ "node": "Marker Cleared?", "type": "main", "index": 0 }],
+        [{ "node": "Notify Reset Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Marker Cleared?": {
       "main": [
         [{ "node": "Classify", "type": "main", "index": 0 }],
         [{ "node": "Notify Reset Failure", "type": "main", "index": 0 }]
