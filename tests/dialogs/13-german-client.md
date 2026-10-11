@@ -21,9 +21,17 @@ The reminder leg is not repeated (see dialog 11).
 | 6 | Ich möchte meinen Termin bitte absagen. | `CANCEL_PENDING` in German, asking for «JA»; request_cancel, nothing cancelled yet | `booked`, event, cancel question open |
 | 7 | ja | `CANCELLED` in German; the list YES answers the open cancel question: Cancel Visit, no LLM Affirmative, no Agent | `cancelled`, no event |
 
-Every step checks that nothing English reached the client: no English weekday or month ("Mon,", "Jan 7"), no "AM"/"PM"
-after a time (case-sensitive, because German "am" means "on the"), and none of the English words a template or a leaked
-planning line would carry. "Jan" alone is correct German ("7. Jan."), so only the English order "Jan 7" counts.
+Every step checks that the client's messages contain none of these English fragments:
+
+- a weekday abbreviation in the English "Mon," form;
+- "Jan" directly followed by a day number that is not a time. "Jan" alone is correct German ("7. Jan.", "7. Jan 10:00"),
+  so only the English order "Jan 7" counts.
+- "AM"/"PM" after a time, matched case-sensitively, because German "am" means "on the";
+- the English unit "min" after a number, lower case and without a dot ("(30 min)"). German writes "30 Min.".
+- an English weekday name, or one of the months January, February, March, May, June, July, October, December, matched
+  case-sensitively. April, August, September and November are spelled the same in German, so they are not checked.
+- one of the words hour(s), minutes, day(s), reply, yes, cancel, booked, your, you, the, would, which.
+
 `expect lang: de` was added to `tests/dialog.sh` for this dialog.
 
 **Final state.** `language=de`, `active`, the name contains "Jonas"; one appointment, `cancelled`, `start_iso` ISO with
@@ -37,24 +45,24 @@ send: Hallo! Ich möchte einen Termin für Botox buchen.
 expect templates: reply
 expect lang: de
 expect regex: \bKI\b|künstliche Intelligenz
-expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan \d|(?-i:\d\s?[AP]M\b)|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
+expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan (?=\d{1,2}\b(?!:))|(?-i:\d\s?[AP]M\b)|(?-i:\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|January|February|March|May|June|July|October|December)\b)|(?-i:\d\s?min\b(?!\.))|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
 send: Ich heiße Jonas Testmann.
 expect templates: reply
 expect lang: de
-expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan \d|(?-i:\d\s?[AP]M\b)|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
+expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan (?=\d{1,2}\b(?!:))|(?-i:\d\s?[AP]M\b)|(?-i:\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|January|February|March|May|June|July|October|December)\b)|(?-i:\d\s?min\b(?!\.))|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
 send: Am Montag, 7. Januar 2030, vormittags, bitte.
 expect templates: reply
 expect lang: de
 expect tool: check_availability
 expect regex: \b\d{1,2}:\d{2}\b
 expect no-regex: (Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag),? (den )?7\. Jan|\b(Di|Mi|Do|Fr|Sa|So)\., 7\. Jan
-expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan \d|(?-i:\d\s?[AP]M\b)|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
+expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan (?=\d{1,2}\b(?!:))|(?-i:\d\s?[AP]M\b)|(?-i:\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|January|February|March|May|June|July|October|December)\b)|(?-i:\d\s?min\b(?!\.))|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
 send: Den ersten, bitte.
 expect templates: PENDING_SUMMARY
 expect lang: de
 expect regex: (?-i:\bJA\b)
 expect regex: 24 Stunden
-expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan \d|(?-i:\d\s?[AP]M\b)|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
+expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan (?=\d{1,2}\b(?!:))|(?-i:\d\s?[AP]M\b)|(?-i:\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|January|February|March|May|June|July|October|December)\b)|(?-i:\d\s?min\b(?!\.))|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
 send: ja
 expect templates: BOOKED, BOOKED_INTAKE
 expect lang: de
@@ -62,7 +70,7 @@ expect node: Confirm
 expect no-node: LLM Affirmative
 expect no-node: Agent
 expect regex: 24 Stunden
-expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan \d|(?-i:\d\s?[AP]M\b)|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
+expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan (?=\d{1,2}\b(?!:))|(?-i:\d\s?[AP]M\b)|(?-i:\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|January|February|March|May|June|July|October|December)\b)|(?-i:\d\s?min\b(?!\.))|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
 expect state: [.appts[].status] == ["booked"]
 expect state: .appts[0].start_iso | test("^2030-01-07T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$")
 expect state: (.events | length) == 1 and .events[0].summary == ("Botox — " + .client.name)
@@ -73,7 +81,7 @@ expect tool: request_cancel
 expect node: Send Cancel Ask
 expect no-node: Cancel Visit
 expect regex: (?-i:\bJA\b)
-expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan \d|(?-i:\d\s?[AP]M\b)|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
+expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan (?=\d{1,2}\b(?!:))|(?-i:\d\s?[AP]M\b)|(?-i:\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|January|February|March|May|June|July|October|December)\b)|(?-i:\d\s?min\b(?!\.))|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
 expect state: [.appts[].status] == ["booked"]
 expect state: (.events | length) == 1
 expect state: (.client.cancel_ask_appt_id // "") == .appts[0].appt_id
@@ -83,7 +91,7 @@ expect lang: de
 expect node: Cancel Visit
 expect no-node: LLM Affirmative
 expect no-node: Agent
-expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan \d|(?-i:\d\s?[AP]M\b)|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
+expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan (?=\d{1,2}\b(?!:))|(?-i:\d\s?[AP]M\b)|(?-i:\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|January|February|March|May|June|July|October|December)\b)|(?-i:\d\s?min\b(?!\.))|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
 expect state: [.appts[].status] == ["cancelled"]
 expect state: (.events | length) == 0
 state: (.client.client_id // "") | startswith("C-test-")

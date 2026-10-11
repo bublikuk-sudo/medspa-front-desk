@@ -23,8 +23,12 @@ The reminder leg is not repeated (see dialog 11).
 reached the client except the clinic's and brands' names (Glow Aesthetics Med-Spa, HydraFacial, Botox) and the intake
 link's parts (a word inside a URL is skipped). Words of one or two letters are not counted (`<b>` from the Telegram
 format), and "AM"/"PM" after a time is checked on its own. The summary and the cancel question must name the reply word
-«ДА» and the window «24 часа», which `send_message` writes before the translation. An "AI" in step 1 would fail this
-check: the owner asked for no English at all, and the step's own regex expects ИИ. The booked state after step 5 was a
+«ДА» and the window «24 часа», which `send_message` writes before the translation. A Latin word of one or two letters
+("AI", "OK") is not caught by this check; in step 1 the step's own regex still requires «ИИ» or «искусственн…».
+
+A Russian reply that names a service in Latin letters other than HydraFacial and Botox (for example "Dermal Filler" or
+"Chemical Peel" in a list of services) fails the check. That is a finding to judge from the log: an untranslated
+service name, not necessarily a bot defect. The booked state after step 5 was a
 final-state check before; it is now an `expect state:` of step 5, because the dialog goes on to cancel.
 
 **Final state.** `language=ru`, `active`, the name contains "Ольга"; one appointment, now `cancelled`, `start_iso` ISO
