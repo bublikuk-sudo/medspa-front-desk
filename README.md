@@ -202,7 +202,11 @@ What an EU deployment needs. This is a checklist, not legal advice.
   visits are then marked, so a backlog never sends a stack of stale invitations. Withdrawn consent: untick the box.
 - **Privacy notice.** The clinic's patient privacy notice names the AI assistant and the processors above.
 - **AI disclosure.** The bot tells a new client in its first reply that it is the clinic's AI assistant, and answers
-  truthfully when asked (EU AI Act Art. 50).
+  truthfully when asked (EU AI Act Art. 50). This does not rest on the model's wording: in the run that creates the
+  client's row, `send_message` checks the reply for the word for AI in the client's language (AI, KI, IA, ИИ, ШІ, SI,
+  or the full phrase) and, when it is missing, puts one fixed sentence before it ("I am {clinic}'s AI assistant; a
+  team member can take over at any time if you prefer.", in the client's language), never twice and never to a client
+  the clinic already had.
 - **DPIA.** Likely needed: automated processing next to health data. The clinic decides.
 
 ## Channels and WhatsApp providers

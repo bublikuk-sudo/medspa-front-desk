@@ -63,8 +63,9 @@ check('wf2 system prompt (C): one line tells the agent to use the formal form of
 // agent wrote "Soy la asistente virtual de …" with no word for AI; the prompt's first line called it "the virtual front desk".
 check('wf2 system prompt (C-9): the first line no longer calls the agent "virtual" ("virtual front desk" is gone)',
   /^=You are the AI front-desk assistant of a medical aesthetics clinic\./.test(sys) && !/virtual front desk/.test(sys), sys.slice(0, 200));
-check('wf2 system prompt (C-9): rule 1\'s disclosure needs the word for AI in the client\'s language; "virtual assistant" alone does not count',
-  /saying that you are the clinic's AI assistant and that a team member can take over on request; that sentence must contain the word for AI in the client's language \(AI, ИИ, IA, KI, …\), and "virtual assistant" alone does not count\. Do not repeat it in later replies, and do not volunteer it to a KNOWN client\./.test(sys), sys.slice(0, 2600));
+// Mini-task D ride-along (C review minor): "Do not repeat it" -> "Do not repeat the disclosure" (the pronoun's referent was unclear).
+check('wf2 system prompt (C-9, D): rule 1\'s disclosure needs the word for AI in the client\'s language; "virtual assistant" alone does not count',
+  /saying that you are the clinic's AI assistant and that a team member can take over on request; that sentence must contain the word for AI in the client's language \(AI, ИИ, IA, KI, …\), and "virtual assistant" alone does not count\. Do not repeat the disclosure in later replies, and do not volunteer it to a KNOWN client\./.test(sys), sys.slice(0, 2600));
 check('wf2 system prompt (C-9): "Never claim to be a human" keeps its meaning (line unchanged)',
   /\n- If a client asks whether they are talking to a bot, an AI or a human, answer truthfully that you are the clinic's AI assistant and offer to connect a team member\. Never claim to be a human\.\n/.test(sys), 'line changed');
 check('wf2 system prompt equals prompts/agent-system-prompt.md (sync-assets.sh contract: "=" + the file)', sys === '=' + PROMPT.replace(/\r/g, '').replace(/\n$/, ''), sys.length + ' vs ' + PROMPT.length);

@@ -722,5 +722,37 @@ T('Notify Failure is reached from Cancel Visit, Cancel Row and Mark Cancel Asked
   }
 }
 
+// ==== AI disclosure (mini-task D, owner 2026-10-12) ======================================================================
+// The prompt asks the agent to say it is the clinic's AI assistant in its first reply to a NEW client; live es dialog 11 run 1
+// (tests/dialog-runs/2026-10-12-client-language-tg.md, finding 1) did not. The system-side signal is "Create Client ran in
+// this run": the Clients row is created once per contact, so the flag is set in one run per contact, never for a contact that
+// already had a row. WF-1 passes it to send_message (input ai_disclosure) on the sends that answer the client's message in
+// that run; send_message's Render checks the reply for the word for AI and adds the fixed sentence only when it is missing.
+{
+  const FLAGGED = ['Send Error', 'Send Reply', 'Send Summary', 'Send Template'];
+  const flagOf = (n, nodes) => { const e = inputsOf(n).ai_disclosure; return e === undefined ? 'unset' : ev(e, {}, nodes); };
+  const created = { 'Create Client': { id: 'recNEW', fields: { client_id: 'C-NEW' } } };
+  const into = (t) => WF.nodes.filter((x) => Object.values(WF.connections[x.name] || {}).flat(2).some((c) => c && c.node === t)).map((x) => x.name);
+  T('D: send_message declares the input ai_disclosure (string)', () =>
+    (((nodeIn(SM, 'Trigger').parameters || {}).workflowInputs || {}).values || []).some((v) => v.name === 'ai_disclosure' && v.type === 'string') || 'missing');
+  for (const n of FLAGGED) {
+    T('D: ' + n + ' passes ai_disclosure = "true" in the run that created the Clients row', () => flagOf(n, created) === 'true' || flagOf(n, created));
+    T('D: ' + n + ' passes ai_disclosure = "" when the row already existed (KNOWN client, any later message)', () => flagOf(n, {}) === '' || flagOf(n, {}));
+    T('D: ' + n + ' lists ai_disclosure in its schema as a string', () =>
+      ((P(n).workflowInputs || {}).schema || []).some((s) => s.id === 'ai_disclosure' && s.type === 'string') || 'missing');
+  }
+  const others = sendNodes.filter((n) => !FLAGGED.includes(n) && inputsOf(n).ai_disclosure !== undefined);
+  T('D: no other send sets ai_disclosure (Send Error Again, results, reminders, hold, rate limit ...: null in send_message, no sentence)', () =>
+    others.length === 0 || others);
+  T('D: Create Client runs only on New Client?\'s true output, i.e. when the Clients search found no row', () =>
+    same(outs('New Client?', 0), ['Create Client']) && !outs('New Client?', 1).includes('Create Client') &&
+    leftOf('New Client?') === "={{ !$('Client').first().json.id }}" && same(into('Create Client'), ['New Client?']) || [outs('New Client?', 0), into('Create Client')]);
+  // At most one flagged send reaches the client in a run: Send Error is reached only from Notify Failure (a step failed before
+  // any reply went out), and a failed reply send goes to Notify Send Failure -> Send Error Again, which carries no flag.
+  T('D: a failed flagged send is answered by Send Error Again (no flag), never by Send Error; only Notify Failure leads to Send Error', () =>
+    ['Send Reply', 'Send Template', 'Send Summary'].every((n) => same(outs(n, 1), ['Notify Send Failure'])) && !outs('Notify Send Failure', 0).includes('Send Error') &&
+    same(into('Send Error'), ['Notify Failure']) || [['Send Reply', 'Send Template', 'Send Summary'].map((n) => outs(n, 1)), into('Send Error')]);
+}
+
 console.log('\nWF1_STUBS passed ' + pass + ', failed ' + fail);
 process.exit(fail ? 1 : 0);

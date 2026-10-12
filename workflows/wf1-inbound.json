@@ -1518,7 +1518,8 @@
             "template_key": "ERROR",
             "appt_id": "",
             "vars_json": "",
-            "outside_window": ""
+            "outside_window": "",
+            "ai_disclosure": "={{ $('Create Client').isExecuted === true ? 'true' : '' }}"
           },
           "matchingColumns": [],
           "schema": [
@@ -1527,7 +1528,8 @@
             { "id": "template_key", "displayName": "template_key", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
             { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
             { "id": "vars_json", "displayName": "vars_json", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
-            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "ai_disclosure", "displayName": "ai_disclosure", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
           ],
           "attemptToConvertTypes": false,
           "convertFieldsToString": true
@@ -1604,7 +1606,8 @@
             "template_key": "PENDING_SUMMARY",
             "appt_id": "={{ $json.fields.appt_id }}",
             "vars_json": "",
-            "outside_window": ""
+            "outside_window": "",
+            "ai_disclosure": "={{ $('Create Client').isExecuted === true ? 'true' : '' }}"
           },
           "matchingColumns": [],
           "schema": [
@@ -1613,7 +1616,8 @@
             { "id": "template_key", "displayName": "template_key", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
             { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
             { "id": "vars_json", "displayName": "vars_json", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
-            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "ai_disclosure", "displayName": "ai_disclosure", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
           ],
           "attemptToConvertTypes": false,
           "convertFieldsToString": true
@@ -1698,7 +1702,8 @@
             "template_key": "={{ $('Agent').first().json.template_key }}",
             "appt_id": "",
             "vars_json": "",
-            "outside_window": ""
+            "outside_window": "",
+            "ai_disclosure": "={{ $('Create Client').isExecuted === true ? 'true' : '' }}"
           },
           "matchingColumns": [],
           "schema": [
@@ -1707,7 +1712,8 @@
             { "id": "template_key", "displayName": "template_key", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
             { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
             { "id": "vars_json", "displayName": "vars_json", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
-            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "ai_disclosure", "displayName": "ai_disclosure", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
           ],
           "attemptToConvertTypes": false,
           "convertFieldsToString": true
@@ -1734,7 +1740,8 @@
             "template_key": "",
             "appt_id": "",
             "vars_json": "",
-            "outside_window": ""
+            "outside_window": "",
+            "ai_disclosure": "={{ $('Create Client').isExecuted === true ? 'true' : '' }}"
           },
           "matchingColumns": [],
           "schema": [
@@ -1743,7 +1750,8 @@
             { "id": "template_key", "displayName": "template_key", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
             { "id": "appt_id", "displayName": "appt_id", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
             { "id": "vars_json", "displayName": "vars_json", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
-            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+            { "id": "outside_window", "displayName": "outside_window", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
+            { "id": "ai_disclosure", "displayName": "ai_disclosure", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
           ],
           "attemptToConvertTypes": false,
           "convertFieldsToString": true

@@ -136,7 +136,8 @@ check('the inserted branch cannot change what is sent: Render and Appointment re
 // The real Intl is used (no DateTime stub): run these in the container's Node.
 const run = (o = {}) => {
   const nodes = {
-    Trigger: { contact_id: o.contact_id || 'tg:9000000104', text: o.text || '', template_key: o.key || '', appt_id: 'A-1', vars_json: o.vars_json || '', outside_window: o.outside_window || '' },
+    // ai_disclosure: a caller that does not map it gets null from the Execute Workflow Trigger (FALLBACK_DEFAULT_VALUE, n8n 2.41.5)
+    Trigger: { contact_id: o.contact_id || 'tg:9000000104', text: o.text || '', template_key: o.key || '', appt_id: 'A-1', vars_json: o.vars_json || '', outside_window: o.outside_window || '', ai_disclosure: o.ai_disclosure === undefined ? null : o.ai_disclosure },
     Settings: { id: 'recS', fields: { ...SETTINGS, business_name: 'Glow Aesthetics Med-Spa', ...(o.settings || {}) } },
     Client: { id: 'recC', fields: { client_id: 'C-test-1', language: o.language === undefined ? 'en' : o.language, name: 'Carl' } },
     Appointment: { id: 'recA', fields: { appt_id: 'A-1', client_id: 'C-test-1', service_id: 'consult', start_iso: o.start_iso || '2026-10-12T10:30:00+02:00', next_visit_in: 30 } },
@@ -322,7 +323,7 @@ check('translation failure keeps the English text: Translate continues on error 
 // written), and declined the service name differently per message ("вашу Ботокс" / "Ваш Botox"). Render now names the form
 // of address from a per-language map (formal for every language: the clinic's default), and the Translate prompt uses it.
 const FORMAL = 'the polite formal form of address';
-for (const [language, want] of [['de', 'Sie'], ['es', 'usted'], ['fr', 'vous'], ['it', 'Lei'], ['pt', 'o senhor / a senhora'], ['nl', 'u'], ['pl', 'Pan / Pani'], ['ru', 'вы'], ['uk', 'ви'], ['tr', FORMAL], ['en', FORMAL]]) {
+for (const [language, want] of [['de', 'Sie'], ['es', 'usted'], ['fr', 'vous'], ['it', 'Lei'], ['pt', 'o senhor / a senhora'], ['nl', 'u'], ['pl', 'Pan / Pani'], ['ru', 'вы'], ['uk', 'ви'], ['pt-br', 'o senhor / a senhora'], ['tr', FORMAL], ['en', FORMAL]]) {
   try {
     const j = run({ key: 'CANCELLED', language });
     check('C register ' + language + ': Render names the form of address "' + want + '"', j.address === want, j.address);
@@ -350,5 +351,106 @@ check('C unchanged: the reply words, people\'s names, the clinic name, links, id
   /Leave exactly as written: the reply words \{\{ \$json\.yes_word \}\} and \{\{ \$json\.no_word \}\} \(the client answers with them\), people's names, the clinic name "\{\{ \$json\.brand \}\}", links, ids and codes, and the \*\*double asterisks\*\* around words\./.test(trText), trText);
 const hk = ((node('Haiku').parameters || {}).model || {}).value;
 check('C the translation model stays claude-haiku-4-5 (controller ruling: a model change is out of scope)', hk === 'claude-haiku-4-5', hk);
+
+// ---- AI disclosure (mini-task D, owner 2026-10-12): checked in the reply, a fixed sentence added only when it is missing ----
+// Live es dialog 11 run 1 (tests/dialog-runs/2026-10-12-client-language-tg.md, finding 1): the agent's first reply to a new client
+// said "Soy la asistente virtual de …", no word for AI. WF-1 passes ai_disclosure = 'true' only in the run that created the
+// client's Clients row (tests/wf1-code-stubs.js); Render checks the reply as it will be sent and, when the word for AI in the
+// client's language is missing (or the language is not in its map), puts one fixed sentence before the reply, same message.
+// The word lists below are this test's own (the brief's), not read from Render, so a weaker map in Render fails here.
+const BRAND = 'Glow Aesthetics Med-Spa';
+const EN_SENTENCE = "I am Glow Aesthetics Med-Spa's AI assistant; a team member can take over at any time if you prefer.";
+const AI_RE = {
+  en: [/(?<!\p{L})AI(?!\p{L})/u, /artificial intelligence/i], de: [/(?<!\p{L})KI(?!\p{L})/u, /künstlich\p{L}*\s+Intelligenz/iu],
+  es: [/(?<!\p{L})IA(?!\p{L})/u, /inteligencia artificial/i], fr: [/(?<!\p{L})IA(?!\p{L})/u, /intelligence artificielle/i],
+  it: [/(?<!\p{L})IA(?!\p{L})/u, /intelligenza artificiale/i], pt: [/(?<!\p{L})IA(?!\p{L})/u, /inteligência artificial/iu],
+  nl: [/(?<!\p{L})(AI|KI)(?!\p{L})/u, /kunstmatige intelligentie/i], pl: [/(?<!\p{L})(AI|SI)(?!\p{L})/u, /sztuczn\p{L}*\s+inteligencj/iu],
+  ru: [/(?<!\p{L})ИИ(?!\p{L})/u, /искусственн\p{L}*\s+интеллект/iu], uk: [/(?<!\p{L})ШІ(?!\p{L})/u, /штучн\p{L}*\s+інтелект/iu],
+};
+const hasAI = (lang, t) => AI_RE[lang].some((re) => re.test(t));
+// A first reply in each mapped language WITHOUT the word for AI (es: the live finding's wording) ...
+const NO_AI = {
+  en: 'Hello! Which treatment would you like to book?', de: 'Guten Tag! Welche Behandlung möchten Sie buchen?',
+  es: 'Soy la asistente virtual de Glow Aesthetics Med-Spa. ¿Qué tratamiento le gustaría reservar?', fr: 'Bonjour ! Quel soin souhaitez-vous réserver ?',
+  it: 'Buongiorno! Quale trattamento desidera prenotare?', pt: 'Olá! Que tratamento deseja marcar?', nl: 'Goedendag! Welke behandeling wilt u boeken?',
+  pl: 'Dzień dobry! Jaki zabieg chciałby Pan zarezerwować?', ru: 'Здравствуйте! Какую процедуру вы хотели бы забронировать?',
+  uk: 'Добрий день! Яку процедуру ви бажаєте забронювати?',
+};
+// ... and WITH it, in the forms an agent writes (acronym, hyphenated compound, the inflected phrase).
+const WITH_AI = {
+  en: ["Hello! I'm the AI assistant of Glow Aesthetics Med-Spa; a team member can take over on request. Which treatment would you like?", 'I am an artificial intelligence assistant.'],
+  de: ['Guten Tag! Ich bin der KI-Assistent der Klinik; auf Wunsch übernimmt ein Teammitglied. Welche Behandlung möchten Sie?', 'Ich bin ein Assistent mit künstlicher Intelligenz.'],
+  es: ['¡Hola! Soy la asistente de IA de la clínica; si lo prefiere, le atiende una persona del equipo.', 'Soy un asistente de inteligencia artificial.'],
+  fr: ["Bonjour ! Je suis l'assistant IA de la clinique.", "Je suis un assistant d'intelligence artificielle."],
+  it: ["Buongiorno! Sono l'assistente IA della clinica.", "Sono un assistente di intelligenza artificiale."],
+  pt: ['Olá! Sou o assistente de IA da clínica.', 'Sou um assistente de inteligência artificial.'],
+  nl: ['Goedendag! Ik ben de AI-assistent van de kliniek.', 'Ik ben de KI-assistent.', 'Ik ben een assistent op basis van kunstmatige intelligentie.'],
+  pl: ['Dzień dobry! Jestem asystentem AI kliniki.', 'Jestem asystentem SI.', 'Jestem asystentem opartym na sztucznej inteligencji.'],
+  ru: ['Здравствуйте! Я ИИ-ассистент клиники.', 'Я виртуальный помощник на основе искусственного интеллекта.'],
+  uk: ['Добрий день! Я ШІ-асистент клініки.', 'Я помічник на основі штучного інтелекту.'],
+};
+const D = (name, o, f) => { try { const j = run(o); const r = f(j); check(name, r === true, r === false ? { text: j.text, needs_translation: j.needs_translation, ai_fallback: j.ai_fallback } : r); } catch (e) { check(name, false, String(e.message)); } };
+const firstPara = (t) => String(t).split('\n\n')[0];
+for (const lang of Object.keys(NO_AI)) {
+  // missing -> one sentence in the client's language before the reply, same message, no extra translation call
+  D('D ' + lang + ': reply without the word for AI -> the fixed sentence in ' + lang + ' + blank line + the reply, no Haiku call', { language: lang, text: NO_AI[lang], ai_disclosure: 'true' },
+    (j) => j.text === firstPara(j.text) + '\n\n' + NO_AI[lang] && hasAI(lang, firstPara(j.text)) && firstPara(j.text).includes(BRAND) &&
+      (lang === 'en' ? firstPara(j.text) === EN_SENTENCE : firstPara(j.text) !== EN_SENTENCE) && j.needs_translation === false && j.ai_fallback === true);
+  // the sentence itself passes Render's check: a reply that already starts with it gets nothing added (never twice)
+  D('D ' + lang + ': the fixed sentence passes Render\'s own check (a reply carrying it is left as it is)', { language: lang, text: NO_AI[lang], ai_disclosure: 'true' },
+    (j) => { const k = run({ language: lang, text: j.text, ai_disclosure: 'true' }); return (k.text === j.text && k.ai_fallback === false) || { again: k.text }; });
+  for (const t of WITH_AI[lang]) {
+    D('D ' + lang + ': reply with the word for AI is sent as it is, no sentence, no Haiku call: ' + t.slice(0, 45), { language: lang, text: t, ai_disclosure: 'true' },
+      (j) => hasAI(lang, t) && j.text === t && j.ai_fallback === false && j.needs_translation === false);
+  }
+  // not the first reply to a new client: WF-1 passes '' (or the caller does not map the input: null) -> nothing is checked or added
+  for (const flag of ['', null, 'false']) {
+    D('D ' + lang + ': ai_disclosure ' + JSON.stringify(flag) + ' (KNOWN client / not the first reply) -> unchanged even without the word for AI', { language: lang, text: NO_AI[lang], ai_disclosure: flag },
+      (j) => j.text === NO_AI[lang] && j.ai_fallback === false && j.needs_translation === false);
+  }
+}
+check('D en: the English sentence is the brief\'s wording with the clinic name', run({ language: 'en', text: 'Hi!', ai_disclosure: 'true' }).text === EN_SENTENCE + '\n\nHi!', run({ language: 'en', text: 'Hi!', ai_disclosure: 'true' }).text);
+check('D: each mapped language has its own sentence (10 different sentences)', new Set(Object.keys(NO_AI).map((l) => firstPara(run({ language: l, text: 'x', ai_disclosure: 'true' }).text))).size === 10, 'duplicates');
+// Whole words only, acronyms case-sensitive: "IA" inside a word, or the pt verb "ia" ("eu ia" = I was going), is not the word for AI.
+for (const [lang, t] of [
+  ['es', '¿Es para usted o para su familia? Me llamo Iago.'], ['es', 'LA FAMILIA PUEDE VENIR.'], ['it', 'La sua famiglia è la benvenuta? Ia.'],
+  ['pt', 'Eu ia sugerir uma consulta.'], ['pt', 'Ia sugerir uma consulta.'], ['fr', 'Votre RIAD ? Non, notre clinique.'],
+  ['en', 'Our AIM is your comfort. Your deposit is PAID.'], ['en', "I'm the clinic's virtual assistant."], ['de', 'Ist es für Ihr KIND? Kiel ist schön.'],
+  ['ru', 'Мы наращиваем искусственные ресницы.'], ['uk', 'Ми нарощуємо штучні вії.'], ['pl', 'Mamy sztuczne rzęsy. SIŁA spokoju.'],
+  ['nl', 'Wilt u een KIP? Nee, AIR.'],
+]) {
+  D('D ' + lang + ': not the word for AI -> the sentence is added: ' + t, { language: lang, text: t, ai_disclosure: 'true' },
+    (j) => j.text === firstPara(j.text) + '\n\n' + t && hasAI(lang, firstPara(j.text)) && j.ai_fallback === true);
+}
+// A language not in the map: cannot check -> the English sentence is added and the reply goes through Translate (one Haiku call,
+// only because the fallback fired), so it reaches the client in their language.
+D('D tr (not in the map): sentence added in English, the message is translated (one Haiku call)', { language: 'tr', text: 'Merhaba! Hangi tedaviyi ayırtmak istersiniz?', ai_disclosure: 'true' },
+  (j) => j.text === EN_SENTENCE + '\n\nMerhaba! Hangi tedaviyi ayırtmak istersiniz?' && j.needs_translation === true && j.ai_fallback === true);
+D('D tr: even a reply that names AI ("yapay zeka") gets the sentence: an unmapped language cannot be checked', { language: 'tr', text: 'Ben yapay zeka asistanıyım.', ai_disclosure: 'true' },
+  (j) => firstPara(j.text) === EN_SENTENCE && j.needs_translation === true);
+D('D ar (non-Latin, not in the map): the English sentence is not dropped by the English-line guard', { language: 'ar', text: 'مرحبا! ما العلاج الذي تريده؟', ai_disclosure: 'true' },
+  (j) => j.text === EN_SENTENCE + '\n\nمرحبا! ما العلاج الذي تريده؟' && j.needs_translation === true);
+D('D tr without the flag: unchanged, no Haiku call (B/C behaviour)', { language: 'tr', text: 'Merhaba! Hangi tedaviyi ayırtmak istersiniz?', ai_disclosure: '' },
+  (j) => j.text === 'Merhaba! Hangi tedaviyi ayırtmak istersiniz?' && j.needs_translation === false && j.ai_fallback === false);
+D('D pt-br (region tag): the pt map entry applies, no Haiku call', { language: 'pt-br', text: NO_AI.pt, ai_disclosure: 'true' },
+  (j) => hasAI('pt', firstPara(j.text)) && j.text.endsWith('\n\n' + NO_AI.pt) && j.needs_translation === false);
+D('D upper-case language code (ES) uses the es entry', { language: 'ES', text: NO_AI.es, ai_disclosure: 'true' },
+  (j) => hasAI('es', firstPara(j.text)) && j.needs_translation === false);
+// B's English-line guard runs first, on the agent's text; the sentence is added after it, so it is never dropped.
+D('D ru + the English planning line (execution 28237): the line is dropped, the sentence goes before the kept Russian text', { language: 'ru', text: LEAK, ai_disclosure: 'true' },
+  (j) => j.text === firstPara(j.text) + '\n\nКакой день вам удобен для консультации?' && hasAI('ru', firstPara(j.text)) && j.needs_translation === true);
+// The first reply can be a template (the agent proposed at once: PENDING_SUMMARY; or escalated: ESCALATED_REPLY; or ERROR):
+// a template never names AI, so the sentence goes before it; it is translated anyway, no extra call.
+D('D es PENDING_SUMMARY as the first reply: sentence + summary, translated as every es template is', { key: 'PENDING_SUMMARY', language: 'es', ai_disclosure: 'true' },
+  (j) => j.text === firstPara(j.text) + '\n\nConsultation (20 min) — lun, 12 oct, 10:30. Free cancellation up to 24 horas before. Reply SÍ to confirm.' && hasAI('es', firstPara(j.text)) && j.needs_translation === true);
+D('D en ESCALATED_REPLY as the first reply: sentence + template, not translated', { key: 'ESCALATED_REPLY', language: 'en', ai_disclosure: 'true' },
+  (j) => j.text === EN_SENTENCE + "\n\nI've passed this to our team — a team member will contact you shortly." && j.needs_translation === false);
+D('D the clinic\'s own name does not count ("KI Beauty" for a de client): the sentence is added', { language: 'de', text: 'Willkommen bei KI Beauty! Welche Behandlung möchten Sie?', ai_disclosure: 'true', settings: { business_name: 'KI Beauty' } },
+  (j) => j.text === 'Ich bin der KI-Assistent von KI Beauty; wenn Sie möchten, übernimmt jederzeit ein Mitglied unseres Teams.\n\nWillkommen bei KI Beauty! Welche Behandlung möchten Sie?' && j.ai_fallback === true);
+D('D a name that contains AI does not hide a real disclosure ("AI Skin", en: "I\'m the AI assistant of AI Skin")', { language: 'en', text: "I'm the AI assistant of AI Skin.", ai_disclosure: 'true', settings: { business_name: 'AI Skin' } },
+  (j) => j.text === "I'm the AI assistant of AI Skin." && j.ai_fallback === false);
+D('D an empty reply stays empty (Format still refuses to send nothing; the sentence is not sent alone)', { language: 'es', text: '', ai_disclosure: 'true' },
+  (j) => j.text === '' && j.ai_fallback === false);
+check('D: send_message\'s Trigger declares the input ai_disclosure (string)', ((((node('Trigger').parameters || {}).workflowInputs || {}).values) || []).some((v) => v.name === 'ai_disclosure' && v.type === 'string'), 'missing');
 console.log('\nSEND_MESSAGE_STUBS passed ' + pass + ', failed ' + fail);
 process.exit(fail ? 1 : 0);
