@@ -1519,7 +1519,7 @@
             "appt_id": "",
             "vars_json": "",
             "outside_window": "",
-            "ai_disclosure": "={{ $('Create Client').isExecuted === true ? 'true' : '' }}"
+            "ai_disclosure": "={{ $('Create Client').isExecuted === true || $('Language').isExecuted === true ? 'true' : '' }}"
           },
           "matchingColumns": [],
           "schema": [
@@ -1607,7 +1607,7 @@
             "appt_id": "={{ $json.fields.appt_id }}",
             "vars_json": "",
             "outside_window": "",
-            "ai_disclosure": "={{ $('Create Client').isExecuted === true ? 'true' : '' }}"
+            "ai_disclosure": "={{ $('Create Client').isExecuted === true || $('Language').isExecuted === true ? 'true' : '' }}"
           },
           "matchingColumns": [],
           "schema": [
@@ -1703,7 +1703,7 @@
             "appt_id": "",
             "vars_json": "",
             "outside_window": "",
-            "ai_disclosure": "={{ $('Create Client').isExecuted === true ? 'true' : '' }}"
+            "ai_disclosure": "={{ $('Create Client').isExecuted === true || $('Language').isExecuted === true ? 'true' : '' }}"
           },
           "matchingColumns": [],
           "schema": [
@@ -1741,7 +1741,7 @@
             "appt_id": "",
             "vars_json": "",
             "outside_window": "",
-            "ai_disclosure": "={{ $('Create Client').isExecuted === true ? 'true' : '' }}"
+            "ai_disclosure": "={{ $('Create Client').isExecuted === true || $('Language').isExecuted === true ? 'true' : '' }}"
           },
           "matchingColumns": [],
           "schema": [

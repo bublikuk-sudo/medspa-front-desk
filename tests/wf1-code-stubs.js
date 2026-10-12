@@ -732,7 +732,7 @@ T('Notify Failure is reached from Cancel Visit, Cancel Row and Mark Cancel Asked
   const FLAGGED = ['Send Error', 'Send Reply', 'Send Summary', 'Send Template'];
   const flagOf = (n, nodes) => { const e = inputsOf(n).ai_disclosure; return e === undefined ? 'unset' : ev(e, {}, nodes); };
   const created = { 'Create Client': { id: 'recNEW', fields: { client_id: 'C-NEW' } } };
-  const into = (t) => WF.nodes.filter((x) => Object.values(WF.connections[x.name] || {}).flat(2).some((c) => c && c.node === t)).map((x) => x.name);
+  const into = (t) => WF.nodes.filter((x) => ((WF.connections[x.name] || {}).main || []).flat().some((c) => c && c.node === t)).map((x) => x.name);
   T('D: send_message declares the input ai_disclosure (string)', () =>
     (((nodeIn(SM, 'Trigger').parameters || {}).workflowInputs || {}).values || []).some((v) => v.name === 'ai_disclosure' && v.type === 'string') || 'missing');
   for (const n of FLAGGED) {
@@ -744,6 +744,33 @@ T('Notify Failure is reached from Cancel Visit, Cancel Row and Mark Cancel Asked
   const others = sendNodes.filter((n) => !FLAGGED.includes(n) && inputsOf(n).ai_disclosure !== undefined);
   T('D: no other send sets ai_disclosure (Send Error Again, results, reminders, hold, rate limit ...: null in send_message, no sentence)', () =>
     others.length === 0 || others);
+  // Concern-1 ruling (controller, 2026-10-12): Telegram clients almost always start with /start, which creates the row with no
+  // language (Lang Needed? skips a /command), so the reply to /start can only be English. The flag is ALSO true in the run that
+  // detects the language of the client's first real message (Lang Needed? true -> Detect Language -> Language ran), so the
+  // guarantee reaches the client in their own language. Firing twice (English on /start, then in their language) is accepted;
+  // a failed detection (language stays '') re-fires on the next message, also accepted. No extra state.
+  const langNeeded = (clientRow, text) => ev(leftOf('Lang Needed?'), {}, { Client: clientRow, Normalize: { text } });
+  const NOROW = {};
+  const rowLang = (language) => ({ id: 'recC', fields: { client_id: 'C-1', language } });
+  for (const n of FLAGGED) {
+    T('D concern-1: ' + n + ' passes "true" in the run that detected the language (Language ran, row already there)', () =>
+      flagOf(n, { Language: { language: 'es' } }) === 'true' || flagOf(n, { Language: { language: 'es' } }));
+    T('D concern-1: ' + n + ' passes "true" when detection failed (Language ran with "") - accepted re-fire', () =>
+      flagOf(n, { Language: { language: '' } }) === 'true' || flagOf(n, { Language: { language: '' } }));
+  }
+  T('D concern-1 sequence, Telegram: /start from a new contact -> no detection, row created -> flag true (the English reply to /start)', () =>
+    langNeeded(NOROW, '/start') === false && flagOf('Send Reply', { 'Create Client': created['Create Client'] }) === 'true' || [langNeeded(NOROW, '/start'), flagOf('Send Reply', { 'Create Client': created['Create Client'] })]);
+  T('D concern-1 sequence, Telegram: next non-command message, row with empty language -> Lang Needed? true -> flag true (their language)', () =>
+    langNeeded(rowLang(''), 'Hola, quiero reservar') === true && flagOf('Send Reply', { Language: { language: 'es' } }) === 'true' || [langNeeded(rowLang(''), 'Hola, quiero reservar'), flagOf('Send Reply', { Language: { language: 'es' } })]);
+  T('D concern-1 sequence, Telegram: a later message, language set -> Lang Needed? false, no row created -> flag ""', () =>
+    langNeeded(rowLang('es'), 'Me llamo Lucía') === false && flagOf('Send Reply', {}) === '' || [langNeeded(rowLang('es'), 'Me llamo Lucía'), flagOf('Send Reply', {})]);
+  T('D concern-1 sequence, Telegram: a later /command with the language still empty -> Lang Needed? false -> flag ""', () =>
+    langNeeded(rowLang(''), '/help') === false || 'wrong');
+  T('D concern-1: WhatsApp first message (no row, text) -> detection AND row creation in one run -> flag true, once (unchanged)', () =>
+    langNeeded(NOROW, 'Hola') === true && flagOf('Send Reply', { Language: { language: 'es' }, 'Create Client': created['Create Client'] }) === 'true' || [langNeeded(NOROW, 'Hola'), flagOf('Send Reply', { Language: { language: 'es' }, 'Create Client': created['Create Client'] })]);
+  T('D concern-1: Language runs only after Detect Language, which runs only on Lang Needed?\'s true output', () =>
+    same(into('Language'), ['Detect Language']) && same(outs('Lang Needed?', 0), ['Detect Language']) && same(into('Detect Language'), ['Lang Needed?']) ||
+    [into('Language'), outs('Lang Needed?', 0), into('Detect Language')]);
   T('D: Create Client runs only on New Client?\'s true output, i.e. when the Clients search found no row', () =>
     same(outs('New Client?', 0), ['Create Client']) && !outs('New Client?', 1).includes('Create Client') &&
     leftOf('New Client?') === "={{ !$('Client').first().json.id }}" && same(into('Create Client'), ['New Client?']) || [outs('New Client?', 0), into('Create Client')]);
