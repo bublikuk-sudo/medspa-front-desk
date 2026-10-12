@@ -725,8 +725,8 @@ T('Notify Failure is reached from Cancel Visit, Cancel Row and Mark Cancel Asked
 // ==== AI disclosure (mini-task D, owner 2026-10-12) ======================================================================
 // The prompt asks the agent to say it is the clinic's AI assistant in its first reply to a NEW client; live es dialog 11 run 1
 // (tests/dialog-runs/2026-10-12-client-language-tg.md, finding 1) did not. The system-side signal is "Create Client ran in
-// this run": the Clients row is created once per contact, so the flag is set in one run per contact, never for a contact that
-// already had a row. WF-1 passes it to send_message (input ai_disclosure) on the sends that answer the client's message in
+// this run" (the Clients row is created once per contact) or the run that first detects the client's language ("Language ran",
+// the concern-1 ruling below: on Telegram /start creates the row before the language is known). WF-1 passes it to send_message (input ai_disclosure) on the sends that answer the client's message in
 // that run; send_message's Render checks the reply for the word for AI and adds the fixed sentence only when it is missing.
 {
   const FLAGGED = ['Send Error', 'Send Reply', 'Send Summary', 'Send Template'];

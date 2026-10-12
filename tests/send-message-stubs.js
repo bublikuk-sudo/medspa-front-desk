@@ -355,7 +355,7 @@ check('C the translation model stays claude-haiku-4-5 (controller ruling: a mode
 // ---- AI disclosure (mini-task D, owner 2026-10-12): checked in the reply, a fixed sentence added only when it is missing ----
 // Live es dialog 11 run 1 (tests/dialog-runs/2026-10-12-client-language-tg.md, finding 1): the agent's first reply to a new client
 // said "Soy la asistente virtual de …", no word for AI. WF-1 passes ai_disclosure = 'true' only in the run that created the
-// client's Clients row (tests/wf1-code-stubs.js); Render checks the reply as it will be sent and, when the word for AI in the
+// client's Clients row or the run that first detects the client's language (tests/wf1-code-stubs.js); Render checks the reply as it will be sent and, when the word for AI in the
 // client's language is missing (or the language is not in its map), puts one fixed sentence before the reply, same message.
 // The word lists below are this test's own (the brief's), not read from Render, so a weaker map in Render fails here.
 const BRAND = 'Glow Aesthetics Med-Spa';
