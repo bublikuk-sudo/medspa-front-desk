@@ -13,23 +13,41 @@ refused the proof under the deploy phrase alone). Run by the controller.
   `send_message` (normalised as above), `confirm_booking`, `check_availability`, `wf2-agent`: CONTENT-IDENTICAL x4.
 - Stubs on the pushed state: `SEND_MESSAGE_STUBS passed 143, failed 0`, `WF1_STUBS passed 291, failed 0`,
   `CHECK_AVAILABILITY_STUBS passed 23, failed 0`.
+- These are the controller's report of commands run in the 2026-10-11 session; their output is not reproduced in this
+  file (the ledger `progress.md` holds them).
 
 ## Live proof (2026-10-12, 19:05-19:15Z, Telegram format, test contacts, replies in test_outbox)
 
 | dialog | result | note |
 |---|---|---|
-| 12 ru | PASS | all 7 steps, no Latin fragment beyond the brand list |
-| 11 es (run 1) | FAIL at step 1 | only the AI-disclosure regex: the agent itself wrote "Soy la asistente virtual de ..." (wf2-agent exec 28404 output equals the sent text; send_message Render `needs_translation:false`, unchanged). Not caused by B; B's checks on that step passed |
+| 12 ru | PASS | all 7 steps, no Latin word of 3+ letters outside the brand list (the ru regex's scope) |
+| 11 es (run 1) | FAIL at step 1 | only the AI-disclosure regex: the agent wrote "Soy la asistente virtual de ..." (see the ruling below). B's other checks on that step passed |
 | 11 es (run 2) | PASS | all 7 steps |
 | 13 de | PASS | all 7 steps |
 
-- `Intl` inside n8n's expression sandbox is proven live: `check_availability` returned `slots_local` as
-  "lun, 7 ene 2030, 10:00" (es) and "Mo., 7. Jan. 2030, 10:00" (de).
+Dialog 11 run 1 ruling. In the raw output, exec 28403 is the wf1-inbound execution of step 1; 28404 is the wf2-agent
+sub-execution it called. The runner does not print the agent output or send_message's Render: the controller read both
+from the n8n API (read-only). Controller-supplied verbatim values:
+
+- wf2-agent exec 28404 (started 2026-10-12T19:08:31.026Z), node Agent, `output`: "¡Hola! Soy la asistente virtual de
+  Glow Aesthetics Med-Spa; si lo prefiere, un miembro del equipo puede atenderle. Con gusto le reservo el Botox: ¿me
+  indica su nombre y apellido?"
+- send_message exec 28406 (started 2026-10-12T19:08:37.012Z), node Render: `"language":"es"`,
+  `"needs_translation":false`, `text` identical to the Agent output above; Merge Text `text` identical.
+
+This rules out send_message changing the text: the sent reply (raw line 162) is the agent's own wording. It does not
+rule out an effect of B's wf2-agent prompt edit (the FORMATTING line and the check_availability tool description); one
+sample cannot exclude that. Call it likely agent wording variance: the step-1 disclosure check passed 1 of 2 es
+attempts (flaky point). Run 2 (raw line 178) wrote "Soy el asistente virtual (IA) ...".
+
+- `Intl` inside n8n's expression sandbox is indirectly shown live: the agent's step-3 replies carry Intl-formatted
+  slots ("lun, 7 ene 2030, 10:00" in es, raw line 191; "Mo., 7. Jan. 2030, 10:00" in de, raw line 278), copied from
+  `slots_local` per the controller. `check_availability`'s own output is not printed by the runner.
 - Translated reply words reached WF-1 and routed: `да`, `sí`, `ja` -> BOOKED and CANCELLED with no agent call.
 - The runner prints each reply with whitespace collapsed (`gsub("\\s+"; " ")`), so the slot lists below appear on
   one line.
-- Cleanup after the last dialog: `calendar cleanup: ok DELETED 0`, `cleanup done`. Owner notifications (English,
-  owner-facing) went to the owner's Telegram: one booking and one cancellation per passing run.
+- Cleanup after the last dialog: `calendar cleanup: ok DELETED 0`, `cleanup done`. The OWNER: lines show one booking and
+  one cancellation notification per passing run (state prints; delivery is not shown in this log).
 
 ## Findings (not B failures)
 
@@ -40,8 +58,14 @@ refused the proof under the deploy phrase alone). Run by the controller.
    "Responda" while BOOKED and CANCEL_PENDING use tú.
 3. Grammar: de BOOKED "einen Erinnerung" (should be "eine Erinnerung").
 4. ru: the service name is declined/translated differently: CANCEL_PENDING "вашу Ботокс", CANCELLED "Ваш Botox".
+5. ru: "до 24 часа до" is ungrammatical; it appears in PENDING_SUMMARY ("Бесплатная отмена до 24 часа до процедуры.",
+   raw line 97) and in BOOKED ("отмена бесплатна до 24 часа до вашего визита.", raw line 105).
+6. es: BOOKED "Estás reservado" is stiff (raw line 208).
 
 ## Raw output
+
+The lines below are the runner's output, except two: the first title line's replacement and the line starting
+`## [controller annotation]`.
 
 calendar cleanup: ok DELETED 0
 cleanup done
@@ -145,7 +169,7 @@ STATE
   CLIENT: {"client_id":"C-test-MV5MKOH1","name":null,"language":"es","status":"new","intake_completed":null}
 SUMMARY: client=new/es appts=- events=0 sent=reply
 RESULT FAIL 11-spanish-client.md tg (1 failed)
-## Dialog 11 re-run (step-1 failure above was the agent's own AI-disclosure wording, not B; see ledger ruling)
+## [controller annotation] Dialog 11 re-run (step-1 failure above was the agent's own AI-disclosure wording, not B; see ledger ruling)
 calendar cleanup: ok DELETED 0
 cleanup done
 DIALOG 11-spanish-client.md channel=tg contact=tg:9000000111 started 2026-10-12T19:10:00.000Z (clean start checked)
