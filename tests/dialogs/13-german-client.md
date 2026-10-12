@@ -32,6 +32,18 @@ Every step checks that the client's messages contain none of these English fragm
   case-sensitively. April, August, September and November are spelled the same in German, so they are not checked.
 - one of the words hour(s), minutes, day(s), reply, yes, cancel, booked, your, you, the, would, which.
 
+**Translation quality (mini-task C, 2026-10-12).** Every step also checks the formal register and one grammar slip found
+in the live proof of B (`tests/dialog-runs/2026-10-12-client-language-tg.md`):
+
+- no informal form of address: du, dich, dir, dein / deine / deinen / deinem / deiner / deines, euch, euer, eure…, the
+  imperative «schreib», bist, kannst, möchtest, willst (finding 2: CANCELLED went out as «Dein … Schreib mir» while the
+  other messages used Sie). They are matched as whole words, so «Direkt», «Duo» or «Deinstallation» do not count; none of
+  them occurs in a correct Sie text. The agent's own replies (steps 1–3) get the same check: the agent prompt now asks
+  for the formal form too.
+- no «einen Erinnerung» (finding 3, BOOKED).
+
+Step 1's «KI» check is also the live check of the agent prompt's AI-disclosure wording (mini-task C, requirement 9).
+
 `expect lang: de` was added to `tests/dialog.sh` for this dialog.
 
 **Final state.** `language=de`, `active`, the name contains "Jonas"; one appointment, `cancelled`, `start_iso` ISO with
@@ -46,10 +58,12 @@ expect templates: reply
 expect lang: de
 expect regex: \bKI\b|künstliche Intelligenz
 expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan (?=\d{1,2}\b(?!:))|(?-i:\d\s?[AP]M\b)|(?-i:\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|January|February|March|May|June|July|October|December)\b)|(?-i:\d\s?min\b(?!\.))|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
+expect no-regex: (?<!\p{L})(du|dich|dir|dein(e[mnrs]?)?|euch|euer|eure[mnrs]?|schreib|bist|kannst|möchtest|willst)(?!\p{L})|einen\s+Erinnerung
 send: Ich heiße Jonas Testmann.
 expect templates: reply
 expect lang: de
 expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan (?=\d{1,2}\b(?!:))|(?-i:\d\s?[AP]M\b)|(?-i:\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|January|February|March|May|June|July|October|December)\b)|(?-i:\d\s?min\b(?!\.))|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
+expect no-regex: (?<!\p{L})(du|dich|dir|dein(e[mnrs]?)?|euch|euer|eure[mnrs]?|schreib|bist|kannst|möchtest|willst)(?!\p{L})|einen\s+Erinnerung
 send: Am Montag, 7. Januar 2030, vormittags, bitte.
 expect templates: reply
 expect lang: de
@@ -57,12 +71,14 @@ expect tool: check_availability
 expect regex: \b\d{1,2}:\d{2}\b
 expect no-regex: (Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag),? (den )?7\. Jan|\b(Di|Mi|Do|Fr|Sa|So)\., 7\. Jan
 expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan (?=\d{1,2}\b(?!:))|(?-i:\d\s?[AP]M\b)|(?-i:\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|January|February|March|May|June|July|October|December)\b)|(?-i:\d\s?min\b(?!\.))|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
+expect no-regex: (?<!\p{L})(du|dich|dir|dein(e[mnrs]?)?|euch|euer|eure[mnrs]?|schreib|bist|kannst|möchtest|willst)(?!\p{L})|einen\s+Erinnerung
 send: Den ersten, bitte.
 expect templates: PENDING_SUMMARY
 expect lang: de
 expect regex: (?-i:\bJA\b)
 expect regex: 24 Stunden
 expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan (?=\d{1,2}\b(?!:))|(?-i:\d\s?[AP]M\b)|(?-i:\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|January|February|March|May|June|July|October|December)\b)|(?-i:\d\s?min\b(?!\.))|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
+expect no-regex: (?<!\p{L})(du|dich|dir|dein(e[mnrs]?)?|euch|euer|eure[mnrs]?|schreib|bist|kannst|möchtest|willst)(?!\p{L})|einen\s+Erinnerung
 send: ja
 expect templates: BOOKED, BOOKED_INTAKE
 expect lang: de
@@ -71,6 +87,7 @@ expect no-node: LLM Affirmative
 expect no-node: Agent
 expect regex: 24 Stunden
 expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan (?=\d{1,2}\b(?!:))|(?-i:\d\s?[AP]M\b)|(?-i:\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|January|February|March|May|June|July|October|December)\b)|(?-i:\d\s?min\b(?!\.))|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
+expect no-regex: (?<!\p{L})(du|dich|dir|dein(e[mnrs]?)?|euch|euer|eure[mnrs]?|schreib|bist|kannst|möchtest|willst)(?!\p{L})|einen\s+Erinnerung
 expect state: [.appts[].status] == ["booked"]
 expect state: .appts[0].start_iso | test("^2030-01-07T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$")
 expect state: (.events | length) == 1 and .events[0].summary == ("Botox — " + .client.name)
@@ -82,6 +99,7 @@ expect node: Send Cancel Ask
 expect no-node: Cancel Visit
 expect regex: (?-i:\bJA\b)
 expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan (?=\d{1,2}\b(?!:))|(?-i:\d\s?[AP]M\b)|(?-i:\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|January|February|March|May|June|July|October|December)\b)|(?-i:\d\s?min\b(?!\.))|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
+expect no-regex: (?<!\p{L})(du|dich|dir|dein(e[mnrs]?)?|euch|euer|eure[mnrs]?|schreib|bist|kannst|möchtest|willst)(?!\p{L})|einen\s+Erinnerung
 expect state: [.appts[].status] == ["booked"]
 expect state: (.events | length) == 1
 expect state: (.client.cancel_ask_appt_id // "") == .appts[0].appt_id
@@ -92,6 +110,7 @@ expect node: Cancel Visit
 expect no-node: LLM Affirmative
 expect no-node: Agent
 expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan (?=\d{1,2}\b(?!:))|(?-i:\d\s?[AP]M\b)|(?-i:\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|January|February|March|May|June|July|October|December)\b)|(?-i:\d\s?min\b(?!\.))|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
+expect no-regex: (?<!\p{L})(du|dich|dir|dein(e[mnrs]?)?|euch|euer|eure[mnrs]?|schreib|bist|kannst|möchtest|willst)(?!\p{L})|einen\s+Erinnerung
 expect state: [.appts[].status] == ["cancelled"]
 expect state: (.events | length) == 0
 state: (.client.client_id // "") | startswith("C-test-")

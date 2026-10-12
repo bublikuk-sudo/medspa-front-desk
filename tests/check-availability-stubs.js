@@ -55,6 +55,18 @@ check('no node added: 0 new Airtable calls (slots_local reads the Client search 
 const sys = String((((node(WF2, 'Agent').parameters || {}).options) || {}).systemMessage || '');
 check('wf2 system prompt: no English time example ("Tue, Sep 22 at 2:00 PM") any more', !/Tue, Sep 22 at 2:00 PM/.test(sys), sys.slice(-1200));
 check('wf2 system prompt: days and times are copied from slots_local exactly as written', /slots_local[^\n]*exactly as written/.test(sys), sys.slice(-1200));
+// Mini-task C (2026-10-12): the agent writes in the same formal register as send_message's translated templates (Render's
+// form-of-address map); the live proof of B had es agent replies in tú ("¿me dices tu nombre") and templates in usted.
+check('wf2 system prompt (C): one line tells the agent to use the formal form of address, never the informal one',
+  /\nWrite to the client in the formal form of address of their language \(Sie, usted, vous, вы, …\), never the informal one\.\n/.test(sys), sys.slice(0, 900));
+// Mini-task C, requirement 9 (owner 2026-10-12): the AI disclosure names AI. Dialog 11 run 1 (log 2026-10-12, finding 1): the
+// agent wrote "Soy la asistente virtual de …" with no word for AI; the prompt's first line called it "the virtual front desk".
+check('wf2 system prompt (C-9): the first line no longer calls the agent "virtual" ("virtual front desk" is gone)',
+  /^=You are the AI front-desk assistant of a medical aesthetics clinic\./.test(sys) && !/virtual front desk/.test(sys), sys.slice(0, 200));
+check('wf2 system prompt (C-9): rule 1\'s disclosure needs the word for AI in the client\'s language; "virtual assistant" alone does not count',
+  /saying that you are the clinic's AI assistant and that a team member can take over on request; that sentence must contain the word for AI in the client's language \(AI, ИИ, IA, KI, …\), and "virtual assistant" alone does not count\. Do not repeat it in later replies, and do not volunteer it to a KNOWN client\./.test(sys), sys.slice(0, 2600));
+check('wf2 system prompt (C-9): "Never claim to be a human" keeps its meaning (line unchanged)',
+  /\n- If a client asks whether they are talking to a bot, an AI or a human, answer truthfully that you are the clinic's AI assistant and offer to connect a team member\. Never claim to be a human\.\n/.test(sys), 'line changed');
 check('wf2 system prompt equals prompts/agent-system-prompt.md (sync-assets.sh contract: "=" + the file)', sys === '=' + PROMPT.replace(/\r/g, '').replace(/\n$/, ''), sys.length + ' vs ' + PROMPT.length);
 const desc = String((node(WF2, 'check_availability').parameters || {}).description || '');
 check('wf2 check_availability tool: slots_local is already in the client\'s language, shown exactly as written (no "translated if needed")',

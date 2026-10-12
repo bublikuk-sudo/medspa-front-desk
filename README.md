@@ -94,7 +94,11 @@ and units are not left to the translation: `send_message` writes them in the cli
 Spanish or Russian) and `Intl.NumberFormat` units with the locale's plural rules ("20 мин", "24 Stunden", "1 час").
 `Intl` was chosen over a hand-kept word list because the n8n image's Node carries full ICU, so any language a client
 writes in is covered with no list to maintain; a language ICU does not know falls back to English. The translation
-(Claude Haiku) then translates every word except people's names, the clinic's name, links and ids. The words the client
+(Claude Haiku) then translates every word except people's names, the clinic's name, links and ids; brand names (Botox,
+HydraFacial) keep their spelling, generic treatment names are translated as a clinic in that language names them. Every
+message uses the formal form of address (Sie, usted, vous, вы, ...) from a per-language map in `send_message`, not each
+translation's own choice, and the agent prompt asks for the same; a clinic that wants the informal form changes that map
+and that prompt line. The words the client
 is asked to reply with ("Reply YES to confirm", the cancel question, the reminder's YES / NO) are not the translator's
 choice: `send_message` puts them in from a short per-language list (ДА / НЕТ, JA / NEIN, SÍ / NO, OUI / NON, SI / NO,
 ...) that holds only words WF-1's YES/NO word lists already accept, and the translation keeps them as written. A

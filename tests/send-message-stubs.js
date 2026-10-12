@@ -1,7 +1,9 @@
 // Stub test for send_message's capture decision (Task 20): the Format Code node's `test` field and the Test Contact? IF;
 // and for the Render Code node (templates, REQ map, cancellation policy, cancel templates).
 // and for the client's language (mini-task B): dates, times and units in the client's language, the agent-reply English
-// guard, the Translate prompt, and confirm_booking's SLOT_TAKEN alternatives.
+// guard, the Translate prompt, and confirm_booking's SLOT_TAKEN alternatives;
+// and for the translation quality (mini-task C): one formal register from Render's map, grammar around the inserted
+// values, service names.
 // Runs in a Node (see tests/send-message-stubs.sh), which prepends:
 //   const WF = <workflows/shared/send_message.json>;  const TEMPLATES = <templates/messages.en.json>;
 //   const CONFIRM = <workflows/wf3-tools/confirm_booking.json>;  const WF1 = <workflows/wf1-inbound.json>;
@@ -308,8 +310,45 @@ try {
   const w = run({ key: 'REMINDER', language: 'ru', contact_id: 'wa:+15550000104', outside_window: 'true' });
   check('I-2 WhatsApp template outside the window: YES / NO (English template)', w.yes_word === 'YES' && w.no_word === 'NO', [w.yes_word, w.no_word]);
 } catch (e) { check('I-2 REMINDER path', false, String(e.message)); }
-check('Translate prompt: everything else is translated, including service names and any sentence in another language', /service names/.test(trText) && /another language/.test(trText), trText);
+check('Translate prompt: every word is translated, including any sentence in another language (B\'s goal: no English reaches a non-English client)',
+  /Translate every word into that language/.test(trText) && /any sentence that is in another language/.test(trText), trText);
 check('translation failure keeps the English text: Translate continues on error and Merge Text falls back to Render\'s text',
   tr.onError === 'continueRegularOutput' && /\$\('Render'\)\.first\(\)\.json\.text/.test(String((((node('Merge Text').parameters || {}).assignments || {}).assignments || [])[0].value)), [tr.onError]);
+
+// ---- Translation quality (mini-task C, 2026-10-12): one register, grammar around the inserted values, service names ----
+// Live proof of B (tests/dialog-runs/2026-10-12-client-language-tg.md, findings 2-6): every template is translated by its own
+// Haiku call, and each call chose its own register (de CANCELLED "Dein … Schreib mir" while the others used Sie; es "Estás
+// reservado" next to "Responda SÍ"), wrote "einen Erinnerung", and "до 24 часа до" (the prompt kept the duration exactly as
+// written), and declined the service name differently per message ("вашу Ботокс" / "Ваш Botox"). Render now names the form
+// of address from a per-language map (formal for every language: the clinic's default), and the Translate prompt uses it.
+const FORMAL = 'the polite formal form of address';
+for (const [language, want] of [['de', 'Sie'], ['es', 'usted'], ['fr', 'vous'], ['it', 'Lei'], ['pt', 'o senhor / a senhora'], ['nl', 'u'], ['pl', 'Pan / Pani'], ['ru', 'вы'], ['uk', 'ви'], ['tr', FORMAL], ['en', FORMAL]]) {
+  try {
+    const j = run({ key: 'CANCELLED', language });
+    check('C register ' + language + ': Render names the form of address "' + want + '"', j.address === want, j.address);
+  } catch (e) { check('C register ' + language, false, String(e.message)); }
+}
+try {
+  const j = run({ language: 'es', text: 'Which day would you like to come in for your consultation?' });
+  check('C register: an agent reply sent for translation (English-line guard) carries the same form of address (es usted)', j.needs_translation === true && j.address === 'usted', [j.needs_translation, j.address]);
+} catch (e) { check('C register on the agent-reply path', false, String(e.message)); }
+check('C register: the Translate prompt addresses the client throughout with Render\'s form of address, never the informal one',
+  /Address the client throughout with this form of address: \{\{ \$json\.address \}\}/.test(trText) && /never use the informal form/.test(trText), trText);
+check('C grammar: natural, grammatical text a native-speaking receptionist would write; the English sentence structure may be rearranged',
+  /natural, grammatical text that a native-speaking clinic receptionist would write/.test(trText) && /rearrange the English sentence structure/.test(trText), trText);
+check('C grammar: dates and times keep exactly the values and formatting Render wrote',
+  /Dates and times that are already written in that language keep their values and formatting exactly as they are\./.test(trText), trText);
+check('C grammar: durations keep their number, but the unit word\'s form and the words around it may change ("за 24 часа до визита")',
+  /Durations that are already written in that language keep their number, but you may change the form of the unit word and the words around it \(prepositions, case\) so that the sentence is grammatical/.test(trText) && /за 24 часа до визита/.test(trText), trText);
+check('C grammar: the old rule that froze durations ("Dates, times and durations ... stay exactly as they are") is gone',
+  !/Dates, times and durations/.test(trText), trText);
+check('C service names: generic treatment names as a clinic in that language names them, brand names keep their spelling, the sentence agrees',
+  /Generic treatment names are translated the way a clinic in that language names them/.test(trText) &&
+  /proper brand and trademark names \(for example Botox, HydraFacial\) keep their original spelling/.test(trText) &&
+  /the sentence around the name must agree with it grammatically/.test(trText) && !/including service names/.test(trText), trText);
+check('C unchanged: the reply words, people\'s names, the clinic name, links, ids and the **double asterisks** stay exactly as written',
+  /Leave exactly as written: the reply words \{\{ \$json\.yes_word \}\} and \{\{ \$json\.no_word \}\} \(the client answers with them\), people's names, the clinic name "\{\{ \$json\.brand \}\}", links, ids and codes, and the \*\*double asterisks\*\* around words\./.test(trText), trText);
+const hk = ((node('Haiku').parameters || {}).model || {}).value;
+check('C the translation model stays claude-haiku-4-5 (controller ruling: a model change is out of scope)', hk === 'claude-haiku-4-5', hk);
 console.log('\nSEND_MESSAGE_STUBS passed ' + pass + ', failed ' + fail);
 process.exit(fail ? 1 : 0);
