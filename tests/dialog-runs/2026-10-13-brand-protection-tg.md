@@ -16,7 +16,10 @@ Owner's go-ahead in chat (2026-10-13): "да, добавляй поле untransl
   workflow was pushed.
 - Stubs on the pushed state: `SEND_MESSAGE_STUBS passed 316, failed 0` (on the pulled live file),
   `WF1_STUBS passed 321, failed 0`, `CHECK_AVAILABILITY_STUBS passed 27, failed 0` (the last from the workstation, as its
-  header requires).
+  header requires). Order, per the controller's report: one remote command for the send-message stubs (on the pulled live
+  file) and the wf1 stubs, then the check_availability stubs from the workstation; the first dialog started 09:39:45Z
+  (dialog 12 raw line 3). The completion times of the stub runs were not recorded, so the order relative to the dialogs
+  is reported, not timestamped.
 
 ## Results
 
@@ -31,25 +34,46 @@ Owner's go-ahead in chat (2026-10-13): "да, добавляй поле untransl
 - Cancellation window: ru PENDING_SUMMARY and BOOKED both say "не позднее чем за 24 часа до визита" (raw lines 31, 44);
   the `до\s+24\s+час` check passed at steps 4 and 5. de: "bis spätestens 24 Stunden vor dem Termin" (raw line 31).
 - Which path each message took, read from the `send_message` executions (block "Merge outcomes" below): 10 messages
-  went through Translate (5 per dialog). In 8 of them Render had masked `Botox` as `⟦1⟧`. BOOKED_INTAKE names no
-  service, so it had nothing to mask. Merge Text returned `retranslate=false` for all 10. Merge Again never ran. The
-  token path held every time, and the fallback fired 0 times. The agent's own replies (`key=reply`) are written in the
-  client's language and are not translated (`translate=false`).
+  went through Translate (5 per dialog). In 8 of them Render had masked `Botox` as `⟦1⟧`. The 2 BOOKED_INTAKE messages
+  name no service (delivered texts: dialog 12 raw line 45, dialog 13 raw line 41), so they had nothing to mask. Merge Text
+  returned `retranslate=false` for all 10 and Merge Again never ran (`mergeAgain.fallback=-` on every line, 0 fallbacks).
+  In the 8 masked messages the translation came back with the token intact and every delivered text carries Latin `Botox`
+  (the Brand bullet above), so the token path held 8 of 8. `retranslate=false` alone would not prove that, because a
+  failed first translation also gives `retranslate=false` with Render's English text. The agent's own replies
+  (`key=reply`) are written in the client's language and are not translated (`translate=false`).
+- Limits of this proof: the Merge Again fallback code was not exercised live (stubs only). This is a sample of 8 masked
+  messages in 2 dialogs, not a measured fallback rate. Only one service name was masked: HydraFacial never appeared in a
+  translated message, so the multi-term path was not tested live. WhatsApp, English clients and dialogs 01 and 04 were
+  not run.
+- The commit subject of f29b8b6 says "token path held 10/10". It cannot be rewritten; the corrected count is 8 of 8
+  masked messages (this Results section), and the subject's "10/10" is superseded by it.
 - The runner prints each message with whitespace collapsed and cut at 240 characters (`tests/dialog.sh`, `read_outbox`).
   That is why de BOOKED (raw line 40) ends in "Term". The message itself is not cut.
 - Cleanup ran before and after each dialog (`cleanup done`, `calendar cleanup: ok DELETED 0`).
 
 ## Findings (not failures)
 
-1. ru CANCEL_PENDING: "Отменить вашу Botox" (raw line 63). The translator guesses the gender of the masked name, and
-   `вашу` does not agree with `Botox`. The same wording appeared before E ("вашу Ботокс", 2026-10-12 log).
-2. ru CANCELLED "Ваш прием у Botox" and de CANCELLED "Ihr Termin bei Botox" (raw lines 80 and 69). Once the service is a
-   token, "Your {service} on …" becomes "your appointment with/at Botox", which reads as if Botox were a person or a
-   place. Candidate fix: rephrase the English CANCEL_PENDING/CANCELLED templates as "your {service} appointment".
+1. ru CANCEL_PENDING: "Отменить вашу Botox" (raw line 63). The translator, which sees only `⟦1⟧` (the masked line in the
+   Merge outcomes block, "Cancel your ⟦1⟧ on ..."), evidently guessed the gender of the masked name, and `вашу` does not
+   agree with `Botox`. The same wording appeared in the 2026-10-12 log ("вашу Ботокс", line 119), which is a run before
+   both C and E, so this is a pre-existing agreement problem and not an E regression.
+2. ru CANCELLED "Ваш прием у Botox" and de CANCELLED "Ihr Termin bei Botox" (raw lines 80 and 69). The masked lines show
+   the translator received "Your ⟦1⟧ on ..." (Merge outcomes block, execs 28843 and 28916); apparently because the
+   service is a token, "Your {service} on …" became "your appointment with/at Botox", which reads as if Botox were a
+   person or a place. Evidence for E as the cause in ru: the pre-E ru CANCELLED in the 2026-10-12 log was "Ваш Botox на
+   пн, 7 янв., 10:00 был отменён" (line 132), with no invented noun. There is no pre-E de CANCELLED to compare, so the
+   de case is assumed to be the same mechanism. Candidate fix: rephrase the English CANCEL_PENDING/CANCELLED templates
+   as "your {service} appointment".
 3. The agent's own ru replies write the service as "ботокс" (dialog 12 raw lines 14 and 21). Those replies are not
    translated, so E does not touch them, and dialog 12 checks the brand only at steps 4-7.
 
-## Merge outcomes (send_message executions 09:39:30Z-09:45:30Z, read-only script output, verbatim)
+## Merge outcomes (send_message executions started in a window the controller passed to the script, 2026-10-13T09:39:30 to 2026-10-13T09:45:30; read-only script output, verbatim)
+
+The window is the pair of arguments the controller gave the read-only script; it is not printed in the output below. The
+`masked:` text is printed from Render's `masked_text`, falling back to Render's `text`, with whitespace collapsed and cut
+at 120 characters. Rows with `translate=false` (`key=reply`) show the plain agent reply, not a masked text, so for them
+`masked:` is not evidence about masking. The ru rows come first (execs 28794 to 28843), the de rows second (execs 28867
+to 28916).
 
 ```
 exec 28794 success key=reply translate=false mergeText.retranslate=false mergeAgain.fallback=-
