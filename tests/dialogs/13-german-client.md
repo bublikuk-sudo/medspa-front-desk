@@ -44,6 +44,13 @@ in the live proof of B (`tests/dialog-runs/2026-10-12-client-language-tg.md`):
 
 Step 1's «KI» check is also the live check of the agent prompt's AI-disclosure wording (mini-task C, requirement 9).
 
+**The appointment is named in the template (mini-task F, 2026-10-13).** From the live proof of E
+(`tests/dialog-runs/2026-10-13-brand-protection-tg.md`, "Findings"): with the service masked as a token, the English
+"Your {service} on {when}" no longer told the translator what the noun was, and it wrote CANCELLED «Ihr Termin bei Botox
+am Mo., 7. Jan., 10:00 wurde storniert» (reads as if Botox were a person). The six service-on-date templates now say
+"your {service} appointment on {when}", so the token is a modifier of a known noun («Ihr Botox-Termin am …», «Ihr Termin
+für Botox am …»). Step 7 rejects «bei Botox».
+
 `expect lang: de` was added to `tests/dialog.sh` for this dialog.
 
 **Final state.** `language=de`, `active`, the name contains "Jonas"; one appointment, `cancelled`, `start_iso` ISO with
@@ -111,6 +118,7 @@ expect no-node: LLM Affirmative
 expect no-node: Agent
 expect no-regex: \b(Mon|Tue|Wed|Thu|Fri|Sat|Sun),|\bJan (?=\d{1,2}\b(?!:))|(?-i:\d\s?[AP]M\b)|(?-i:\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|January|February|March|May|June|July|October|December)\b)|(?-i:\d\s?min\b(?!\.))|\b(hours?|minutes|days?|reply|yes|cancel|booked|your|you|the|would|which)\b
 expect no-regex: (?<!\p{L})(du|dich|dir|dein(e[mnrs]?)?|euch|euer|eure[mnrs]?|schreib|bist|kannst|möchtest|willst)(?!\p{L})|einen\s+Erinnerung
+expect no-regex: \bbei\s+(?-i:Botox)
 expect state: [.appts[].status] == ["cancelled"]
 expect state: (.events | length) == 0
 state: (.client.client_id // "") | startswith("C-test-")

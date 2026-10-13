@@ -10,12 +10,12 @@
   "EXPIRED": "That offer has expired (we hold offers for {ttl_text}). Tell me the service and day again and I'll check availability.",
   "ALREADY_BOOKED": "You're already confirmed: {service} — {when}. Anything else I can help with?",
   "REMINDER": "Reminder: {service} — {when} at {business_name}. Reply {yes} to confirm or {no} to cancel.",
-  "REMINDER_CONFIRMED": "Thank you — your {service} on {when} is confirmed. See you soon!",
-  "REMINDER_CANCELLED": "Your {service} on {when} has been cancelled. Message me any time to book again.",
-  "CANCEL_PENDING": "Cancel your {service} on {when}? Reply {yes} to cancel.",
-  "LATE_CANCEL_PENDING": "Cancel your {service} on {when}? Free cancellation ends {cancellation_window} before the visit, so this will be recorded as a late cancellation. Reply {yes} to cancel.",
-  "CANCELLED": "Your {service} on {when} has been cancelled. Message me any time to book again.",
-  "LATE_CANCEL": "Your {service} on {when} has been cancelled. Free cancellation ends {cancellation_window} before the visit, so it is recorded as a late cancellation. Message me any time to book again.",
+  "REMINDER_CONFIRMED": "Thank you — your {service} appointment on {when} is confirmed. See you soon!",
+  "REMINDER_CANCELLED": "Your {service} appointment on {when} has been cancelled. Message me any time to book again.",
+  "CANCEL_PENDING": "Cancel your {service} appointment on {when}? Reply {yes} to cancel.",
+  "LATE_CANCEL_PENDING": "Cancel your {service} appointment on {when}? Free cancellation ends {cancellation_window} before the visit, so this will be recorded as a late cancellation. Reply {yes} to cancel.",
+  "CANCELLED": "Your {service} appointment on {when} has been cancelled. Message me any time to book again.",
+  "LATE_CANCEL": "Your {service} appointment on {when} has been cancelled. Free cancellation ends {cancellation_window} before the visit, so it is recorded as a late cancellation. Message me any time to book again.",
   "REVISIT": "Hi {name}, it has been {days_text} since your {service} at {business_name}. Would you like to book your next visit?",
   "ESCALATED_REPLY": "I've passed this to our team — a team member will contact you shortly."
 }

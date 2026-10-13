@@ -52,6 +52,15 @@ dropped the name would pass the old check. And they reject «Botox» glued to a 
 which every other check lets through: jq's `\b` finds no boundary between «x» and «а», so the Latin-word check does not
 see it. This needs `Settings.untranslated_terms` to contain `Botox` (the seed does).
 
+**The appointment is named in the template (mini-task F, 2026-10-13).** From the live proof of E
+(`tests/dialog-runs/2026-10-13-brand-protection-tg.md`, "Findings"): with the service masked as a token, the English
+"Your {service} on {when}" no longer told the translator what the noun was, and it wrote CANCELLED «Ваш прием у Botox на
+пн, 7 янв., 10:00 был отменен» (reads as if Botox were a person) and CANCEL_PENDING «Отменить вашу Botox на …» (a
+guessed gender). The six service-on-date templates now say "your {service} appointment on {when}", so the token is a
+modifier of a known noun («запись на Botox»). Steps 6 and 7 reject the two faulty forms: «у Botox» and «вашу Botox». Correct
+forms such as «вашу запись на Botox» and «Ваша запись на Botox … отменена» pass. These two checks are not a grammar check; they
+catch the two forms seen live.
+
 Cyrillic words are bounded with `(?<!\p{L})` / `(?!\p{L})`, not `\b`. jq 1.7 on the VPS matched these regexes, case-
 insensitively, on correct and faulty samples (mini-task C report). Step 1's «ИИ» check is also the live check of the
 agent prompt's AI-disclosure wording (mini-task C, requirement 9).
@@ -121,6 +130,7 @@ expect no-regex: (?<!\p{L})(ты|тебя|тебе|тобой|тво[йяеёю�
 expect no-regex: ботокс
 expect regex: (?-i:Botox)
 expect no-regex: (?-i:Botox)\p{L}|\p{L}(?-i:Botox)
+expect no-regex: (?<!\p{L})у\s+(?-i:Botox)|(?<!\p{L})вашу\s+(?-i:Botox)
 expect state: [.appts[].status] == ["booked"]
 expect state: (.events | length) == 1
 expect state: (.client.cancel_ask_appt_id // "") == .appts[0].appt_id
@@ -135,6 +145,7 @@ expect no-regex: (?<!\p{L})(ты|тебя|тебе|тобой|тво[йяеёю�
 expect no-regex: ботокс
 expect regex: (?-i:Botox)
 expect no-regex: (?-i:Botox)\p{L}|\p{L}(?-i:Botox)
+expect no-regex: (?<!\p{L})у\s+(?-i:Botox)|(?<!\p{L})вашу\s+(?-i:Botox)
 expect state: [.appts[].status] == ["cancelled"]
 expect state: (.events | length) == 0
 state: (.client.client_id // "") | startswith("C-test-")
