@@ -122,11 +122,14 @@ event of the day whose description looked like an appt_id, which could have reac
 
 ## Index: which spec point each case closes
 
-Level 1 is "each tool on its own with fixed inputs" (spec, section Testing, point 1). The suite is 106 cases: the 97 of
-its last full run, 2026-10-08, which passed 97 of 97 (log: `tests/dialog-runs/2026-10-08-level1.md`), plus the eight
-`rcancel_*` cases of the two-step cancel (request_cancel), which have not run yet, plus `reminder_no_late` (final review
-I2: a reminder "no" is a late cancel only inside the cancellation window), which has not run yet either; `reminder_no`
-was changed by the same fix and has not run in its new form. The 96 cases before
+Level 1 is "each tool on its own with fixed inputs" (spec, section Testing, point 1). The suite is 106 cases. Its last full
+run, 2026-10-09, passed 105 of 105 (log: `tests/dialog-runs/2026-10-09-free-airtable-level1.md`; it includes the eight
+`rcancel_*` cases of the two-step cancel, request_cancel). The 106th, `reminder_no_late` (final review I2: a reminder
+"no" is a late cancel only inside the cancellation window), was added on 2026-10-13, after that run. The same fix
+changed `reminder_no`, and the final review's fixes moved the WhatsApp number of `escalate_whatsapp_client` and
+`escalate_tg_no_digits` into the test range. On 2026-10-13, 20 cases were run one by one by name, all PASS, among them
+those four, `rcancel_not_found` and `confirm_ok` (log: `tests/dialog-runs/2026-10-13-final-review-fixes-tg.md`). The
+full 106-case suite has not run as one pass since 2026-10-09. The 96 cases before
 `escalate_already_escalated` were green twice in a row on 2026-10-03 (log: `tests/dialog-runs/2026-10-03-level1.md`). Every case is self-sufficient: it builds its own
 state in `setup`, can be run alone (`tests/tool-cases.sh <name>`) and removes its test data in `teardown`. The last row,
 `final_cleanup`, leaves the base and the calendar empty of test data. The per-case details are in the tool sections

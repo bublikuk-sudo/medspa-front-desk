@@ -311,7 +311,9 @@ and a licence (see the contract checklist in the onboarding document).
   (`tests/dialog-runs/2026-10-09-free-airtable-level1.md`); the 96 cases before `escalate_already_escalated` was added passed twice
   in a row on 2026-10-03 (`tests/dialog-runs/2026-10-03-level1.md`). The final review's fixes (2026-10-13) changed
   `reminder_no` (a reminder "no" outside the cancellation window is free), added `reminder_no_late`, and moved the
-  WhatsApp number of `escalate_whatsapp_client` and `escalate_tg_no_digits` into the test range; these have not run yet.
+  WhatsApp number of `escalate_whatsapp_client` and `escalate_tg_no_digits` into the test range. These four ran live
+  and passed on 2026-10-13, among 20 cases run by name (`tests/dialog-runs/2026-10-13-final-review-fixes-tg.md`); the
+  full 106-case suite has not run as one pass since 2026-10-09.
 - **Stub suites** (`tests/*-stubs.sh`): the real Code-node code, IF expressions and wiring, read from the workflow JSON
   and run with stubbed inputs. They run inside the live n8n container over SSH (`docker compose exec -T n8n node -`,
   for its Node and ICU version) and write nothing; each script's header gives the offline command for a local Node,
@@ -334,7 +336,8 @@ and a licence (see the contract checklist in the onboarding document).
   `2026-10-13-brand-protection-tg.md`, `2026-10-13-cancel-phrasing-tg.md`); the latest run of each passed (11 in the
   translation-quality log, 12 and 13 in the cancel-phrasing log), but not as two formal consecutive passes of the whole
   suite and not in the WhatsApp format. Dialog 15 (change of mind after the summary, added 2026-10-13 by the final
-  review) has not run yet. The results below are for the 12 dialogs before that. Run 1 (2026-10-05): 22 passed. Run 2 (2026-10-05): 20 passed, 2 failed, both because the Anthropic
+  review) ran live on Telegram on 2026-10-13 and passed, together with dialogs 01, 03 and 04
+  (`tests/dialog-runs/2026-10-13-final-review-fixes-tg.md`). The results below are for the 12 dialogs before that. Run 1 (2026-10-05): 22 passed. Run 2 (2026-10-05): 20 passed, 2 failed, both because the Anthropic
   credit ran out mid-run, not because of a bot defect.
   Final runs on the final configuration (two-step cancel, day-before reminders, free-Airtable budget): run 1
   (2026-10-09, `tests/dialog-runs/2026-10-09-dialogs-run-1.md`) passed 21 of 22 runs; the one failure was dialog 05 on
@@ -385,6 +388,10 @@ silent for everyone; here a workflow that throws stays active, the owner gets an
   מינון, 剂量, 用量, ...) or a listed drug, in English, German, Spanish, French, Italian, Portuguese, Dutch, Polish, Russian,
   Ukrainian, Arabic, Hebrew, Chinese and Japanese. Medical advice without such a word passes it, and it is off for a
   turn in which `search_knowledge` returned FOUND.
+- The same guardrail's word stems also match procedure names: «ботулинотерапия», "Botulinumtoxin" and "hyaluronic"
+  (the English pattern already matched "botulinum" and "hyaluron…"). A reply that names them in a turn where
+  `search_knowledge` did not return FOUND is treated as a violation and escalated to the owner, even when it says
+  nothing about a dose.
 - Italian clients are asked to reply "SI" (WF-1's word list has `si`, not `sì`); Turkish clients keep YES / NO (WF-1's
   `hayır` cannot be shown in capitals that lower-case back to it).
 - A Google OAuth app in Testing mode issues a token that expires every 7 days; publish the app (it needs a home page
@@ -417,8 +424,11 @@ silent for everyone; here a workflow that throws stays active, the owner gets an
 - `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`: Code nodes can read the environment, including the encryption key and database
   password. Run one clinic per instance.
 - `TEST_KEY` (credential `MedSpa Test Key`) is live in production, because the test suites run against the live
-  instance. It unlocks the test harness (`/webhook/test-tool`: only the allow-listed tool workflows, only for test
-  contacts), Test Inbound (`/webhook/wf1-test`: test contacts only) and the Run Now webhooks of WF-4 and WF-5. A leaked
+  instance. It unlocks the test harness (`/webhook/test-tool`: only the 11 allow-listed workflows, and a `contact_id` that names a
+  real-looking contact must be a test one; `test-fixtures` is on the list and takes no `contact_id`, so it can create
+  `[TEST] busy` calendar blocks, list the events of any time window with their titles and descriptions, delete every
+  `[TEST]` event, and delete any calendar event by id whose description is a booking id, a real client's booking
+  included), Test Inbound (`/webhook/wf1-test`: test contacts only) and the Run Now webhooks of WF-4 and WF-5. A leaked
   key can re-run WF-5, which sends every due reminder and revisit invitation again (paid WhatsApp templates), and
   re-index the knowledge base. Generate it with `openssl rand -hex 32` and rotate it with the other secrets; Test
   Inbound runs keep the key header in the run log for 7 days.
