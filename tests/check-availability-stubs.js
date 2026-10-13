@@ -72,6 +72,9 @@ check('wf2 system prompt (C-9): "Never claim to be a human" keeps its meaning (l
 // propose the new slot (propose_booking cancels the client's earlier pending row in Cancel Old).
 check('wf2 system prompt (final review I1): step 3 tells the agent to call propose_booking again when the client agrees to a different slot after a summary',
   /\n3\. [^\n]*If, after the summary, the client asks for a different time and agrees to a new slot, call propose_booking for that slot: it replaces the earlier proposal and a new summary is sent, because a yes to your question never confirms the earlier summary\./.test(sys), sys.slice(0, 200));
+// Final review minor 4: find_client hands the model the owner's notes; the client must never be read them.
+check('wf2 system prompt (final review minor 4): a rule forbids quoting or revealing owner_notes to the client',
+  /\n- Never quote, reveal or summarise owner_notes to the client: they are the clinic's internal notes, even when the client asks what the clinic has written about them\.\n/.test(sys), 'rule missing');
 check('wf2 system prompt equals prompts/agent-system-prompt.md (sync-assets.sh contract: "=" + the file)', sys === '=' + PROMPT.replace(/\r/g, '').replace(/\n$/, ''), sys.length + ' vs ' + PROMPT.length);
 const desc = String((node(WF2, 'check_availability').parameters || {}).description || '');
 check('wf2 check_availability tool: slots_local is already in the client\'s language, shown exactly as written (no "translated if needed")',

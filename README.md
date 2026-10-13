@@ -136,7 +136,8 @@ Airtable base `MedSpa Front Desk` (`airtable/schema.json`):
 - **Clients** (one person, several channels): `client_id`, `name`, `phone`, `telegram_chat_id`, `email`, `language`,
   `first_seen`, `last_visit`, `status` (`new | active | flagged | escalated`), `escalated_at` (set by `escalate` with the
   status, emptied by WF-1 after it reset the chat memory of a resolved escalation), `intake_completed`, `notes` (written by
-  the clinic, read by the agent), `last_offer_json`, `last_offer_at`, `last_agent_reply_at`, `cancel_ask_appt_id` (the
+  the clinic, read by the agent: `find_client` hands them to the model as `owner_notes`, and the system prompt forbids
+  quoting or revealing them to the client, so write nothing there that the model must not see), `last_offer_json`, `last_offer_at`, `last_agent_reply_at`, `cancel_ask_appt_id` (the
   open cancel question; send_message clears it on any other message to the client), `marketing_consent` (ticked by
   the clinic when the client opted in to marketing messages; the bot never sets it).
 - **Appointments** (one row per visit, life cycle in one field): `appt_id`, links `client` and `service` plus their
