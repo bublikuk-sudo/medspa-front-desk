@@ -8,10 +8,11 @@ branch, phase-1 commits a7a96f8, f5ec16a, 98fc845, dfd5cca, 18167ab, 312473e):
 - I2: a reminder "no" is a late cancellation (and flags the client) only inside `Settings.cancellation_hours`
   (reminder_reply).
 - I3: the test harness runs only allow-listed tool workflows and only for test contacts (test-harness).
-- I4: the medical guardrail matches dose and unit words beyond English (wf2-agent `Guardrail`); wf2-agent also carries
-  the new prompt sentences (re-propose after a change of mind; never reveal owner_notes).
+- I4: the medical guardrail matches dose and unit words beyond English (wf2-agent `Guardrail`). I4 is the Guardrail
+  only. wf2-agent also carries two prompt sentences that are not I4: re-propose after a change of mind (I1) and never
+  reveal owner_notes (final-review minor 4, `312473e`).
 
-## Deploy (controller's report; the command output is in the ledger `progress.md`, not reproduced here)
+## Deploy (controller's report; the ledger `progress.md` (lines 737-739) records the controller's results, not the command output, and the command output is not reproduced here)
 
 - Drift check, 14:23Z, read-only: each live workflow pulled with `scripts/n8n-pull.sh` and compared with `jq -S`
   (normalising `webhookId` / `phoneNumberId`) against the last commit that changed it before the fixes:
@@ -20,7 +21,9 @@ branch, phase-1 commits a7a96f8, f5ec16a, 98fc845, dfd5cca, 18167ab, 312473e):
   wf1-inbound `--activate`, test-harness `--activate`. Each was pulled back and compared the same way against the
   commit that changed it last: `f5ec16a`, `312473e`, `a7a96f8`, `dfd5cca`. All CONTENT-IDENTICAL.
   `tests/channels-check.sh`: `channels ok`.
-- Stub suites, run on the VPS with the pulled live files as input where the suite takes one:
+- Stub suites, run by the controller on the VPS after the pushes, with the pulled live files as input where the suite
+  takes one. The lines below are the output lines as given in the controller's report; the ledger (line 739) holds a
+  one-line summary of these counts, not the output itself:
   - `WF1_STUBS passed 371, failed 0` (live wf1-inbound + wf2-agent);
   - `REMINDER_REPLY_STUBS passed 26, failed 0` (live reminder_reply);
   - `TEST_HARNESS_STUBS passed 24, failed 0` (live test-harness);
@@ -31,19 +34,24 @@ branch, phase-1 commits a7a96f8, f5ec16a, 98fc845, dfd5cca, 18167ab, 312473e):
 
 | check | result | evidence |
 |---|---|---|
-| Harness probe 1: `run-case.sh send_message '{}'` (not on the allow list) | refused | curl `500` (block "Probes and tool cases", line 2). The execution's Unpack output read through the n8n API: `test-harness: workflow "…" is not in the allow-list` (block "Probe executions") |
-| Harness probe 2: `run-case.sh find_client` with `tg:123456789` (not a test contact) | refused | curl `500` (line 4); Unpack output: `test-harness: contact_id is not a test contact (tg:9000000NN, tg:9000000NNN, wa:+1555000NNNN)` |
+| Harness probe 1: `run-case.sh send_message '{}'` (not on the allow list) | refused | exec 29144 (probe 1, per the controller's report); curl `500` (block "Probes and tool cases", line 2). The execution's Unpack output read through the n8n API: `test-harness: workflow "…" is not in the allow-list` (block "Probe executions") |
+| Harness probe 2: `run-case.sh find_client` with `tg:123456789` (not a test contact) | refused | exec 29145 (probe 2, per the controller's report); curl `500` (line 4); Unpack output: `test-harness: contact_id is not a test contact (tg:9000000NN, tg:9000000NNN, wa:+1555000NNNN)` |
 | 20 tool cases, run one by one by name | 20 PASS, 0 FAIL | block "Probes and tool cases". Includes `reminder_no` (free cancel, I2) and the new `reminder_no_late`; every allow-listed tool passed the guard |
 | dialog 01 (new client books, tg) | PASS | `RESULT PASS 01-new-client-books.md tg` |
 | dialog 03 (reschedule, tg) | PASS | `RESULT PASS 03-reschedule.md tg` |
 | dialog 04 (late cancel, tg) | PASS | `RESULT PASS 04-late-cancel.md tg` |
 | dialog 15 (change of mind after the summary, tg; new) | PASS | `RESULT PASS 15-change-mind-after-summary.md tg` |
 
-- I1 live (block "Raw output: dialog 15"; "raw line N" = line N of that block):
+- I1 live (block "Raw output: dialog 15"; "raw line N" = line N of that block). This proves the last-message half of I1
+  (an agent reply after the summary means a bare "yes" no longer confirms) in one run, and dialog 15 is
+  model-dependent. The expiry half of I1 ("unexpired") has no live check; it is covered by the wf1 stubs only, and the
+  `confirm_expired` tool case tests `confirm_booking`'s own expiry, not the `Gate`.
   - Step 2 sent the summary for 10:00 AM (raw line 14).
   - At step 3 the client asked for the afternoon, and the agent listed afternoon slots (raw line 20).
-  - At step 4 a bare "yes" was routed `reminder`, not `confirm` (raw line 27). The agent asked which time; nothing was
-    booked, and the morning row stayed pending or cancelled (raw lines 34-35).
+  - At step 4 a bare "yes" was routed `reminder`, not `confirm` (raw line 27). The `reminder` route found no reminded
+    visit and fell through to the Agent (`node: Agent`, `no-node: Confirm`, raw lines 31-32), so "routed `reminder`" does
+    not mean it was handled as a reminder; the Agent asked which time (raw line 28). Nothing was booked, and the
+    morning row stayed pending or cancelled (raw lines 34-35).
   - At step 5 the agent re-proposed 12:00 PM (raw line 38), and the 10:00 row was cancelled (raw line 42).
   - At step 6 "YES" right after that summary was routed `confirm` (raw line 44) and booked 12:00 PM (raw line 45),
     with one calendar event (raw line 60).
@@ -54,11 +62,22 @@ branch, phase-1 commits a7a96f8, f5ec16a, 98fc845, dfd5cca, 18167ab, 312473e):
 - I4 has no live test of its own here: no dialog reply contains a dose. Its evidence is the stub suite on the live
   wf2-agent (371/0, multilingual matches and non-matches). The dialogs show that ordinary replies did not trip it,
   since no dialog was escalated.
+- The owner_notes prompt sentence has no live test. Dialog 15 step 5 shows the re-proposal (raw line 38), but that
+  cannot be attributed to the re-propose sentence alone.
+- Dialog 01 step 6 (`reminder_leg`, dialog 01 raw lines 42-46) made a live change to the shared Settings and to the test
+  appointment, then restored the setting: `reminder_hours_before` 24 -> 1, the booking moved to tomorrow (2026-10-14
+  11:00 Europe/Berlin; the appointment row then reads 2026-10-14T09:00:00.000Z, raw line 59, while its calendar event
+  stays at 2030-01-07T10:00:00+01:00, raw line 60), the WF-5 webhook fired (HTTP 200), and `reminder_hours_before`
+  restored to 24 (read back, attempt 1, raw line 46).
 - Cleanup ran before and after each dialog. After 01, 03 and 15 it deleted the one booked event (`booking events: ok
-  DELETED 1 of 1`); 04 ends with the visit cancelled and no event.
+  DELETED 1 of 1`). 04 ends with the visit late-cancelled (status `late_cancel`, client `flagged`, no event; dialog 04
+  raw lines 45, 46 and 52), so it had no event to delete.
 - The runner prints each message with whitespace collapsed and cut at 240 characters.
 
-## Probe executions (n8n API, read-only, verbatim)
+## Probe executions (n8n API, read-only, as read by the controller; verbatim except that workflow ids in the Unpack lines are replaced by `…`)
+
+Exec 29144 is probe 1 (`send_message`) and exec 29145 is probe 2 (`find_client`), per the controller's report. The ledger
+holds only the refusal summary, not this output.
 
 ```
 {"id":"29145","status":"success","err":null,"lastNode":"Respond Error"}
@@ -193,7 +212,7 @@ calendar cleanup: ok DELETED 0
 cleanup done
 ```
 
-## Raw output: dialog 01 (`01-new-client-books.md`, tg; verbatim)
+## Raw output: dialog 01 (`01-new-client-books.md`, tg; verbatim; "dialog 01 raw line N" = line N of this block)
 
 ```
 calendar cleanup: ok DELETED 0
@@ -325,7 +344,7 @@ calendar cleanup: ok DELETED 0
 cleanup done
 ```
 
-## Raw output: dialog 04 (`04-late-cancel.md`, tg; verbatim)
+## Raw output: dialog 04 (`04-late-cancel.md`, tg; verbatim; "dialog 04 raw line N" = line N of this block)
 
 ```
 calendar cleanup: ok DELETED 0
