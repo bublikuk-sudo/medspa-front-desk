@@ -334,7 +334,9 @@ T('Pending: hostile client_id / appt id match nothing', () => pf({ client_id: "C
   pf({ client_id: 'C-1', cancel_ask_appt_id: "A-C')" }).includes("{appt_id}='__no_such_appt__'") || 'wrong');
 
 // ---- WF-1 Gate: routing of a short reply ----
-const gate = (kind, is_short, rows, askId = '') => new Function('$input', '$', P('Gate').jsCode)({}, dollar({ Classify: { kind, is_short }, 'Client Data': { cancel_ask_appt_id: askId, last_agent_reply_at: iso(-1 * MIN) }, Pending: rows.length ? rows.map((f, i) => ({ id: 'rec' + i, createdTime: '', fields: f })) : [{}] }))[0].json;
+// last = Clients.last_agent_reply_at. Default: Mark Replied stamped it 0.7 s after Mark Summary Sent, in the summary's own run
+// (live: 0.55-1.0 s in 25 runs), i.e. the pending summary is the bot's last message.
+const gate = (kind, is_short, rows, askId = '', last = iso(-10 * MIN + 700)) => new Function('$input', '$', P('Gate').jsCode)({}, dollar({ Classify: { kind, is_short }, 'Client Data': { cancel_ask_appt_id: askId, last_agent_reply_at: last }, Pending: rows.length ? rows.map((f, i) => ({ id: 'rec' + i, createdTime: '', fields: f })) : [{}] }))[0].json;
 const pend = { appt_id: 'A-P', status: 'pending', summary_sent_at: iso(-10 * MIN), pending_expires_at: iso(5 * MIN) };
 const visit = (over = {}) => ({ appt_id: 'A-C', status: 'confirmed', cancel_expires_at: iso(13 * MIN), ...over });
 let gr = gate('yes', true, [pend]);
@@ -378,6 +380,78 @@ gr = gate('no', true, [pend]);
 T('Gate: NO with a pending booking only -> reminder route (unchanged)', () => gr.route === 'reminder' || gr);
 gr = gate('other', false, [pend]);
 T('Gate: a long message with a pending booking -> agent (unchanged)', () => gr.route === 'agent' || gr);
+
+// ---- Final review I1: a YES confirms the pending booking only while its summary is the bot's last message and unexpired ----
+// The summary run stamps Appointments.summary_sent_at (Mark Summary Sent) and then Clients.last_agent_reply_at (Mark Replied);
+// any later agent reply stamps last_agent_reply_at again. Gate allows 3 s between the two same-run stamps.
+const SUM = pend.summary_sent_at, sumPlus = (ms) => new Date(Date.parse(SUM) + ms).toISOString();
+const stale = sumPlus(2 * MIN), expired = { ...pend, pending_expires_at: iso(-1 * MIN) };
+T('I1: the summary run stamps summary_sent_at, then Mark Replied stamps last_agent_reply_at (the stamps Gate compares)', () =>
+  same(outs('Send Summary'), ['Mark Summary Sent']) && same(outs('Mark Summary Sent'), ['Mark Replied']) &&
+  /\$now/.test(((P('Mark Summary Sent').columns || {}).value || {}).summary_sent_at) && /\$now/.test(((P('Mark Replied').columns || {}).value || {}).last_agent_reply_at) ||
+  [outs('Send Summary'), outs('Mark Summary Sent')]);
+{
+  // the two stamps as the expressions produce them, one after the other (same run) -> confirm
+  const s = ev(((P('Mark Summary Sent').columns || {}).value || {}).summary_sent_at, {});
+  const r = ev(((P('Mark Replied').columns || {}).value || {}).last_agent_reply_at, {});
+  const g = gate('yes', true, [{ ...pend, summary_sent_at: s }], '', r);
+  T('I1: YES right after a summary, stamps taken by Mark Summary Sent then Mark Replied -> confirm', () => g.route === 'confirm' || [s, r, g]);
+}
+gr = gate('yes', true, [pend], '', sumPlus(700));
+T('I1: YES, summary is the last message (Mark Replied 0.7 s after Mark Summary Sent) -> confirm', () => gr.route === 'confirm' || gr);
+gr = gate('yes', true, [pend], '', sumPlus(3000));
+T('I1: YES, last_agent_reply_at 3.0 s after summary_sent_at (the tolerance) -> confirm', () => gr.route === 'confirm' || gr);
+gr = gate('yes', true, [pend], '', '');
+T('I1: YES, last_agent_reply_at blank (Mark Replied never stamped) -> confirm', () => gr.route === 'confirm' || gr);
+gr = gate('yes', true, [pend], '', sumPlus(-3 * MIN));
+T('I1: YES, last_agent_reply_at older than the summary (Mark Replied failed in the summary run) -> confirm', () => gr.route === 'confirm' || gr);
+gr = gate('yes', true, [pend], '', stale);
+T('I1: YES after an agent reply that came after the summary -> not confirm (reminder route: Reminder Gate, else the agent)', () => gr.route === 'reminder' && gr.yes_target === '' || gr);
+gr = gate('yes', true, [pend], '', sumPlus(6300));
+T('I1: YES, agent reply 6.3 s after the summary (fastest live agent turn) -> not confirm', () => gr.route !== 'confirm' && gr.yes_target !== 'confirm' || gr);
+gr = gate('yes', true, [pend], '', sumPlus(3100));
+T('I1: YES, last_agent_reply_at 3.1 s after the summary -> not confirm', () => gr.route !== 'confirm' || gr);
+gr = gate('yes', true, [pend], '', 'not a date');
+T('I1: YES, unreadable last_agent_reply_at -> not confirm (fail closed)', () => gr.route !== 'confirm' || gr);
+gr = gate('yes', true, [{ ...pend, summary_sent_at: undefined }], '', '');
+T('I1: YES, pending row whose summary was never stamped -> not confirm', () => gr.route !== 'confirm' || gr);
+gr = gate('yes', true, [expired]);
+T('I1: YES to an expired summary that is still the last message -> not confirm (no EXPIRED template; reminder route, else the agent)', () => gr.route === 'reminder' || gr);
+gr = gate('yes', true, [{ ...pend, pending_expires_at: undefined }]);
+T('I1: YES, pending row without pending_expires_at -> not confirm', () => gr.route !== 'confirm' || gr);
+gr = gate('no', true, [pend], '', stale);
+T('I1: NO after a stale summary -> reminder route (unchanged)', () => gr.route === 'reminder' || gr);
+// the short-phrase route to Haiku ("yes that one", "ok, Friday", "sounds good")
+gr = gate('other', true, [pend], '', sumPlus(700));
+T('I1: short phrase right after the summary -> llm, yes_target confirm', () => gr.route === 'llm' && gr.yes_target === 'confirm' || gr);
+gr = gate('other', true, [pend], '', '');
+T('I1: short phrase, last_agent_reply_at blank -> llm, yes_target confirm', () => gr.route === 'llm' && gr.yes_target === 'confirm' || gr);
+gr = gate('other', true, [pend], '', stale);
+T('I1: short phrase after an agent reply that came after the summary -> agent', () => gr.route === 'agent' && gr.yes_target === '' || gr);
+gr = gate('other', true, [pend], '', sumPlus(6300));
+T('I1: short phrase, agent reply 6.3 s after the summary -> agent', () => gr.route === 'agent' || gr);
+gr = gate('other', true, [expired]);
+T('I1: short phrase to an expired summary -> agent', () => gr.route === 'agent' || gr);
+// the reminder route lets the message through to the agent when no reminder is the last message (Reminder Gate unchanged)
+{
+  const DT = { fromISO: (s) => { const t = /^\d{4}-\d\d-\d\dT/.test(String(s)) ? Date.parse(s) : NaN; return { isValid: Number.isFinite(t), toMillis: () => t }; } };
+  const rg = (kind, last, rows) => new Function('$input', '$', 'DateTime', P('Reminder Gate').jsCode)({ all: () => (rows.length ? rows : [{}]).map((f) => ({ json: f.appt_id ? { fields: f } : {} })) },
+    dollar({ Classify: { kind }, 'Client Data': { last_agent_reply_at: last } }), DT)[0].json;
+  const a = rg('yes', stale, []);
+  const b = rg('yes', stale, [{ appt_id: 'A-R', status: 'reminded', reminder_sent_at: sumPlus(-60 * MIN) }]);
+  T('I1: stale summary + YES, no reminder after the agent reply -> Reminder Gate answer false -> Reminder Answer? false output is Agent', () =>
+    a.answer === false && b.answer === false && same(outs('Reminder Answer?', 1), ['Agent']) && same(outs('Route', 2), ['Reminder Check']) || [a, b]);
+}
+// the reviewer's scenario end to end: summary for Tue -> "actually, can we do Friday?" -> agent asks -> "yes" / "yes that one"
+{
+  const sumRun = sumPlus(650);                                     // Mark Replied in the summary run
+  const g0 = gate('yes', true, [pend], '', sumRun);
+  const agentRun = sumPlus(40 * 1000);                             // the agent answered "actually, can we do Friday?"
+  const g1 = gate('yes', true, [pend], '', agentRun);
+  const g2 = gate('other', true, [pend], '', agentRun);
+  T('I1 sequence: YES straight after the summary confirms; after the agent asked about another time, "yes" / "yes that one" do not confirm the first slot', () =>
+    g0.route === 'confirm' && g1.route !== 'confirm' && g2.route === 'agent' && g2.yes_target === '' || [g0, g1, g2]);
+}
 
 // ---- I1: every other message to the client closes the cancel question ----
 // Each WF-1 send node with the template key it really sends; only Send Cancel Ask keeps the question open.

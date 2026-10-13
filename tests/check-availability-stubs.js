@@ -68,6 +68,10 @@ check('wf2 system prompt (C-9, D): rule 1\'s disclosure needs the word for AI in
   /saying that you are the clinic's AI assistant and that a team member can take over on request; that sentence must contain the word for AI in the client's language \(AI, ИИ, IA, KI, …\), and "virtual assistant" alone does not count\. Do not repeat the disclosure in later replies, and do not volunteer it to a KNOWN client\./.test(sys), sys.slice(0, 2600));
 check('wf2 system prompt (C-9): "Never claim to be a human" keeps its meaning (line unchanged)',
   /\n- If a client asks whether they are talking to a bot, an AI or a human, answer truthfully that you are the clinic's AI assistant and offer to connect a team member\. Never claim to be a human\.\n/.test(sys), 'line changed');
+// Final review I1: WF-1 confirms only a summary that is still the bot's last message, so after a change of mind the agent must
+// propose the new slot (propose_booking cancels the client's earlier pending row in Cancel Old).
+check('wf2 system prompt (final review I1): step 3 tells the agent to call propose_booking again when the client agrees to a different slot after a summary',
+  /\n3\. [^\n]*If, after the summary, the client asks for a different time and agrees to a new slot, call propose_booking for that slot: it replaces the earlier proposal and a new summary is sent, because a yes to your question never confirms the earlier summary\./.test(sys), sys.slice(0, 200));
 check('wf2 system prompt equals prompts/agent-system-prompt.md (sync-assets.sh contract: "=" + the file)', sys === '=' + PROMPT.replace(/\r/g, '').replace(/\n$/, ''), sys.length + ' vs ' + PROMPT.length);
 const desc = String((node(WF2, 'check_availability').parameters || {}).description || '');
 check('wf2 check_availability tool: slots_local is already in the client\'s language, shown exactly as written (no "translated if needed")',
