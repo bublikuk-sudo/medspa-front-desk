@@ -481,7 +481,7 @@ const pipeline = (j, first, again) => {
   const m = runNode('Merge Text', j, { text: first(j.masked_text) });
   if (!retr(m)) return { text: m.text, calls: 1 };
   const a = runNode('Merge Again', j, again ? { text: again(m.masked_text) } : { error: 'Request failed with status code 529' });
-  return { text: a.text, calls: 2, item: m };
+  return { text: a.text, calls: 2, item: m, fallback: a.fallback };
 };
 const E = (name, f) => { try { const r = f(); check(name, r === true, r); } catch (e) { check(name, false, String(e.message)); } };
 const RU_SUMMARY = (t) => t.replace(/ You can cancel.*$/, ' Вы можете бесплатно отменить запись не позднее чем за 24 часа до визита. Для подтверждения ответьте ДА.');
@@ -522,25 +522,63 @@ const BAD = [
   ['duplicates the token', (t) => RU_SUMMARY(t).replace(tok(1), tok(1) + ' ' + tok(1))],
   ['alters the token (⟦ 1 ⟧)', (t) => RU_SUMMARY(t).replace(tok(1), '⟦ 1 ⟧')],
   ['adds a token it was never sent (⟦2⟧)', (t) => RU_SUMMARY(t) + ' ' + tok(2)],
+  // Fix round 1 (review I-1): an inflected brand, "Botoxа", would pass every count check.
+  ['glues a case ending to the token (⟦1⟧а)', (t) => RU_SUMMARY(t).replace(tok(1), tok(1) + 'а')],
+  ['glues a letter before the token (с⟦1⟧)', (t) => RU_SUMMARY(t).replace(tok(1), 'с' + tok(1))],
 ];
 for (const [label, bad] of BAD) {
   E('E translator ' + label + ' -> Retranslate?: the plain text through Translate Again (2 calls); its good translation is sent', () => {
     const j = sum(); const p = pipeline(j, bad, (t) => RU_SUMMARY(t));
-    return (p.calls === 2 && p.item.masked_text === j.text && p.item.masked_text.includes('Botox') && p.text === RU_DONE &&
+    return (p.calls === 2 && p.item.masked_text === j.text && p.item.masked_text.includes('Botox') && p.text === RU_DONE && p.fallback === 'again' &&
       ['language', 'address', 'yes_word', 'no_word', 'brand'].every((k) => p.item[k] === j[k])) || p;
   });
   E('E translator ' + label + ', and Translate Again loses the name too -> Render\'s text (English, names intact): no token, no lost name', () => {
     const j = sum(); const p = pipeline(j, bad, (t) => RU_SUMMARY(t).replace('Botox', 'Ботокс'));
-    return (p.calls === 2 && p.text === j.text && p.text.includes('Botox') && !/[⟦⟧]/.test(p.text)) || p;
+    return (p.calls === 2 && p.text === j.text && p.text.includes('Botox') && !/[⟦⟧]/.test(p.text) && p.fallback === 'english') || p;
   });
   E('E translator ' + label + ', and Translate Again fails -> Render\'s text (as on any failed translation)', () => {
     const j = sum(); const p = pipeline(j, bad, undefined);
-    return (p.calls === 2 && p.text === j.text) || p;
+    return (p.calls === 2 && p.text === j.text && p.fallback === 'english') || p;
   });
 }
 E('E Translate Again\'s output carrying a token is not sent (Render\'s text instead)', () => {
   const j = sum(); const p = pipeline(j, BAD[0][1], (t) => RU_SUMMARY(t) + ' ' + tok(1));
   return (p.text === j.text) || p;
+});
+// Fix round 1 (review I-1, MINOR 1, MINOR 3).
+for (const [label, glue] of [['after (Botoxа)', (t) => t.replace('Botox', 'Botoxа')], ['before (сBotox)', (t) => t.replace('Botox', 'сBotox')]]) {
+  E('E fix1 Translate Again glues a letter to the brand ' + label + ' -> Render\'s text (English, names intact), fallback "english"', () => {
+    const j = sum(); const p = pipeline(j, BAD[0][1], (t) => glue(RU_SUMMARY(t)));
+    return (p.calls === 2 && p.text === j.text && p.fallback === 'english') || p;
+  });
+}
+E('E fix1 Merge Again: a brand glued to letters in the SOURCE (a link "…/Botoxguide") is not held against Translate Again (only new glued copies are)', () => {
+  const src = 'They want Botox, so I should ask which day they would like.\nВсё о Botox: https://example.com/Botoxguide\nКакой день вам удобен?';
+  const j = run({ language: 'ru', settings: TERMS, text: src });
+  const p = pipeline(j, (t) => t.replace(tok(1) + ':', ''), (t) => t);
+  return (j.masked_text === 'Всё о ' + tok(1) + ': https://example.com/Botoxguide\nКакой день вам удобен?' && p.calls === 2 && p.fallback === 'again' && p.text === j.text) || { j, p };
+});
+E('E fix1 Merge Again: Translate Again kept only the glued link copy and dropped the whole name -> English, fallback "english"', () => {
+  const src = 'They want Botox, so I should ask which day they would like.\nВсё о Botox: https://example.com/Botoxguide\nКакой день вам удобен?';
+  const j = run({ language: 'ru', settings: TERMS, text: src });
+  const p = pipeline(j, (t) => t.replace(tok(1) + ':', ''), (t) => t.replace('Botox:', 'процедуре:'));
+  return (p.calls === 2 && p.fallback === 'english' && p.text === j.text) || p;
+});
+E('E fix1 the normal path has no fallback field (Merge Text\'s retranslate false is the count; Merge Again says again / english)', () => {
+  const j = sum(); const m = runNode('Merge Text', j, { text: RU_SUMMARY(j.masked_text) });
+  return (m.retranslate === false && m.fallback === undefined && m.text === RU_DONE) || m;
+});
+E('E fix1 terms with regex metacharacters ("Sculptra+ (PLLA)", "Dysport®") are masked and restored', () => {
+  const j = run({ language: 'de', settings: { untranslated_terms: 'Sculptra+ (PLLA), Dysport®' }, text: 'We offer Sculptra+ (PLLA) and Dysport® injections. Which one would you like?' });
+  const p = pipeline(j, () => 'Wir bieten ' + tok(1) + ' und ' + tok(2) + '-Injektionen an. Welche Behandlung möchten Sie?');
+  return (j.masked_text === 'We offer ' + tok(1) + ' and ' + tok(2) + ' injections. Which one would you like?' && JSON.stringify(j.terms) === '["Sculptra+ (PLLA)","Dysport®"]' &&
+    p.text === 'Wir bieten Sculptra+ (PLLA) und Dysport®-Injektionen an. Welche Behandlung möchten Sie?' && p.calls === 1) || { j, p };
+});
+E('E fix1 a listed term inside a link (…/Botox-guide) is masked and restored, the link intact', () => {
+  const j = run({ language: 'de', settings: TERMS, text: 'Read about Botox here: https://example.com/Botox-guide before your visit.' });
+  const p = pipeline(j, (t) => t.replace('Read about', 'Lesen Sie hier mehr über').replace(' here:', ':').replace(' before your visit.', ' vor Ihrem Besuch.'));
+  return (j.masked_text === 'Read about ' + tok(1) + ' here: https://example.com/' + tok(1) + '-guide before your visit.' &&
+    p.text === 'Lesen Sie hier mehr über Botox: https://example.com/Botox-guide vor Ihrem Besuch.' && p.calls === 1) || { j, p };
 });
 E('E English client: nothing masked, nothing translated, Render\'s text sent as is', () => {
   const j = sum({ language: 'en' }); const p = pipeline(j);

@@ -98,8 +98,10 @@ writes in is covered with no list to maintain; a language ICU does not know fall
 HydraFacial) keep their spelling, generic treatment names are translated as a clinic in that language names them. The
 terms listed in `Settings.untranslated_terms` (comma-separated, e.g. `Botox, HydraFacial`) never reach the translator at
 all: `send_message` replaces each with a placeholder token before the translation and puts the term back after it, so
-they arrive exactly as written in the list; when the translator mangles a token, the message is translated once more
-without tokens and is sent only if every listed term survived, otherwise the English message is sent. Every
+they arrive exactly as written in the list. Matching is case-sensitive and whole-word, so each entry must be spelled
+exactly as on the price list (`Services.name`): `botox` in the list does not protect "Botox". When the translator
+mangles a token, the message is translated once more without tokens and is sent only if every listed term survived,
+otherwise the English message is sent. Every
 message uses the formal form of address (Sie, usted, vous, вы, ...) from a per-language map in `send_message`, not each
 translation's own choice, and the agent prompt asks for the same; a clinic that wants the informal form changes that map
 and that prompt line. The words the client

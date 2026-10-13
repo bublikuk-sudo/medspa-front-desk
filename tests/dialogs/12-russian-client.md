@@ -48,7 +48,9 @@ translation, and the English templates say "no later than 24 hours before the vi
 cancellation ends 24 hours before the visit" (LATE_*), whose literal Russian is «не позднее чем за 24 часа до визита» /
 «заканчивается за 24 часа до визита»: both match `24 час`, neither matches `до\s+24\s+час`, so the C checks stay as they
 were. Steps 4–7 now also require the Latin «Botox» (case-sensitive), not only the absence of «ботокс»: a message that
-dropped the name would pass the old check. This needs `Settings.untranslated_terms` to contain `Botox` (the seed does).
+dropped the name would pass the old check. And they reject «Botox» glued to a letter (an inflected «Botoxа», «сBotox»),
+which every other check lets through: jq's `\b` finds no boundary between «x» and «а», so the Latin-word check does not
+see it. This needs `Settings.untranslated_terms` to contain `Botox` (the seed does).
 
 Cyrillic words are bounded with `(?<!\p{L})` / `(?!\p{L})`, not `\b`. jq 1.7 on the VPS matched these regexes, case-
 insensitively, on correct and faulty samples (mini-task C report). Step 1's «ИИ» check is also the live check of the
@@ -90,6 +92,7 @@ expect no-regex: (?<!\p{L})(ты|тебя|тебе|тобой|тво[йяеёю�
 expect no-regex: (?<!\p{L})до\s+24\s+час
 expect no-regex: ботокс
 expect regex: (?-i:Botox)
+expect no-regex: (?-i:Botox)\p{L}|\p{L}(?-i:Botox)
 send: да
 expect templates: BOOKED, BOOKED_INTAKE
 expect lang: ru
@@ -102,6 +105,7 @@ expect no-regex: (?<!\p{L})(ты|тебя|тебе|тобой|тво[йяеёю�
 expect no-regex: (?<!\p{L})до\s+24\s+час
 expect no-regex: ботокс
 expect regex: (?-i:Botox)
+expect no-regex: (?-i:Botox)\p{L}|\p{L}(?-i:Botox)
 expect state: [.appts[].status] == ["booked"]
 expect state: .appts[0].start_iso | test("^2030-01-07T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$")
 expect state: (.events | length) == 1 and .events[0].summary == ("Botox — " + .client.name)
@@ -116,6 +120,7 @@ expect no-regex: (?<![/.\-&])\b(?!(?:Glow|Aesthetics|Med|Spa|HydraFacial|Botox)\
 expect no-regex: (?<!\p{L})(ты|тебя|тебе|тобой|тво[йяеёюи]\p{L}*)(?!\p{L})
 expect no-regex: ботокс
 expect regex: (?-i:Botox)
+expect no-regex: (?-i:Botox)\p{L}|\p{L}(?-i:Botox)
 expect state: [.appts[].status] == ["booked"]
 expect state: (.events | length) == 1
 expect state: (.client.cancel_ask_appt_id // "") == .appts[0].appt_id
@@ -129,6 +134,7 @@ expect no-regex: (?<![/.\-&])\b(?!(?:Glow|Aesthetics|Med|Spa|HydraFacial|Botox)\
 expect no-regex: (?<!\p{L})(ты|тебя|тебе|тобой|тво[йяеёюи]\p{L}*)(?!\p{L})
 expect no-regex: ботокс
 expect regex: (?-i:Botox)
+expect no-regex: (?-i:Botox)\p{L}|\p{L}(?-i:Botox)
 expect state: [.appts[].status] == ["cancelled"]
 expect state: (.events | length) == 0
 state: (.client.client_id // "") | startswith("C-test-")

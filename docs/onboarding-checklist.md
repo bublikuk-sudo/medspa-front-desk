@@ -102,7 +102,8 @@ Every account is the clinic's, registered on the clinic's card (see "Handover" b
 - [ ] **Settings**: `business_name`, `timezone`, `working_hours`, `calendar_id`, `owner_contact`, `whatsapp_number`,
       `cancellation_hours`, `intake_form_url` (the clinic's own intake and consent form), `untranslated_terms` (the
       brand and trademark names on the clinic's price list, comma-separated, e.g. `Botox, HydraFacial`: a translated
-      message keeps them exactly as written here; leave it empty for none), and check
+      message keeps them exactly as written here; matching is case-sensitive, so spell each one exactly as in
+      `Services.name`; leave it empty for none), and check
       `reminder_hours_before`, `pending_ttl_min`, `slot_step_min`, `min_lead_min`. Reminders: WF-5 runs once a day at
       07:05 UTC and reminds every visit of tomorrow by the clinic's calendar (`Settings.timezone`), at about 08:05 Berlin
       time in winter and 09:05 in summer; a visit booked after that run but still `reminder_hours_before` ahead is
