@@ -11,13 +11,20 @@ Two pushes of `send_message` only, each with `--activate`. Before each, the live
 compared against the pushed commit. Every comparison was CONTENT-IDENTICAL; `tests/channels-check.sh` printed
 `channels ok` each time.
 
-| push | wording of the six templates | drift check against | read-back against | stubs on the pulled live file |
+| push | wording of the six templates | drift check against | read-back against | stubs |
 |---|---|---|---|---|
 | 1, ~11:01-11:02Z | "your {service} appointment on {when}" | `d2c0813` (= `8f5fd04`) | `bc44ec5` | send-message 318/0, wf1 321/0, check_availability 27/0 |
 | 2, 11:44Z | "your appointment for {service} on {when}" | `bc44ec5` | `896a4b8` | send-message 318/0, wf1 321/0, check_availability 27/0 |
 
-Per the controller's report, the stub suites of each push ran before the next dialog started (the stub completion times
-were not recorded). The six templates are REMINDER_CONFIRMED, REMINDER_CANCELLED, CANCEL_PENDING, LATE_CANCEL_PENDING,
+Where the stub suites ran, per the controller's report, for both pushes: the send-message stubs ran on the pulled live
+file (`/tmp/sm-live.json` on the VPS, the read-back of the push); the wf1 stubs ran on the repo copy that `remote.sh` had
+just synced to the VPS; the check_availability stubs ran from the workstation on the repo files (its header requires
+that). The ledger itself records the pulled live file only for push 1 (`progress.md` line 696: "send-message 318/0
+(pulled live file), wf1 321/0, check_availability 27/0 (workstation)"); for push 2 it says only "stubs 318/0, 321/0,
+27/0" (line 704). Also per the controller's report (not in the ledger): `jq -S` was used for the push 2 comparisons under
+the same normalisation as push 1, and push 2 pushed `send_message` only (remote command `n8n-push.sh
+workflows/shared/send_message.json --activate`). The stub suites of each push ran before the next dialog started (the
+stub completion times were not recorded). The six templates are REMINDER_CONFIRMED, REMINDER_CANCELLED, CANCEL_PENDING, LATE_CANCEL_PENDING,
 CANCELLED and LATE_CANCEL; REMINDER and REVISIT (WhatsApp templates) were not changed.
 
 ## Results
@@ -34,7 +41,8 @@ CANCELLED and LATE_CANCEL; REMINDER and REVISIT (WhatsApp templates) were not ch
   wording works, not that it always will.
 - Brand and cancellation window, as in E: Latin `Botox` in every translated message that names the service, and
   «не позднее чем за 24 часа до визита» in ru PENDING_SUMMARY and BOOKED (run 2 raw lines 31, 44). The E checks
-  passed.
+  passed in dialog 12 (the brand regexes exist only in dialog 12; for de, the Latin `Botox` is shown by the delivered
+  texts, not by a check).
 - Masking (block "Merge outcomes" below, read-only script `e-merge-outcomes.sh` over the `send_message` executions):
   - push 2 window: 16 executions. 10 went through Translate; in 8 of them Render masked `Botox` as `⟦1⟧` (the two
     BOOKED_INTAKE messages name no service). Merge Text gave `retranslate=false` for all 10 and Merge Again never ran.
@@ -44,9 +52,10 @@ CANCELLED and LATE_CANCEL; REMINDER and REVISIT (WhatsApp templates) were not ch
 - The agent's own ru replies (not translated) still write «ботокс» (run 2 raw line 14, 21), as noted in the E log.
 - The runner prints each message with whitespace collapsed and cut at 240 characters, which is why de BOOKED (raw line
   40) ends mid-word.
-- Cleanup ran before and after each dialog (`cleanup done`, `calendar cleanup: ok DELETED 0`).
+- Cleanup ran before and after each dialog (`cleanup done`, `calendar cleanup: ok DELETED 0`). The after-cleanup of run 1
+  also deleted the 1 booking event left by the aborted run (`booking events: ok DELETED 1 of 1`, run 1 raw line 88).
 
-## Merge outcomes, push 2 window (script arguments 2026-10-13T11:45:00 2026-10-13T11:51:00, verbatim)
+## Merge outcomes, push 2 window (script arguments 2026-10-13T11:45:00 2026-10-13T11:51:00, per the controller's report: chosen around the dialogs' start and end times, not printed in the output; block verbatim)
 
 The script prints Render's `masked_text` (the plain text for messages that are not translated) with whitespace collapsed
 and cut at 120 characters. Rows 29003-29052 are dialog 12 run 2, rows 29076-29125 are dialog 13.
@@ -86,7 +95,7 @@ exec 29125 success key=CANCELLED translate=true mergeText.retranslate=false merg
   masked: Your appointment for ⟦1⟧ on Mo., 7. Jan., 10:00 has been cancelled. Message me any time to book again.
 ```
 
-## Merge outcomes, push 1 window (script arguments 2026-10-13T11:02:00 2026-10-13T11:05:00, verbatim; dialog 12 run 1)
+## Merge outcomes, push 1 window (script arguments 2026-10-13T11:02:00 2026-10-13T11:05:00, per the controller's report: chosen around the dialog's start and end times, not printed in the output; block verbatim; dialog 12 run 1)
 
 ```
 exec 28940 success key=reply translate=false mergeText.retranslate=false mergeAgain.fallback=-
