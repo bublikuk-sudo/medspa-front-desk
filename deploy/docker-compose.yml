@@ -16,8 +16,7 @@ services:
       retries: 10
 
   n8n:
-    # Пин версии: после первого запуска записать сюда вывод `n8n --version`
-    image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-latest}
+    image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-2.41.5}
     restart: unless-stopped
     depends_on:
       postgres:

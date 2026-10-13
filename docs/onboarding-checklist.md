@@ -99,7 +99,9 @@ Every account is the clinic's, registered on the clinic's card (see "Handover" b
 - [ ] Edit `airtable/seed/settings.json`, `services.json` and `knowledge.json` for the clinic, then
       `scripts/remote.sh 'scripts/airtable-seed.sh'`. The seed fills `calendar_id`,
       `owner_contact` and `whatsapp_number` from `secrets.env`. Settings is skipped when a row exists, so later changes
-      are made in Airtable.
+      are made in Airtable. Replace `intake_form_url` (shipped as the demo `https://example.com/intake-form-demo`) with
+      the clinic's own form first: the seed refuses the demo URL and an empty one, because every first-time client gets
+      that link right after booking (`--allow-demo-intake-url` is for a demo base only).
 - [ ] **Settings**: `business_name`, `timezone`, `working_hours`, `calendar_id`, `owner_contact`, `whatsapp_number`,
       `cancellation_hours`, `intake_form_url` (the clinic's own intake and consent form), `untranslated_terms` (the
       brand and trademark names on the clinic's price list, comma-separated, e.g. `Botox, HydraFacial`: a translated
