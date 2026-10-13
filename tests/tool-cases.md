@@ -5,7 +5,12 @@ inputs, from the VPS, and its output is compared against a regular expression.
 The Public API of n8n cannot run a workflow with data, so the entry point is the
 `test-harness` workflow: a Webhook (`POST /webhook/test-tool`, Header Auth with the
 `MedSpa Test Key` credential) that unpacks `{workflow_id, input}` and calls the
-sub-workflow with Execute Workflow.
+sub-workflow with Execute Workflow. The harness is active in production, so `Unpack` refuses (HTTP 500,
+`HARNESS_ERROR`) a workflow outside its `Allow List` node (the tool workflows the test scripts call; each value is
+`WFID:<name>`, resolved at push time) and a `contact_id` that names a contact outside the test ranges (`tg:9000000NN`
+here, `tg:9000000NNN` and `wa:+1555000NNNN` in the dialogs). A `contact_id` that is not a contact at all (`""`, `xyz`,
+`tg:1'--`) passes, so the cases below can still test the tools' own validation. A new case must use a test contact;
+`tests/test-harness-stubs.sh` checks every `contact_id` in the table and every workflow the scripts call.
 
 ## Running
 

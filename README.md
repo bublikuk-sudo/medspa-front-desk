@@ -387,6 +387,12 @@ silent for everyone; here a workflow that throws stays active, the owner gets an
 - The conversation history in Postgres has no retention job yet.
 - `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`: Code nodes can read the environment, including the encryption key and database
   password. Run one clinic per instance.
+- `TEST_KEY` (credential `MedSpa Test Key`) is live in production, because the test suites run against the live
+  instance. It unlocks the test harness (`/webhook/test-tool`: only the allow-listed tool workflows, only for test
+  contacts), Test Inbound (`/webhook/wf1-test`: test contacts only) and the Run Now webhooks of WF-4 and WF-5. A leaked
+  key can re-run WF-5, which sends every due reminder and revisit invitation again (paid WhatsApp templates), and
+  re-index the knowledge base. Generate it with `openssl rand -hex 32` and rotate it with the other secrets; Test
+  Inbound runs keep the key header in the run log for 7 days.
 
 ## License
 

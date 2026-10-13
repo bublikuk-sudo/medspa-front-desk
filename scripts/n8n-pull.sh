@@ -34,7 +34,10 @@ out=$(printf '%s' "$wf" | jq --slurpfile ids deploy/workflow-ids.json --slurpfil
          then (if $rev[.value] then .value = $rev[.value] | del(.cachedResultName, .cachedResultUrl)
                elif $atrev[.value] then .value = $atrev[.value] | del(.cachedResultName, .cachedResultUrl)
                else . end)
-         else . end)')
+         else . end)
+  # n8n-push.sh resolves EVERY string value that is exactly WFID:<name> (test-harness Allow List), not only __rl ones:
+  # read those back too, so a pulled file compares equal to the repo copy.
+  | walk(if type=="string" and $rev[.] then $rev[.] else . end)')
 if [ -n "${2:-}" ]; then
   printf '%s\n' "$out" > "$2.tmp" && mv "$2.tmp" "$2"
 else

@@ -61,7 +61,8 @@ Every account is the clinic's, registered on the clinic's card (see "Handover" b
   - `GOOGLE_CALENDAR_ID`;
   - `POSTGRES_PASSWORD`: generate it now; the same value goes into `deploy/.env` in step 2 (the n8n Postgres
     credential is created from `secrets.env`, the database from `.env`, so they must match);
-  - `TEST_KEY`: a random string;
+  - `TEST_KEY`: generate it with `openssl rand -hex 32` (not a word or a short string: it opens the test harness, Test
+    Inbound and the Run Now webhooks of WF-4 and WF-5 in production, see README "Known limitations");
   - `N8N_HOST` (`<your-domain>`) now, `N8N_API_KEY` after n8n is up (step 2);
   - `OWNER_WHATSAPP_NUMBER`: optional, used only for manual template tests; no script reads it.
 - [ ] Airtable base, either way:
@@ -185,7 +186,7 @@ At handover the clinic takes every key over. Names only; never send values.
 | `WHATSAPP_ACCESS_TOKEN` | Meta Business settings → System users | generate a new token, revoke old |
 | `META_APP_SECRET` | developers.facebook.com → the app → App settings | reset |
 | `N8N_API_KEY` | n8n → Settings → n8n API | create new, delete old |
-| `TEST_KEY` | any random string | replace |
+| `TEST_KEY` | generate: `openssl rand -hex 32` | replace |
 
 Then:
 

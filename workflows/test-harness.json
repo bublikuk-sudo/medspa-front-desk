@@ -20,15 +20,43 @@
       }
     },
     {
+      "id": "7a3e0b20-0006-4c00-8000-000000000006",
+      "name": "Allow List",
+      "notes": "The tool workflows the test scripts call through tests/run-case.sh (tests/tool-cases.tsv, tests/lib/n8n.sh, tests/dialog.sh, tests/cleanup.sh, tests/state.sh, tests/escalation-reset-live.sh). Each value is WFID:<name>: n8n-push.sh puts the live id there, n8n-pull.sh reads it back. tests/test-harness-stubs.sh checks the list against those scripts.",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [220, 300],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "7a3e0b20-2001-4c00-8000-000000000001", "name": "cancel_booking", "value": "WFID:cancel_booking", "type": "string" },
+            { "id": "7a3e0b20-2002-4c00-8000-000000000002", "name": "check_availability", "value": "WFID:check_availability", "type": "string" },
+            { "id": "7a3e0b20-2003-4c00-8000-000000000003", "name": "confirm_booking", "value": "WFID:confirm_booking", "type": "string" },
+            { "id": "7a3e0b20-2004-4c00-8000-000000000004", "name": "escalate", "value": "WFID:escalate", "type": "string" },
+            { "id": "7a3e0b20-2005-4c00-8000-000000000005", "name": "find_client", "value": "WFID:find_client", "type": "string" },
+            { "id": "7a3e0b20-2006-4c00-8000-000000000006", "name": "propose_booking", "value": "WFID:propose_booking", "type": "string" },
+            { "id": "7a3e0b20-2007-4c00-8000-000000000007", "name": "reminder_reply", "value": "WFID:reminder_reply", "type": "string" },
+            { "id": "7a3e0b20-2008-4c00-8000-000000000008", "name": "request_cancel", "value": "WFID:request_cancel", "type": "string" },
+            { "id": "7a3e0b20-2009-4c00-8000-000000000009", "name": "search_knowledge", "value": "WFID:search_knowledge", "type": "string" },
+            { "id": "7a3e0b20-2010-4c00-8000-000000000010", "name": "test-fixtures", "value": "WFID:test-fixtures", "type": "string" },
+            { "id": "7a3e0b20-2011-4c00-8000-000000000011", "name": "wf2-agent", "value": "WFID:wf2-agent", "type": "string" }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
       "id": "7a3e0b20-0002-4c00-8000-000000000002",
       "name": "Unpack",
+      "notes": "Refuses (error output -> Respond Error, HTTP 500 HARNESS_ERROR) a workflow outside the Allow List and a contact_id that names a contact outside the test ranges. Reads the body from Webhook by name: its input item is the Allow List.",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [220, 300],
+      "position": [440, 300],
+      "onError": "continueErrorOutput",
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "return [{ json: { ...$input.first().json.body.input, __workflow_id: $input.first().json.body.workflow_id } }];"
+        "jsCode": "// The harness is active in production, behind the MedSpa Test Key, because the live test suites need it. It runs only the\n// allow-listed tool workflows (Allow List: n8n-push.sh resolves each WFID:<name> value to the live id) and only for test\n// contacts: tg:9000000NN (tool cases), tg:9000000NNN and wa:+1555000NNNN (dialogs; the ranges Normalize lets into Test\n// Inbound), the ranges tests/cleanup.sh treats as test contacts. A contact_id that is not a contact at all (\"\", \"xyz\",\n// \"tg:1'--\", 21 digits) passes: no tool resolves it to a person, and the tool cases send exactly those to test the tools.\nconst body = $('Webhook').first().json.body || {};\nconst allow = $('Allow List').first().json || {};\nconst id = String(body.workflow_id || '');\nconst name = Object.keys(allow).find((k) => typeof allow[k] === 'string' && !allow[k].startsWith('WFID:') && allow[k] === id);\nif (!id || !name) throw new Error('test-harness: workflow ' + JSON.stringify(id.slice(0, 40)) + ' is not in the allow-list');\nconst input = body.input && typeof body.input === 'object' && !Array.isArray(body.input) ? body.input : {};\nif ('contact_id' in input) {\n  const c = String(input.contact_id ?? '');\n  const isContact = /^(tg|wa):\\+?\\d{1,20}$/i.test(c.replace(/\\s+/g, ''));\n  const isTest = /^tg:9000000\\d{2,3}$/.test(c) || /^wa:\\+1555000\\d{4}$/.test(c);\n  if (isContact && !isTest) throw new Error('test-harness: contact_id is not a test contact (tg:9000000NN, tg:9000000NNN, wa:+1555000NNNN)');\n}\nreturn [{ json: { ...input, __workflow_id: id } }];"
       }
     },
     {
@@ -36,7 +64,7 @@
       "name": "Run Tool",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [440, 300],
+      "position": [660, 300],
       "onError": "continueErrorOutput",
       "parameters": {
         "source": "database",
@@ -50,7 +78,7 @@
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.5,
-      "position": [680, 200],
+      "position": [900, 200],
       "parameters": {
         "respondWith": "firstIncomingItem",
         "options": {}
@@ -61,7 +89,7 @@
       "name": "Respond Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.5,
-      "position": [680, 420],
+      "position": [900, 420],
       "parameters": {
         "respondWith": "json",
         "responseBody": "={{ { verdict: 'HARNESS_ERROR', error: $json.error } }}",
@@ -70,8 +98,14 @@
     }
   ],
   "connections": {
-    "Webhook": { "main": [[{ "node": "Unpack", "type": "main", "index": 0 }]] },
-    "Unpack": { "main": [[{ "node": "Run Tool", "type": "main", "index": 0 }]] },
+    "Webhook": { "main": [[{ "node": "Allow List", "type": "main", "index": 0 }]] },
+    "Allow List": { "main": [[{ "node": "Unpack", "type": "main", "index": 0 }]] },
+    "Unpack": {
+      "main": [
+        [{ "node": "Run Tool", "type": "main", "index": 0 }],
+        [{ "node": "Respond Error", "type": "main", "index": 0 }]
+      ]
+    },
     "Run Tool": {
       "main": [
         [{ "node": "Respond", "type": "main", "index": 0 }],
