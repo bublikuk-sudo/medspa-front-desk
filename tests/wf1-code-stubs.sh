@@ -8,7 +8,7 @@
 #   scripts/remote.sh 'tests/wf1-code-stubs.sh'
 # Optional arguments: other workflow files (defaults /opt/medspa/workflows/wf1-inbound.json, /opt/medspa/workflows/wf2-agent.json,
 # /opt/medspa/workflows/shared/send_message.json, /opt/medspa/workflows/wf3-tools/escalate.json).
-# The workflow JSON is piped in whole (no jq), so the same test also runs offline with any Node, from medspa-front-desk/:
+# The workflow JSON is piped in whole (no jq), so the same test also runs offline with any Node, from the project root:
 #   { printf 'const WF = '; cat workflows/wf1-inbound.json; printf ';\nconst WF2 = '; cat workflows/wf2-agent.json; printf ';\nconst SM = '; cat workflows/shared/send_message.json; printf ';\nconst ESC = '; cat workflows/wf3-tools/escalate.json; printf ';\n'; cat tests/wf1-code-stubs.js; } | node -
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"

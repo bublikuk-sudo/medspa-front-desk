@@ -1,5 +1,7 @@
 # Case card: AI front desk for a med-spa (WhatsApp)
 
+Code: https://github.com/bublikuk-sudo/medspa-front-desk
+
 **The problem and the result.** Clinics and salons post the same request: book appointments in WhatsApp around the
 clock, check real calendar slots without double bookings, remind clients before the visit, and make the whole thing a
 template that a new client can be put on quickly. This bot books, reschedules and cancels in WhatsApp (and Telegram),

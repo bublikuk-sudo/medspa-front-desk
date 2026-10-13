@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# usage: medspa-front-desk/scripts/remote.sh [--force-dirty] '<команда на VPS, cwd=/opt/medspa>'
+# usage: scripts/remote.sh [--force-dirty] '<команда на VPS, cwd=/opt/medspa>'
 # Копирует рабочие папки проекта на VPS и выполняет команду там.
 #
 # Guard for scripts/push-all.sh: remote.sh copies the WHOLE working tree, so an unfinished workflow file

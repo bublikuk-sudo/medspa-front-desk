@@ -239,17 +239,17 @@ Details: [docs/whatsapp-providers.md](docs/whatsapp-providers.md).
 ## Deploy in 30 minutes
 
 Step by step, including the accounts to prepare beforehand:
-[docs/onboarding-checklist.md](docs/onboarding-checklist.md). The commands, run from the repository root (the scripts
+[docs/onboarding-checklist.md](docs/onboarding-checklist.md). The commands, run from the project root (the scripts
 copy the project to the server and run there over SSH):
 
 ```bash
 # on the server, in /opt/medspa/deploy, after filling .env and secrets.env
 docker compose up -d
 # from your machine
-medspa-front-desk/scripts/remote.sh 'scripts/n8n-credentials.sh'   # 8 credentials from secrets.env
-medspa-front-desk/scripts/remote.sh 'scripts/airtable-schema.sh'   # base + 5 tables, resumable
-medspa-front-desk/scripts/remote.sh 'scripts/airtable-seed.sh'     # Settings, Services, Knowledge
-medspa-front-desk/scripts/remote.sh 'scripts/push-all.sh'          # every workflow, in dependency order
+scripts/remote.sh 'scripts/n8n-credentials.sh'   # 8 credentials from secrets.env
+scripts/remote.sh 'scripts/airtable-schema.sh'   # base + 5 tables, resumable
+scripts/remote.sh 'scripts/airtable-seed.sh'     # Settings, Services, Knowledge
+scripts/remote.sh 'scripts/push-all.sh'          # every workflow, in dependency order
 ```
 
 The Google Calendar credential is the ninth and is connected in the n8n UI (OAuth). The 30 minutes assume the accounts

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# usage: medspa-front-desk/scripts/remote.sh 'scripts/push-all.sh'   (it runs on the VPS; remote.sh guards the working tree)
+# usage: scripts/remote.sh 'scripts/push-all.sh'   (it runs on the VPS; remote.sh guards the working tree)
 # Pushes every workflow in dependency order (WFID: needs the called workflow to exist already).
 #
 # The list below is the FULL project order. Workflows that are not built yet (wf1-inbound, wf2-agent,
@@ -15,10 +15,10 @@
 # and exits non-zero if one does not.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# Run it through medspa-front-desk/scripts/remote.sh, which refuses when workflows/ or scripts/ have
+# Run it through scripts/remote.sh, which refuses when workflows/ or scripts/ have
 # uncommitted changes (--force-dirty to override) and sets PUSH_ALL_CHECKED. Without that check whatever
 # half-finished file sits in somebody's working tree would replace the live workflow.
-[ "${PUSH_ALL_CHECKED:-}" = "1" ] || { echo "push-all.sh: run it via medspa-front-desk/scripts/remote.sh (it checks the working tree is committed first)" >&2; exit 1; }
+[ "${PUSH_ALL_CHECKED:-}" = "1" ] || { echo "push-all.sh: run it via scripts/remote.sh (it checks the working tree is committed first)" >&2; exit 1; }
 source deploy/secrets.env
 # Fresh server: nothing has written these yet, and the jq reads below would abort under set -e (same guard as n8n-push.sh).
 [ -f deploy/workflow-ids.json ]     || echo '{}' > deploy/workflow-ids.json

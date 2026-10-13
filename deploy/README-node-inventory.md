@@ -25,13 +25,13 @@ that could not be instantiated (only `EvaluationTrigger`, which the project does
 
 ## How it was generated
 
-Run from the repository root. The script is `deploy/node-inventory.gen.js`; it
+Run from the project root. The script is `deploy/node-inventory.gen.js`; it
 is piped into `node` inside the container, which loads every node file listed in
 the `n8n` field of the `n8n-nodes-base` and `@n8n/n8n-nodes-langchain` package.json
 files and prints JSON for the wanted types:
 
 ```
-ssh medspa 'cd /opt/medspa/deploy && docker compose exec -T n8n node -' < medspa-front-desk/deploy/node-inventory.gen.js > medspa-front-desk/deploy/node-inventory.json
+ssh medspa 'cd /opt/medspa/deploy && docker compose exec -T n8n node -' < deploy/node-inventory.gen.js > deploy/node-inventory.json
 ```
 
 Regenerate after every change of `N8N_VERSION`.

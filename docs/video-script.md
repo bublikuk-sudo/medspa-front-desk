@@ -24,7 +24,7 @@ client name, and crop or blur the phone's own number and the WhatsApp header if 
   the default 24 hours a visit booked today for tomorrow is reminded only if it was booked a full day ahead. After the
   booking shots, use the method of the live tests: set `Settings.reminder_hours_before` to `1` (the visit booked a
   moment ago for tomorrow is then due at once), then run WF-5 with
-  `medspa-front-desk/scripts/remote.sh 'scripts/n8n-run.sh wf5-reminders'`.
+  `scripts/remote.sh 'scripts/n8n-run.sh wf5-reminders'`.
   **Set `reminder_hours_before` back to `24` straight after**, and do this only when no real client has a visit
   tomorrow or in the next hour: with the value 1 the run reminds every such visit booked an hour or more ahead.
 - On WhatsApp the reminder goes out as the approved template `medspa_reminder`, so it arrives whether or not the

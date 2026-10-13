@@ -11,7 +11,7 @@
 # file (default /opt/medspa/templates/messages.en.json), another confirm_booking file (default
 # /opt/medspa/workflows/wf3-tools/confirm_booking.json) and another WF-1 file (default /opt/medspa/workflows/wf1-inbound.json).
 # The JSON is piped in whole (no jq), so it also runs from the workstation, piped into the container's Node over ssh, from
-# medspa-front-desk/:
+# the project root:
 #   { printf 'const WF = '; cat workflows/shared/send_message.json; printf ';\nconst TEMPLATES = '; cat templates/messages.en.json; printf ';\nconst CONFIRM = '; cat workflows/wf3-tools/confirm_booking.json; printf ';\nconst WF1 = '; cat workflows/wf1-inbound.json; printf ';\n'; cat tests/send-message-stubs.js; } | ssh medspa 'cd /opt/medspa/deploy && docker compose exec -T n8n node -'
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"

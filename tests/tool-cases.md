@@ -9,13 +9,13 @@ sub-workflow with Execute Workflow.
 
 ## Running
 
-From the repository root:
+From the project root:
 
 ```
-medspa-front-desk/scripts/remote.sh 'tests/tool-cases.sh'              # all cases
-medspa-front-desk/scripts/remote.sh 'tests/tool-cases.sh <case name>'  # one case
-medspa-front-desk/scripts/remote.sh 'tests/run-case.sh <workflow name> '"'"'<json>'"'"''   # one ad-hoc call
-medspa-front-desk/scripts/remote.sh 'tests/cleanup.sh'                 # remove test data
+scripts/remote.sh 'tests/tool-cases.sh'              # all cases
+scripts/remote.sh 'tests/tool-cases.sh <case name>'  # one case
+scripts/remote.sh 'tests/run-case.sh <workflow name> '"'"'<json>'"'"''   # one ad-hoc call
+scripts/remote.sh 'tests/cleanup.sh'                 # remove test data
 ```
 
 `tests/run-case.sh <workflow name> '<json>'` looks the workflow id up by name in

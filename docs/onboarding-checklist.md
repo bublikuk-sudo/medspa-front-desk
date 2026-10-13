@@ -6,7 +6,7 @@ targets: a complete deployment on a fresh server has not been timed end to end y
 
 Conventions: the scripts in `scripts/` run on the server. `scripts/remote.sh '<command>'` copies the project folders to
 `/opt/medspa` on the server and runs the command there over SSH (it expects an SSH host alias `medspa`). Run it from
-the repository root as `medspa-front-desk/scripts/remote.sh`. Never put a secret value in a command line, a commit, a
+the project root as `scripts/remote.sh`. Never put a secret value in a command line, a commit, a
 chat or a ticket; values go only into `deploy/.env` and `deploy/secrets.env` on the server.
 
 ## Before the 30 minutes (lead-time items)
@@ -84,7 +84,7 @@ Every account is the clinic's, registered on the clinic's card (see "Handover" b
 
 ### 3. Credentials (5 min)
 
-- [ ] `medspa-front-desk/scripts/remote.sh 'scripts/n8n-credentials.sh'`: creates eight credentials (`MedSpa
+- [ ] `scripts/remote.sh 'scripts/n8n-credentials.sh'`: creates eight credentials (`MedSpa
       Anthropic`, `MedSpa OpenAI`, `MedSpa Airtable`, `MedSpa Telegram`, `MedSpa WhatsApp`, `MedSpa WhatsApp Trigger`,
       `MedSpa Postgres`, `MedSpa Test Key`) and records their ids in `deploy/credentials.map.json`. A credential with a
       missing value prints `skipped (no value)`; fill it and re-run.
@@ -94,9 +94,9 @@ Every account is the clinic's, registered on the clinic's card (see "Handover" b
 
 ### 4. Clinic data (5 min)
 
-- [ ] `medspa-front-desk/scripts/remote.sh 'scripts/airtable-schema.sh'` (scripted path; resumable, safe to re-run).
+- [ ] `scripts/remote.sh 'scripts/airtable-schema.sh'` (scripted path; resumable, safe to re-run).
 - [ ] Edit `airtable/seed/settings.json`, `services.json` and `knowledge.json` for the clinic, then
-      `medspa-front-desk/scripts/remote.sh 'scripts/airtable-seed.sh'`. The seed fills `calendar_id`,
+      `scripts/remote.sh 'scripts/airtable-seed.sh'`. The seed fills `calendar_id`,
       `owner_contact` and `whatsapp_number` from `secrets.env`. Settings is skipped when a row exists, so later changes
       are made in Airtable.
 - [ ] **Settings**: `business_name`, `timezone`, `working_hours`, `calendar_id`, `owner_contact`, `whatsapp_number`,
@@ -118,16 +118,16 @@ Every account is the clinic's, registered on the clinic's card (see "Handover" b
 
 - [ ] Commit or stash local changes first: `remote.sh` refuses to run `push-all.sh` when `workflows/` or `scripts/`
       have uncommitted changes.
-- [ ] `medspa-front-desk/scripts/remote.sh 'scripts/push-all.sh'`: pushes every workflow in dependency order (two
+- [ ] `scripts/remote.sh 'scripts/push-all.sh'`: pushes every workflow in dependency order (two
       passes), activates the triggers and WF-6, and verifies each workflow carries WF-6 as its error workflow. Expect
       `push-all done`.
 - [ ] Brand-new instance only (not yet exercised): n8n 2.41.5 refuses to activate a workflow whose Execute Workflow
       node or error workflow points at a workflow with no published version, and `push-all.sh` does not activate the
       tool sub-workflows. If an activation fails with "references workflow ... which is not published" or "has no
       published version", activate the called workflows first, in `push-all.sh`'s order up to `wf2-agent`:
-      `medspa-front-desk/scripts/remote.sh 'scripts/n8n-push.sh workflows/<path>.json --activate'` for each, then run
+      `scripts/remote.sh 'scripts/n8n-push.sh workflows/<path>.json --activate'` for each, then run
       `push-all.sh` again.
-- [ ] Knowledge index: `medspa-front-desk/scripts/remote.sh 'scripts/n8n-run.sh wf4-knowledge-ingest'` (or open
+- [ ] Knowledge index: `scripts/remote.sh 'scripts/n8n-run.sh wf4-knowledge-ingest'` (or open
       `wf4-knowledge-ingest` in the n8n editor and run it once). The owner gets "Knowledge base re-indexed". Otherwise
       the daily run (06:35 UTC) builds the index the next morning and the bot answers NOT_FOUND until then.
 - [ ] Telegram: activating `wf1-inbound` sets the bot's webhook; nothing else to do.
@@ -155,7 +155,7 @@ What changes per client: one Settings row, the Services and Knowledge tables, an
 - [ ] **Airtable Interface** for the owner (about 10 minutes): follow [airtable-interface.md](airtable-interface.md),
       including its **Step 0**, three Lookup fields in `Appointments` created by hand in the UI (the Airtable API cannot
       create lookup fields, so `airtable-schema.sh` does not).
-- [ ] Optional full regression on the clinic's server: `medspa-front-desk/scripts/remote.sh 'tests/tool-cases.sh'`.
+- [ ] Optional full regression on the clinic's server: `scripts/remote.sh 'tests/tool-cases.sh'`.
       It uses test contacts and 2030 dates and cleans up after itself, but the owner receives real Telegram alerts
       during the run.
 - [ ] **Marketing consent for revisits.** WF-5 sends the revisit invitation (the MARKETING template on WhatsApp) only
@@ -166,7 +166,7 @@ What changes per client: one Settings row, the Services and Knowledge tables, an
       on the next daily run (one per client, for the newest due visit; the older due visits are marked with it).
       Unticking it stops further invitations.
 - [ ] **Knowledge edits are re-indexed by hand.** After the clinic changes the Knowledge table, run
-      `medspa-front-desk/scripts/remote.sh 'scripts/n8n-run.sh wf4-knowledge-ingest'`; the owner gets "Knowledge base
+      `scripts/remote.sh 'scripts/n8n-run.sh wf4-knowledge-ingest'`; the owner gets "Knowledge base
       re-indexed: N paragraphs". Without it the bot uses the old text until the daily WF-4 run (06:35 UTC) repairs the
       index. Tell the clinic who does this.
 - [ ] Spend limits confirmed on Anthropic and OpenAI; Airtable plan chosen: paid for a real clinic (Free only for a
@@ -198,12 +198,12 @@ Then:
 - [ ] Update `deploy/secrets.env` on the server with the same new values, so the scripts stay in sync (`N8N_API_KEY`
       and `TEST_KEY` are read by the scripts and tests directly; the others are what a later re-create would use).
 - [ ] Re-register the webhooks with the new Telegram token and Meta app secret: deactivate and re-activate
-      `wf1-inbound`, `medspa-front-desk/scripts/remote.sh 'scripts/n8n-push.sh workflows/wf1-inbound.json --deactivate
+      `wf1-inbound`, `scripts/remote.sh 'scripts/n8n-push.sh workflows/wf1-inbound.json --deactivate
       && scripts/n8n-push.sh workflows/wf1-inbound.json --activate'`. Deactivation removes the Meta app subscription and
       activation registers it and the Telegram webhook again; the bot is offline for those seconds.
 - [ ] Alternative, if you prefer re-creating: remove the rotated credentials' entries from
       `deploy/credentials.map.json`, re-run `scripts/n8n-credentials.sh` (new ids are written to the map), run
-      `medspa-front-desk/scripts/remote.sh 'scripts/push-all.sh'` (it re-pushes every workflow, binding credentials
+      `scripts/remote.sh 'scripts/push-all.sh'` (it re-pushes every workflow, binding credentials
       by name to the ids in the map, and re-activates the trigger workflows), check `push-all done`, then delete the
       old credentials in the n8n UI.
 - [ ] Re-authorise `MedSpa Google Calendar` in the n8n UI with the clinic's Google account (in place; same id).
