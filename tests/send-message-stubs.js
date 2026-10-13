@@ -3,7 +3,9 @@
 // and for the client's language (mini-task B): dates, times and units in the client's language, the agent-reply English
 // guard, the Translate prompt, and confirm_booking's SLOT_TAKEN alternatives;
 // and for the translation quality (mini-task C): one formal register from Render's map, grammar around the inserted
-// values, service names.
+// values, service names;
+// and for the brand protection (mini-task E): Settings.untranslated_terms masked through Translate and restored by Merge Text,
+// the Translate Again fallback, and the cancellation-window sentences.
 // Runs in a Node (see tests/send-message-stubs.sh), which prepends:
 //   const WF = <workflows/shared/send_message.json>;  const TEMPLATES = <templates/messages.en.json>;
 //   const CONFIRM = <workflows/wf3-tools/confirm_booking.json>;  const WF1 = <workflows/wf1-inbound.json>;
@@ -83,21 +85,21 @@ const render = (template_key, over = {}) => {
 };
 const R = (name, key, want, over) => { try { const t = render(key, over); check(name, t === want, t); } catch (e) { check(name, false, String(e.message)); } };
 const THROWS = (name, key, re, over) => { try { const t = render(key, over); check(name, false, 'rendered: ' + t); } catch (e) { check(name, re.test(String(e.message)), String(e.message)); } };
-R('PENDING_SUMMARY states the cancellation policy before "Reply YES to confirm"', 'PENDING_SUMMARY', 'Botox (30 min) — Mon, Jan 7, 12:00 PM. Free cancellation up to 24 hours before. Reply YES to confirm.');
+R('PENDING_SUMMARY states the cancellation policy before "Reply YES to confirm"', 'PENDING_SUMMARY', 'Botox (30 min) — Mon, Jan 7, 12:00 PM. You can cancel free of charge no later than 24 hours before the visit. Reply YES to confirm.');
 THROWS('PENDING_SUMMARY without Settings.cancellation_hours throws (REQ)', 'PENDING_SUMMARY', /PENDING_SUMMARY needs "cancellation_hours"/, { settings: { ...SETTINGS, cancellation_hours: undefined } });
-R('PENDING_SUMMARY with cancellation_hours 0 still renders (0 is a value)', 'PENDING_SUMMARY', 'Botox (30 min) — Mon, Jan 7, 12:00 PM. Free cancellation up to 0 hours before. Reply YES to confirm.', { settings: { ...SETTINGS, cancellation_hours: 0 } });
+R('PENDING_SUMMARY with cancellation_hours 0 still renders (0 is a value)', 'PENDING_SUMMARY', 'Botox (30 min) — Mon, Jan 7, 12:00 PM. You can cancel free of charge no later than 0 hours before the visit. Reply YES to confirm.', { settings: { ...SETTINGS, cancellation_hours: 0 } });
 // Owner addition 2026-10-08: the booking confirmation says how to cancel AND the free-cancellation rule, in the same message.
-R('BOOKED names how to cancel and the free-cancellation rule (Settings.cancellation_hours)', 'BOOKED', "You're booked: Botox (30 min) — Mon, Jan 7, 12:00 PM. We'll send you a reminder the day before. To change or cancel, just message me here — cancellation is free up to 24 hours before your visit.");
+R('BOOKED names how to cancel and the free-cancellation rule (Settings.cancellation_hours)', 'BOOKED', "You're booked: Botox (30 min) — Mon, Jan 7, 12:00 PM. We'll send you a reminder the day before. To change or cancel, just message me here; you can cancel free of charge no later than 24 hours before your visit.");
 // P1 ruling 2026-10-08: WF-5 runs daily and reminds the day before, so BOOKED no longer quotes reminder_hours_before and
 // REQ.BOOKED does not require it.
-R('BOOKED renders without Settings.reminder_hours_before (REQ.BOOKED no longer needs reminder_hours)', 'BOOKED', "You're booked: Botox (30 min) — Mon, Jan 7, 12:00 PM. We'll send you a reminder the day before. To change or cancel, just message me here — cancellation is free up to 24 hours before your visit.", { settings: { ...SETTINGS, reminder_hours_before: undefined } });
+R('BOOKED renders without Settings.reminder_hours_before (REQ.BOOKED no longer needs reminder_hours)', 'BOOKED', "You're booked: Botox (30 min) — Mon, Jan 7, 12:00 PM. We'll send you a reminder the day before. To change or cancel, just message me here; you can cancel free of charge no later than 24 hours before your visit.", { settings: { ...SETTINGS, reminder_hours_before: undefined } });
 check('BOOKED template has no {reminder_hours} placeholder', !/\{reminder_hours\}/.test(TEMPLATES.BOOKED || ''), TEMPLATES.BOOKED);
 THROWS('BOOKED without Settings.cancellation_hours throws (REQ)', 'BOOKED', /BOOKED needs "cancellation_hours"/, { settings: { ...SETTINGS, cancellation_hours: undefined } });
 R('CANCEL_PENDING asks for YES, built from the row', 'CANCEL_PENDING', 'Cancel your Botox on Mon, Jan 7, 12:00 PM? Reply YES to cancel.');
-R('LATE_CANCEL_PENDING names the window and the late cancellation', 'LATE_CANCEL_PENDING', 'Cancel your Botox on Mon, Jan 7, 12:00 PM? This is less than 24 hours before your visit, so it will be recorded as a late cancellation. Reply YES to cancel.');
+R('LATE_CANCEL_PENDING names the window and the late cancellation', 'LATE_CANCEL_PENDING', 'Cancel your Botox on Mon, Jan 7, 12:00 PM? Free cancellation ends 24 hours before the visit, so this will be recorded as a late cancellation. Reply YES to cancel.');
 THROWS('LATE_CANCEL_PENDING without cancellation_hours throws (REQ)', 'LATE_CANCEL_PENDING', /LATE_CANCEL_PENDING needs "cancellation_hours"/, { settings: { ...SETTINGS, cancellation_hours: null } });
 R('CANCELLED confirms the cancellation', 'CANCELLED', 'Your Botox on Mon, Jan 7, 12:00 PM has been cancelled. Message me any time to book again.');
-R('LATE_CANCEL confirms it and says it is recorded as late', 'LATE_CANCEL', 'Your Botox on Mon, Jan 7, 12:00 PM has been cancelled. It was less than 24 hours before the visit, so it is recorded as a late cancellation. Message me any time to book again.');
+R('LATE_CANCEL confirms it and says it is recorded as late', 'LATE_CANCEL', 'Your Botox on Mon, Jan 7, 12:00 PM has been cancelled. Free cancellation ends 24 hours before the visit, so it is recorded as a late cancellation. Message me any time to book again.');
 THROWS('LATE_CANCEL without cancellation_hours throws (REQ)', 'LATE_CANCEL', /LATE_CANCEL needs "cancellation_hours"/, { settings: { ...SETTINGS, cancellation_hours: '' } });
 for (const k of ['CANCEL_PENDING', 'LATE_CANCEL_PENDING', 'CANCELLED', 'LATE_CANCEL']) {
   THROWS(k + ' without a visit (no service, no time) throws instead of sending an empty question', k, /needs "(service|when)"/, { appt: {} });
@@ -141,7 +143,7 @@ const run = (o = {}) => {
     Settings: { id: 'recS', fields: { ...SETTINGS, business_name: 'Glow Aesthetics Med-Spa', ...(o.settings || {}) } },
     Client: { id: 'recC', fields: { client_id: 'C-test-1', language: o.language === undefined ? 'en' : o.language, name: 'Carl' } },
     Appointment: { id: 'recA', fields: { appt_id: 'A-1', client_id: 'C-test-1', service_id: 'consult', start_iso: o.start_iso || '2026-10-12T10:30:00+02:00', next_visit_in: 30 } },
-    Services: [{ id: 'recV', fields: { service_id: 'consult', name: 'Consultation', duration_min: 20 } }],
+    Services: [{ id: 'recV', fields: { service_id: 'consult', name: o.service_name || 'Consultation', duration_min: 20 } }],
   };
   const $ = (n) => { const v = nodes[n]; const arr = Array.isArray(v) ? v : [v]; return { first: () => ({ json: arr[0] }), all: () => arr.map((json) => ({ json })) }; };
   return new Function('$', 'DateTime', CODE.render)($, DateTimeStub)[0].json;
@@ -154,30 +156,30 @@ const L = (name, o, want, wantTr) => {
 };
 // The owner's booking (2026-10-12 10:30 Berlin, a 20-minute consultation, 24-hour free cancellation) in each language.
 L('lang en: PENDING_SUMMARY unchanged for an English client (12-hour clock), not translated', { key: 'PENDING_SUMMARY', language: 'en' },
-  'Consultation (20 min) — Mon, Oct 12, 10:30 AM. Free cancellation up to 24 hours before. Reply YES to confirm.', false);
+  'Consultation (20 min) — Mon, Oct 12, 10:30 AM. You can cancel free of charge no later than 24 hours before the visit. Reply YES to confirm.', false);
 L('lang de: PENDING_SUMMARY date, time (24h) and units in German before translation', { key: 'PENDING_SUMMARY', language: 'de' },
-  'Consultation (20 Min.) — Mo., 12. Okt., 10:30. Free cancellation up to 24 Stunden before. Reply JA to confirm.', true);
+  'Consultation (20 Min.) — Mo., 12. Okt., 10:30. You can cancel free of charge no later than 24 Stunden before the visit. Reply JA to confirm.', true);
 L('lang es: PENDING_SUMMARY in Spanish', { key: 'PENDING_SUMMARY', language: 'es' },
-  'Consultation (20 min) — lun, 12 oct, 10:30. Free cancellation up to 24 horas before. Reply SÍ to confirm.', true);
+  'Consultation (20 min) — lun, 12 oct, 10:30. You can cancel free of charge no later than 24 horas before the visit. Reply SÍ to confirm.', true);
 L('lang ru: PENDING_SUMMARY in Russian (the owner\'s case: no "Oct", "AM", "min", "hours" left for the translator to keep)', { key: 'PENDING_SUMMARY', language: 'ru' },
-  'Consultation (20 мин) — пн, 12 окт., 10:30. Free cancellation up to 24 часа before. Reply ДА to confirm.', true);
+  'Consultation (20 мин) — пн, 12 окт., 10:30. You can cancel free of charge no later than 24 часа before the visit. Reply ДА to confirm.', true);
 L('lang pl (no special handling anywhere in the code, ICU alone): Polish date and plural', { key: 'PENDING_SUMMARY', language: 'pl' },
-  'Consultation (20 min) — pon., 12 paź, 10:30. Free cancellation up to 24 godziny before. Reply TAK to confirm.', true);
+  'Consultation (20 min) — pon., 12 paź, 10:30. You can cancel free of charge no later than 24 godziny before the visit. Reply TAK to confirm.', true);
 L('lang xx (unknown to ICU): falls back to English formatting, no throw (still sent for translation)', { key: 'PENDING_SUMMARY', language: 'xx' },
-  'Consultation (20 min) — Mon, Oct 12, 10:30 AM. Free cancellation up to 24 hours before. Reply YES to confirm.', true);
+  'Consultation (20 min) — Mon, Oct 12, 10:30 AM. You can cancel free of charge no later than 24 hours before the visit. Reply YES to confirm.', true);
 L('lang "e n!" (not a language tag): falls back to English formatting, no throw', { key: 'CANCEL_PENDING', language: 'e n!' },
   'Cancel your Consultation on Mon, Oct 12, 10:30 AM? Reply YES to cancel.');
 L('lang ru: BOOKED (the owner saw "Mon, Oct 12, 10:30 AM" and "24 hours" in it)', { key: 'BOOKED', language: 'ru' },
-  "You're booked: Consultation (20 мин) — пн, 12 окт., 10:30. We'll send you a reminder the day before. To change or cancel, just message me here — cancellation is free up to 24 часа before your visit.", true);
+  "You're booked: Consultation (20 мин) — пн, 12 окт., 10:30. We'll send you a reminder the day before. To change or cancel, just message me here; you can cancel free of charge no later than 24 часа before your visit.", true);
 L('lang ru: CANCEL_PENDING', { key: 'CANCEL_PENDING', language: 'ru' }, 'Cancel your Consultation on пн, 12 окт., 10:30? Reply ДА to cancel.', true);
 L('lang ru: CANCELLED', { key: 'CANCELLED', language: 'ru' }, 'Your Consultation on пн, 12 окт., 10:30 has been cancelled. Message me any time to book again.', true);
 L('lang de: CANCELLED', { key: 'CANCELLED', language: 'de' }, 'Your Consultation on Mo., 12. Okt., 10:30 has been cancelled. Message me any time to book again.', true);
 L('lang es: LATE_CANCEL_PENDING names the window in Spanish', { key: 'LATE_CANCEL_PENDING', language: 'es' },
-  'Cancel your Consultation on lun, 12 oct, 10:30? This is less than 24 horas before your visit, so it will be recorded as a late cancellation. Reply SÍ to cancel.', true);
+  'Cancel your Consultation on lun, 12 oct, 10:30? Free cancellation ends 24 horas before the visit, so this will be recorded as a late cancellation. Reply SÍ to cancel.', true);
 L('lang ru: LATE_CANCEL with a 1-hour window uses the singular ("1 час")', { key: 'LATE_CANCEL', language: 'ru', settings: { cancellation_hours: 1 } },
-  'Your Consultation on пн, 12 окт., 10:30 has been cancelled. It was less than 1 час before the visit, so it is recorded as a late cancellation. Message me any time to book again.', true);
+  'Your Consultation on пн, 12 окт., 10:30 has been cancelled. Free cancellation ends 1 час before the visit, so it is recorded as a late cancellation. Message me any time to book again.', true);
 L('lang en: LATE_CANCEL with a 1-hour window says "1 hour"', { key: 'LATE_CANCEL', language: 'en', settings: { cancellation_hours: 1 } },
-  'Your Consultation on Mon, Oct 12, 10:30 AM has been cancelled. It was less than 1 hour before the visit, so it is recorded as a late cancellation. Message me any time to book again.', false);
+  'Your Consultation on Mon, Oct 12, 10:30 AM has been cancelled. Free cancellation ends 1 hour before the visit, so it is recorded as a late cancellation. Message me any time to book again.', false);
 L('lang ru: EXPIRED states the hold time in Russian', { key: 'EXPIRED', language: 'ru' },
   "That offer has expired (we hold offers for 15 минут). Tell me the service and day again and I'll check availability.", true);
 L('lang en: EXPIRED unchanged', { key: 'EXPIRED', language: 'en' },
@@ -285,7 +287,8 @@ L('agent reply for an English client: never touched', { language: 'en', text: 'O
 
 // ---- Translate: everything into the client's language except names, links, ids and the clinic's name; English fallback on failure ----
 const tr = node('Translate'); const trText = String((tr.parameters || {}).text || '');
-check('Translate prompt: target language, the text and the clinic name come from Render', /\{\{ \$json\.language \}\}/.test(trText) && /\{\{ \$json\.text \}\}/.test(trText) && /\{\{ \$json\.brand \}\}/.test(trText), trText);
+// Mini-task E: the translator gets Render's masked_text (the protected terms replaced by tokens), never the plain text.
+check('Translate prompt: target language, the text (masked_text, E) and the clinic name come from Render', /\{\{ \$json\.language \}\}/.test(trText) && /\{\{ \$json\.masked_text \}\}/.test(trText) && !/\$json\.text\b/.test(trText) && /\{\{ \$json\.brand \}\}/.test(trText), trText);
 check('Translate prompt no longer tells the model to keep dates, times and numbers "exactly as written" (the cause of "пн, Oct 12, 10:30 AM")', !/Keep names, dates, times, numbers/.test(trText), trText);
 check('Translate prompt keeps the reply words Render chose exactly as written (I-2: the translation never picks them)',
   /Leave exactly as written: the reply words \{\{ \$json\.yes_word \}\} and \{\{ \$json\.no_word \}\}/.test(trText) && !/one-word/.test(trText), trText);
@@ -313,8 +316,15 @@ try {
 } catch (e) { check('I-2 REMINDER path', false, String(e.message)); }
 check('Translate prompt: every word is translated, including any sentence in another language (B\'s goal: no English reaches a non-English client)',
   /Translate every word into that language/.test(trText) && /any sentence that is in another language/.test(trText), trText);
-check('translation failure keeps the English text: Translate continues on error and Merge Text falls back to Render\'s text',
-  tr.onError === 'continueRegularOutput' && /\$\('Render'\)\.first\(\)\.json\.text/.test(String((((node('Merge Text').parameters || {}).assignments || {}).assignments || [])[0].value)), [tr.onError]);
+// Merge Text is a Code node since mini-task E (it restores the protected terms); the failure contract is checked by running it.
+const runNode = (name, renderJson, inJson) => new Function('$', '$input', (node(name).parameters || {}).jsCode)(
+  (n) => ({ first: () => ({ json: n === 'Render' ? renderJson : undefined }) }), { first: () => ({ json: inJson }) })[0].json;
+try {
+  const j = run({ key: 'CANCELLED', language: 'ru' });
+  const m = runNode('Merge Text', j, { error: 'Request failed with status code 529' });
+  check('translation failure keeps the English text: Translate continues on error and Merge Text falls back to Render\'s text',
+    tr.onError === 'continueRegularOutput' && m.text === j.text && m.retranslate === false, [tr.onError, m]);
+} catch (e) { check('translation failure keeps the English text (Merge Text)', false, String(e.message)); }
 
 // ---- Translation quality (mini-task C, 2026-10-12): one register, grammar around the inserted values, service names ----
 // Live proof of B (tests/dialog-runs/2026-10-12-client-language-tg.md, findings 2-6): every template is translated by its own
@@ -442,7 +452,7 @@ D('D ru + the English planning line (execution 28237): the line is dropped, the 
 // The first reply can be a template (the agent proposed at once: PENDING_SUMMARY; or escalated: ESCALATED_REPLY; or ERROR):
 // a template never names AI, so the sentence goes before it; it is translated anyway, no extra call.
 D('D es PENDING_SUMMARY as the first reply: sentence + summary, translated as every es template is', { key: 'PENDING_SUMMARY', language: 'es', ai_disclosure: 'true' },
-  (j) => j.text === firstPara(j.text) + '\n\nConsultation (20 min) — lun, 12 oct, 10:30. Free cancellation up to 24 horas before. Reply SÍ to confirm.' && hasAI('es', firstPara(j.text)) && j.needs_translation === true);
+  (j) => j.text === firstPara(j.text) + '\n\nConsultation (20 min) — lun, 12 oct, 10:30. You can cancel free of charge no later than 24 horas before the visit. Reply SÍ to confirm.' && hasAI('es', firstPara(j.text)) && j.needs_translation === true);
 D('D en ESCALATED_REPLY as the first reply: sentence + template, not translated', { key: 'ESCALATED_REPLY', language: 'en', ai_disclosure: 'true' },
   (j) => j.text === EN_SENTENCE + "\n\nI've passed this to our team — a team member will contact you shortly." && j.needs_translation === false);
 D('D the clinic\'s own name does not count ("KI Beauty" for a de client): the sentence is added', { language: 'de', text: 'Willkommen bei KI Beauty! Welche Behandlung möchten Sie?', ai_disclosure: 'true', settings: { business_name: 'KI Beauty' } },
@@ -452,5 +462,157 @@ D('D a name that contains AI does not hide a real disclosure ("AI Skin", en: "I\
 D('D an empty reply stays empty (Format still refuses to send nothing; the sentence is not sent alone)', { language: 'es', text: '', ai_disclosure: 'true' },
   (j) => j.text === '' && j.ai_fallback === false);
 check('D: send_message\'s Trigger declares the input ai_disclosure (string)', ((((node('Trigger').parameters || {}).workflowInputs || {}).values) || []).some((v) => v.name === 'ai_disclosure' && v.type === 'string'), 'missing');
+
+// ---- Brand protection (mini-task E, owner 2026-10-13): the protected terms never reach the translator ----
+// Live proof of C+D (tests/dialog-runs/2026-10-13-translation-quality-tg.md): ru run 2 PENDING_SUMMARY "Ботокс (30 мин)" although
+// the Translate prompt says to keep brand names. Render now replaces every Settings.untranslated_terms term in the text it
+// sends to Translate with a token (masked_text, terms); Merge Text puts the terms back and accepts the translation only when
+// every token came back exactly as often as it was sent and no token is left. Otherwise Retranslate? sends the plain text
+// through Translate Again (same prompt, one more Haiku call) and Merge Again accepts that only when every term is in it;
+// the last resort is Render's text (English, the names intact), as on a failed translation.
+const TERMS = { untranslated_terms: 'Botox, HydraFacial' };
+const tok = (i) => '⟦' + i + '⟧';
+const retrLeft = ((((node('Retranslate?').parameters || {}).conditions || {}).conditions || [])[0] || {}).leftValue;
+const retr = (m) => new Function('$json', 'return (' + body(String(retrLeft)) + ');')(m) === true;
+// The whole path after Render. `first` and `again` stand for the two Haiku calls: each gets the text its prompt carries
+// ({{ $json.masked_text }} of its input item) and returns a simulated translation; `again` undefined = Translate Again failed.
+const pipeline = (j, first, again) => {
+  if (!j.needs_translation) { const m = runNode('Merge Text', j, j); return { text: m.text, calls: 0, retr: retr(m) }; }
+  const m = runNode('Merge Text', j, { text: first(j.masked_text) });
+  if (!retr(m)) return { text: m.text, calls: 1 };
+  const a = runNode('Merge Again', j, again ? { text: again(m.masked_text) } : { error: 'Request failed with status code 529' });
+  return { text: a.text, calls: 2, item: m };
+};
+const E = (name, f) => { try { const r = f(); check(name, r === true, r); } catch (e) { check(name, false, String(e.message)); } };
+const RU_SUMMARY = (t) => t.replace(/ You can cancel.*$/, ' Вы можете бесплатно отменить запись не позднее чем за 24 часа до визита. Для подтверждения ответьте ДА.');
+const RU_DONE = 'Botox (20 мин) — пн, 12 окт., 10:30. Вы можете бесплатно отменить запись не позднее чем за 24 часа до визита. Для подтверждения ответьте ДА.';
+const sum = (o = {}) => run({ key: 'PENDING_SUMMARY', language: 'ru', service_name: 'Botox', settings: TERMS, ...o });
+E('E round trip (ru PENDING_SUMMARY, the live finding): Botox -> ⟦1⟧ for the translator, Cyrillic around the token, Botox restored, one Haiku call', () => {
+  const j = sum(); const p = pipeline(j, RU_SUMMARY);
+  return (j.masked_text === j.text.replace('Botox', tok(1)) && !j.masked_text.includes('Botox') && JSON.stringify(j.terms) === '["Botox"]' && p.text === RU_DONE && p.calls === 1) || { j, p };
+});
+E('E agent reply with a leaked English line (ru, execution 28237 shape) + a term inside a hyphenated compound: "Botox-процедуру" masked and restored', () => {
+  const j = run({ language: 'ru', settings: TERMS, text: 'They want Botox, so I should ask which day they would like.\nКогда вам удобно прийти на Botox-процедуру?' });
+  const p = pipeline(j, (t) => t);
+  return (j.needs_translation === true && j.text === 'Когда вам удобно прийти на Botox-процедуру?' && j.masked_text === 'Когда вам удобно прийти на ' + tok(1) + '-процедуру?' &&
+    p.text === 'Когда вам удобно прийти на Botox-процедуру?' && p.calls === 1) || { j, p };
+});
+E('E two terms in one text (wholly English services list for a ru client): ⟦1⟧ HydraFacial, ⟦2⟧ Botox, inside **bold**, both restored', () => {
+  const j = run({ language: 'ru', settings: TERMS, text: EN_LIST });
+  const p = pipeline(j, (t) => t.replace('Here are our services:', 'Вот наши услуги:').replace(/ min /g, ' мин ').replace('Which one would you like to book?', 'Что вы хотели бы забронировать?'));
+  return (JSON.stringify(j.terms) === '["HydraFacial","Botox"]' && j.masked_text === 'Here are our services:\n**' + tok(1) + '** — 60 min — $200\n**' + tok(2) + '** — 30 min — $350\nWhich one would you like to book?' &&
+    p.text === 'Вот наши услуги:\n**HydraFacial** — 60 мин — $200\n**Botox** — 30 мин — $350\nЧто вы хотели бы забронировать?' && p.calls === 1) || { j, p };
+});
+E('E a term that appears twice (de agent reply): one token, sent twice, restored twice (also inside "⟦1⟧-Behandlung")', () => {
+  const j = run({ language: 'de', settings: TERMS, text: 'Botox takes about 30 minutes. After your Botox, please avoid sport for a day.' });
+  const p = pipeline(j, () => tok(1) + ' dauert etwa 30 Minuten. Bitte verzichten Sie nach Ihrer ' + tok(1) + '-Behandlung einen Tag lang auf Sport.');
+  return (j.masked_text === tok(1) + ' takes about 30 minutes. After your ' + tok(1) + ', please avoid sport for a day.' && JSON.stringify(j.terms) === '["Botox"]' &&
+    p.text === 'Botox dauert etwa 30 Minuten. Bitte verzichten Sie nach Ihrer Botox-Behandlung einen Tag lang auf Sport.' && p.calls === 1) || { j, p };
+});
+for (const [label, settings] of [['empty', { untranslated_terms: '' }], ['missing (no such field in the row)', {}], ['only commas and spaces', { untranslated_terms: ' , ,' }]]) {
+  E('E untranslated_terms ' + label + ': no masking, the translation is used as it comes (today\'s behaviour, C\'s prompt line only)', () => {
+    const j = sum({ settings }); const p = pipeline(j, (t) => RU_SUMMARY(t).replace('Botox', 'Ботокс'));
+    return (j.masked_text === j.text && JSON.stringify(j.terms) === '[]' && p.text === RU_DONE.replace('Botox', 'Ботокс') && p.calls === 1) || { j, p };
+  });
+}
+// The translator does not give the tokens back as they were sent: dropped, written out in Cyrillic, duplicated, altered, invented.
+const BAD = [
+  ['drops the token', (t) => RU_SUMMARY(t).replace(tok(1) + ' ', '')],
+  ['writes the name out in Cyrillic instead of the token', (t) => RU_SUMMARY(t).replace(tok(1), 'Ботокс')],
+  ['duplicates the token', (t) => RU_SUMMARY(t).replace(tok(1), tok(1) + ' ' + tok(1))],
+  ['alters the token (⟦ 1 ⟧)', (t) => RU_SUMMARY(t).replace(tok(1), '⟦ 1 ⟧')],
+  ['adds a token it was never sent (⟦2⟧)', (t) => RU_SUMMARY(t) + ' ' + tok(2)],
+];
+for (const [label, bad] of BAD) {
+  E('E translator ' + label + ' -> Retranslate?: the plain text through Translate Again (2 calls); its good translation is sent', () => {
+    const j = sum(); const p = pipeline(j, bad, (t) => RU_SUMMARY(t));
+    return (p.calls === 2 && p.item.masked_text === j.text && p.item.masked_text.includes('Botox') && p.text === RU_DONE &&
+      ['language', 'address', 'yes_word', 'no_word', 'brand'].every((k) => p.item[k] === j[k])) || p;
+  });
+  E('E translator ' + label + ', and Translate Again loses the name too -> Render\'s text (English, names intact): no token, no lost name', () => {
+    const j = sum(); const p = pipeline(j, bad, (t) => RU_SUMMARY(t).replace('Botox', 'Ботокс'));
+    return (p.calls === 2 && p.text === j.text && p.text.includes('Botox') && !/[⟦⟧]/.test(p.text)) || p;
+  });
+  E('E translator ' + label + ', and Translate Again fails -> Render\'s text (as on any failed translation)', () => {
+    const j = sum(); const p = pipeline(j, bad, undefined);
+    return (p.calls === 2 && p.text === j.text) || p;
+  });
+}
+E('E Translate Again\'s output carrying a token is not sent (Render\'s text instead)', () => {
+  const j = sum(); const p = pipeline(j, BAD[0][1], (t) => RU_SUMMARY(t) + ' ' + tok(1));
+  return (p.text === j.text) || p;
+});
+E('E English client: nothing masked, nothing translated, Render\'s text sent as is', () => {
+  const j = sum({ language: 'en' }); const p = pipeline(j);
+  return (j.needs_translation === false && j.masked_text === j.text && JSON.stringify(j.terms) === '[]' && p.text === j.text && p.text.startsWith('Botox (20 min)') && p.calls === 0 && p.retr === false) || { j, p };
+});
+E('E WhatsApp template outside the window (ru): nothing masked, English template text as before', () => {
+  const j = run({ key: 'REMINDER', language: 'ru', service_name: 'Botox', contact_id: 'wa:+15550000104', outside_window: 'true', settings: TERMS });
+  const p = pipeline(j);
+  return (j.needs_translation === false && j.masked_text === j.text && JSON.stringify(j.terms) === '[]' && p.text === j.text && /^Reminder: Botox — Mon, Oct 12/.test(p.text)) || { j, p };
+});
+E('E agent reply in the client\'s language (no leak): not translated, nothing masked', () => {
+  const j = run({ language: 'ru', settings: TERMS, text: SERVICES_RU }); const p = pipeline(j);
+  return (j.needs_translation === false && j.masked_text === SERVICES_RU && p.text === SERVICES_RU) || { j, p };
+});
+E('E matching: whole term and case-sensitive as listed: "botox" (lower case) and "Botoxbehandlung" are not masked', () => {
+  const j = run({ language: 'de', settings: TERMS, text: 'Your botox appointment and the Botoxbehandlung are confirmed for Monday.' });
+  return (j.needs_translation === true && j.masked_text === j.text && JSON.stringify(j.terms) === '[]') || j;
+});
+E('E matching: the longer term first ("Botox Cosmetic" listed with "Botox" is one token, not ⟦1⟧ Cosmetic)', () => {
+  const j = sum({ service_name: 'Botox Cosmetic', settings: { untranslated_terms: 'Botox, Botox Cosmetic' } });
+  return (j.masked_text === j.text.replace('Botox Cosmetic', tok(1)) && JSON.stringify(j.terms) === '["Botox Cosmetic"]') || j;
+});
+E('E the clinic\'s name is not split by a listed term inside it ("Botox Studio Berlin" stays whole for the prompt\'s clinic-name rule)', () => {
+  const j = run({ key: 'REMINDER', language: 'ru', service_name: 'Botox', outside_window: 'true', settings: { ...TERMS, business_name: 'Botox Studio Berlin' } });
+  return (j.masked_text === 'Reminder: ' + tok(1) + ' — пн, 12 окт., 10:30 at Botox Studio Berlin. Reply ДА to confirm or НЕТ to cancel.' && j.brand === 'Botox Studio Berlin') || j;
+});
+E('E the clinic\'s name is masked when the clinic lists it itself', () => {
+  const j = run({ key: 'REMINDER', language: 'ru', service_name: 'Botox', outside_window: 'true', settings: { untranslated_terms: 'Botox, Glow Aesthetics Med-Spa' } });
+  return (j.masked_text === 'Reminder: ' + tok(1) + ' — пн, 12 окт., 10:30 at ' + tok(2) + '. Reply ДА to confirm or НЕТ to cancel.') || j;
+});
+E('E D: the disclosure sentence (tr, translated) keeps the clinic\'s name, only the listed term is masked; restored after the translation', () => {
+  const j = run({ language: 'tr', settings: TERMS, text: 'Merhaba! Botox için hangi gün uygun?', ai_disclosure: 'true' });
+  const p = pipeline(j, (t) => t.replace(EN_SENTENCE, "Glow Aesthetics Med-Spa'nın yapay zeka asistanıyım; dilerseniz ekibimizden biri istediğiniz an devralabilir."));
+  return (j.ai_fallback === true && j.masked_text === EN_SENTENCE + '\n\nMerhaba! ' + tok(1) + ' için hangi gün uygun?' &&
+    p.text === "Glow Aesthetics Med-Spa'nın yapay zeka asistanıyım; dilerseniz ekibimizden biri istediğiniz an devralabilir.\n\nMerhaba! Botox için hangi gün uygun?") || { j, p };
+});
+E('E B/C/D intact: with untranslated_terms set, Render\'s text, reply words, form of address, ai_fallback and needs_translation are exactly as without it', () => {
+  const diffs = [];
+  for (const key of [...Object.keys(TEMPLATES), '']) for (const language of ['en', 'ru', 'de', 'es', 'tr']) {
+    const o = { key, language, service_name: 'Botox', text: key ? '' : LEAK + '\nBotox?', ai_disclosure: 'true', vars_json: key === 'SLOT_TAKEN' ? JSON.stringify({ alternatives: '2026-10-12T11:00:00+02:00' }) : '' };
+    const a = run(o), b = run({ ...o, settings: TERMS });
+    for (const k of ['text', 'yes_word', 'no_word', 'address', 'ai_fallback', 'needs_translation', 'brand']) if (a[k] !== b[k]) diffs.push([key, language, k]);
+  }
+  return diffs.length === 0 || diffs.slice(0, 5);
+});
+E('E a client never gets a token: every translator output above, through the whole path, ends without ⟦ or ⟧', () => {
+  const bad = [];
+  for (const [label, f] of [...BAD, ['good', RU_SUMMARY]]) for (const again of [RU_SUMMARY, (t) => t + ' ' + tok(1), undefined]) {
+    const p = pipeline(sum(), f, again); if (/[⟦⟧]/.test(p.text) || !p.text.includes('Botox')) bad.push([label, p.text]);
+  }
+  return bad.length === 0 || bad;
+});
+check('E Translate prompt: one line tells the translator to copy the placeholder tokens exactly as written',
+  /Copy every placeholder token such as ⟦1⟧ exactly as written, as many times as it occurs/.test(trText), trText);
+check('E Translate prompt keeps C\'s brand line as a second line of defence (unlisted brands, lower-case names, Translate Again)',
+  /proper brand and trademark names \(for example Botox, HydraFacial\) keep their original spelling/.test(trText), trText);
+const ta = node('Translate Again');
+check('E Translate Again: the same prompt as Translate, continues on error, retried', (ta.parameters || {}).text === tr.parameters.text && ta.type === tr.type &&
+  ta.onError === 'continueRegularOutput' && ta.retryOnFail === true, [ta.onError, ta.retryOnFail]);
+const hka = node('Haiku Again');
+check('E Haiku Again: claude-haiku-4-5, the same credential as Haiku, feeds Translate Again', ((hka.parameters || {}).model || {}).value === 'claude-haiku-4-5' &&
+  JSON.stringify(hka.credentials) === JSON.stringify(node('Haiku').credentials) && ((((WF.connections['Haiku Again'] || {}).ai_languageModel || [])[0] || [])[0] || {}).node === 'Translate Again', hka);
+check('E wiring: Translate -> Merge Text; Needs Translation? false -> Merge Text; Merge Text -> Retranslate?; true -> Translate Again -> Merge Again -> Format; false -> Format',
+  out0('Translate') === 'Merge Text' && out0('Needs Translation?', 1) === 'Merge Text' && out0('Merge Text') === 'Retranslate?' && out0('Retranslate?', 0) === 'Translate Again' &&
+  out0('Translate Again') === 'Merge Again' && out0('Merge Again') === 'Format' && out0('Retranslate?', 1) === 'Format',
+  [out0('Merge Text'), out0('Retranslate?', 0), out0('Retranslate?', 1), out0('Translate Again'), out0('Merge Again')]);
+// Requirement 2: a literal translation of "{cancellation_window} before" is grammatical ("за 24 часа до визита"); "up to" /
+// "less than" / "until" before the window is what produced "до 24 часа до" and "до 24 часов до визита".
+check('E templates: no {cancellation_window} after "up to", "less than" or "until"; PENDING_SUMMARY / BOOKED say "no later than", LATE_* "ends ... before the visit"',
+  Object.values(TEMPLATES).every((t) => !/(up to|less than|until) \{cancellation_window\}/.test(t)) &&
+  ['PENDING_SUMMARY', 'BOOKED'].every((k) => /no later than \{cancellation_window\} before/.test(TEMPLATES[k])) &&
+  ['LATE_CANCEL_PENDING', 'LATE_CANCEL'].every((k) => /Free cancellation ends \{cancellation_window\} before the visit/.test(TEMPLATES[k])),
+  ['PENDING_SUMMARY', 'BOOKED', 'LATE_CANCEL_PENDING', 'LATE_CANCEL'].map((k) => TEMPLATES[k]));
 console.log('\nSEND_MESSAGE_STUBS passed ' + pass + ', failed ' + fail);
 process.exit(fail ? 1 : 0);

@@ -13,7 +13,8 @@
       { "name": "reminder_hours_before", "type": "number", "options": { "precision": 0 } },
       { "name": "pending_ttl_min", "type": "number", "options": { "precision": 0 } },
       { "name": "slot_step_min", "type": "number", "options": { "precision": 0 } },
-      { "name": "min_lead_min", "type": "number", "options": { "precision": 0 } }
+      { "name": "min_lead_min", "type": "number", "options": { "precision": 0 } },
+      { "name": "untranslated_terms", "type": "singleLineText" }
     ]},
     { "name": "Services", "fields": [
       { "name": "service_id", "type": "singleLineText" },

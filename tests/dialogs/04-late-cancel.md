@@ -17,7 +17,7 @@ notifies the owner.
 
 | # | Client writes | Expected reaction | Expected state |
 |---|---|---|---|
-| 1 | Hi, I need to cancel my appointment today, sorry. | `LATE_CANCEL_PENDING` only (the agent called `request_cancel`; its own text is replaced): the visit, "less than 24 hours", "late cancellation", "Reply YES to cancel"; nothing cancelled | still `confirmed`, the event still there, the question open (`Clients.cancel_ask_appt_id` = the visit), no owner message about a cancellation |
+| 1 | Hi, I need to cancel my appointment today, sorry. | `LATE_CANCEL_PENDING` only (the agent called `request_cancel`; its own text is replaced): the visit, "Free cancellation ends 24 hours before the visit", "late cancellation", "Reply YES to cancel"; nothing cancelled | still `confirmed`, the event still there, the question open (`Clients.cancel_ask_appt_id` = the visit), no owner message about a cancellation |
 | 2 | Yes, please cancel it. | `LATE_CANCEL` only: short non-yes/no reply -> Haiku reads it as YES -> `Cancel Visit` (cancel_booking), no agent | `late_cancel`, client `flagged`, no event, one `LATE cancellation` owner message, the question closed (the `LATE_CANCEL` send cleared the marker) |
 | 3 | What is your cancellation policy? | agent reply with the 24-hour rule from `search_knowledge` | — |
 
@@ -38,7 +38,7 @@ expect lang: en
 expect tool: request_cancel
 expect node: Send Cancel Ask
 expect no-node: Cancel Visit
-expect regex: less than 24 hours
+expect regex: free cancellation ends 24 hours before the visit
 expect regex: late cancellation
 expect regex: reply yes to cancel
 expect state: [.appts[].status] == ["confirmed"]

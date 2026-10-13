@@ -15,8 +15,8 @@ naming the row; `tests/lib/airtable.sh` `wf5_guard`).
 | 1 | Hi! I'd like to book Botox. | agent reply in English that says it is the clinic's AI assistant (EU AI Act Art. 50 ruling) and asks for the name | Clients row created, `status=new` |
 | 2 | My name is Dana Testova. | agent reply (asks for the day) | — |
 | 3 | Monday, January 7, 2030, in the morning, please. | agent lists free slots with times | the offer saved on the client |
-| 4 | The earliest one, please. | `PENDING_SUMMARY` only (the agent's own text after PENDING is suppressed), with the cancellation policy ("Free cancellation up to 24 hours before.") before "Reply YES to confirm" | Appointments `pending` |
-| 5 | YES | `BOOKED` ("We'll send you a reminder the day before", how to cancel and "cancellation is free up to 24 hours before your visit"), then `BOOKED_INTAKE` (first visit); the list YES goes to Confirm, no Agent | `booked`, event `Botox — <name>` |
+| 4 | The earliest one, please. | `PENDING_SUMMARY` only (the agent's own text after PENDING is suppressed), with the cancellation policy ("You can cancel free of charge no later than 24 hours before the visit.") before "Reply YES to confirm" | Appointments `pending` |
+| 5 | YES | `BOOKED` ("We'll send you a reminder the day before", how to cancel and "you can cancel free of charge no later than 24 hours before your visit"), then `BOOKED_INTAKE` (first visit); the list YES goes to Confirm, no Agent | `booked`, event `Botox — <name>` |
 | 6 | *(runner: `reminder_leg`)* the visit is moved to TOMORROW 11:00 local in Airtable, `reminder_hours_before = 1` behind an EXIT trap, WF-5 Run Now | `REMINDER`; on WhatsApp through the template path `medspa_reminder` (wa_template), on Telegram free-form | `reminded`, `reminder_sent_at` set; Settings restored |
 | 7 | YES | `REMINDER_CONFIRMED`; Reminder Reply, no Agent | `confirmed` |
 
@@ -45,12 +45,12 @@ expect no-regex: \b(Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*\.?,? (Jan(uary)?\.? )?7\b
 send: The earliest one, please.
 expect templates: PENDING_SUMMARY
 expect lang: en
-expect regex: free cancellation up to 24 hours before\. reply yes to confirm
+expect regex: you can cancel free of charge no later than 24 hours before the visit\. reply yes to confirm
 expect tool: propose_booking
 expect state: [.appts[].status] == ["pending"]
 send: YES
 expect templates: BOOKED, BOOKED_INTAKE
-expect regex: we.ll send you a reminder the day before\. to change or cancel, just message me here — cancellation is free up to 24 hours before your visit
+expect regex: we.ll send you a reminder the day before\. to change or cancel, just message me here; you can cancel free of charge no later than 24 hours before your visit
 expect no-regex: remind you \d+ hours before
 expect node: Confirm
 expect no-node: Agent

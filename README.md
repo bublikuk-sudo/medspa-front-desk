@@ -71,9 +71,9 @@ Shared            send_message (template with dates and units in the client's la
 
 **The client confirms, not the model.** The agent has no `confirm` tool. `propose_booking` writes a `pending` row and
 returns `PENDING <appt_id>`. WF-1 then discards whatever the agent wrote and has `send_message` render the
-`PENDING_SUMMARY` template from that row ("Botox (30 min) — Mon, Jan 7, 10:00 AM. Free cancellation up to 24 hours
-before. Reply YES to confirm."). The client's next message is checked by WF-1 before the agent sees it:
-if a live `pending` row exists and the text is a confirmation (a word list per language, then a short Haiku check for
+`PENDING_SUMMARY` template from that row ("Botox (30 min) — Mon, Jan 7, 10:00 AM. You can cancel free of charge no
+later than 24 hours before the visit. Reply YES to confirm."). The client's next message is checked by WF-1 before the
+agent sees it: if a live `pending` row exists and the text is a confirmation (a word list per language, then a short Haiku check for
 other short phrasings), n8n re-checks the calendar, creates the event and moves the row to `booked`. Any other text
 goes to the agent and the pending row expires after `pending_ttl_min`. The service can only be an existing
 `service_id` and the time only a slot from the saved offer, so the model cannot invent either, and what the client
@@ -95,7 +95,11 @@ Spanish or Russian) and `Intl.NumberFormat` units with the locale's plural rules
 `Intl` was chosen over a hand-kept word list because the n8n image's Node carries full ICU, so any language a client
 writes in is covered with no list to maintain; a language ICU does not know falls back to English. The translation
 (Claude Haiku) then translates every word except people's names, the clinic's name, links and ids; brand names (Botox,
-HydraFacial) keep their spelling, generic treatment names are translated as a clinic in that language names them. Every
+HydraFacial) keep their spelling, generic treatment names are translated as a clinic in that language names them. The
+terms listed in `Settings.untranslated_terms` (comma-separated, e.g. `Botox, HydraFacial`) never reach the translator at
+all: `send_message` replaces each with a placeholder token before the translation and puts the term back after it, so
+they arrive exactly as written in the list; when the translator mangles a token, the message is translated once more
+without tokens and is sent only if every listed term survived, otherwise the English message is sent. Every
 message uses the formal form of address (Sie, usted, vous, вы, ...) from a per-language map in `send_message`, not each
 translation's own choice, and the agent prompt asks for the same; a clinic that wants the informal form changes that map
 and that prompt line. The words the client
@@ -123,7 +127,8 @@ Airtable base `MedSpa Front Desk` (`airtable/schema.json`):
 
 - **Settings** (one row, everything that changes per clinic): `business_name`, `timezone`, `working_hours`,
   `calendar_id`, `owner_contact`, `whatsapp_number`, `intake_form_url`, `cancellation_hours`, `reminder_hours_before`,
-  `pending_ttl_min`, `slot_step_min`, `min_lead_min`.
+  `pending_ttl_min`, `slot_step_min`, `min_lead_min`, `untranslated_terms` (brand names kept exactly as written in every
+  translated message; empty = none).
 - **Services** (the price list, edited by the clinic): `service_id`, `name`, `duration_min`, `price`,
   `deposit_required`, `active`.
 - **Clients** (one person, several channels): `client_id`, `name`, `phone`, `telegram_chat_id`, `email`, `language`,

@@ -41,6 +41,15 @@ final-state check before; it is now an `expect state:` of step 5, because the di
   CANCEL_PENDING «вашу Ботокс» next to CANCELLED «Ваш Botox»). The agent's own replies in steps 1–3 may still write
   «ботокс»; they are not translations.
 
+**Brand protection and the cancellation sentence (mini-task E, 2026-10-13).** From the live proof of C
+(`tests/dialog-runs/2026-10-13-translation-quality-tg.md`): run 2 PENDING_SUMMARY "Ботокс (30 мин)", run 1 BOOKED
+"отмена бесплатна до 24 часов до визита". `send_message` now masks the terms of `Settings.untranslated_terms` through the
+translation, and the English templates say "no later than 24 hours before the visit" (PENDING_SUMMARY, BOOKED) and "Free
+cancellation ends 24 hours before the visit" (LATE_*), whose literal Russian is «не позднее чем за 24 часа до визита» /
+«заканчивается за 24 часа до визита»: both match `24 час`, neither matches `до\s+24\s+час`, so the C checks stay as they
+were. Steps 4–7 now also require the Latin «Botox» (case-sensitive), not only the absence of «ботокс»: a message that
+dropped the name would pass the old check. This needs `Settings.untranslated_terms` to contain `Botox` (the seed does).
+
 Cyrillic words are bounded with `(?<!\p{L})` / `(?!\p{L})`, not `\b`. jq 1.7 on the VPS matched these regexes, case-
 insensitively, on correct and faulty samples (mini-task C report). Step 1's «ИИ» check is also the live check of the
 agent prompt's AI-disclosure wording (mini-task C, requirement 9).
@@ -80,6 +89,7 @@ expect no-regex: (?<![/.\-&])\b(?!(?:Glow|Aesthetics|Med|Spa|HydraFacial|Botox)\
 expect no-regex: (?<!\p{L})(ты|тебя|тебе|тобой|тво[йяеёюи]\p{L}*)(?!\p{L})
 expect no-regex: (?<!\p{L})до\s+24\s+час
 expect no-regex: ботокс
+expect regex: (?-i:Botox)
 send: да
 expect templates: BOOKED, BOOKED_INTAKE
 expect lang: ru
@@ -91,6 +101,7 @@ expect no-regex: (?<![/.\-&])\b(?!(?:Glow|Aesthetics|Med|Spa|HydraFacial|Botox)\
 expect no-regex: (?<!\p{L})(ты|тебя|тебе|тобой|тво[йяеёюи]\p{L}*)(?!\p{L})
 expect no-regex: (?<!\p{L})до\s+24\s+час
 expect no-regex: ботокс
+expect regex: (?-i:Botox)
 expect state: [.appts[].status] == ["booked"]
 expect state: .appts[0].start_iso | test("^2030-01-07T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{2}:[0-9]{2}$")
 expect state: (.events | length) == 1 and .events[0].summary == ("Botox — " + .client.name)
@@ -104,6 +115,7 @@ expect regex: (?-i:ДА)
 expect no-regex: (?<![/.\-&])\b(?!(?:Glow|Aesthetics|Med|Spa|HydraFacial|Botox)\b)[a-z]{3,}\b(?!://|\.\w|/|-\w)|\d\s?[ap]m\b
 expect no-regex: (?<!\p{L})(ты|тебя|тебе|тобой|тво[йяеёюи]\p{L}*)(?!\p{L})
 expect no-regex: ботокс
+expect regex: (?-i:Botox)
 expect state: [.appts[].status] == ["booked"]
 expect state: (.events | length) == 1
 expect state: (.client.cancel_ask_appt_id // "") == .appts[0].appt_id
@@ -116,6 +128,7 @@ expect no-node: Agent
 expect no-regex: (?<![/.\-&])\b(?!(?:Glow|Aesthetics|Med|Spa|HydraFacial|Botox)\b)[a-z]{3,}\b(?!://|\.\w|/|-\w)|\d\s?[ap]m\b
 expect no-regex: (?<!\p{L})(ты|тебя|тебе|тобой|тво[йяеёюи]\p{L}*)(?!\p{L})
 expect no-regex: ботокс
+expect regex: (?-i:Botox)
 expect state: [.appts[].status] == ["cancelled"]
 expect state: (.events | length) == 0
 state: (.client.client_id // "") | startswith("C-test-")
