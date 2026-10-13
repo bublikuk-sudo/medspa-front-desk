@@ -18,8 +18,8 @@ Owner's go-ahead in chat (2026-10-13): "да, добавляй поле untransl
   `WF1_STUBS passed 321, failed 0`, `CHECK_AVAILABILITY_STUBS passed 27, failed 0` (the last from the workstation, as its
   header requires). Order, per the controller's report: one remote command for the send-message stubs (on the pulled live
   file) and the wf1 stubs, then the check_availability stubs from the workstation; the first dialog started 09:39:45Z
-  (dialog 12 raw line 3). The completion times of the stub runs were not recorded, so the order relative to the dialogs
-  is reported, not timestamped.
+  (dialog 12 raw line 3). Per the controller's report, all the stub suites ran before the first dialog started. The
+  completion times of the stub runs were not recorded, so the order relative to the dialogs is reported, not timestamped.
 
 ## Results
 
@@ -53,16 +53,19 @@ Owner's go-ahead in chat (2026-10-13): "да, добавляй поле untransl
 
 ## Findings (not failures)
 
-1. ru CANCEL_PENDING: "Отменить вашу Botox" (raw line 63). The translator, which sees only `⟦1⟧` (the masked line in the
-   Merge outcomes block, "Cancel your ⟦1⟧ on ..."), evidently guessed the gender of the masked name, and `вашу` does not
-   agree with `Botox`. The same wording appeared in the 2026-10-12 log ("вашу Ботокс", line 119), which is a run before
-   both C and E, so this is a pre-existing agreement problem and not an E regression.
+1. ru CANCEL_PENDING: "Отменить вашу Botox" (raw line 63). The translator, which sees the service only as `⟦1⟧` (the
+   masked line in the Merge outcomes block, "Cancel your ⟦1⟧ on ..."), evidently guessed the gender of the masked name,
+   and `вашу` does not agree with `Botox`. The same wording appeared in the 2026-10-12 log ("вашу Ботокс", line 119). Per
+   the controller's report (ledger), that log is B's proof run (2026-10-12 19:05-19:15Z), made before C went live
+   (2026-10-13 08:14-08:16Z) and before E (2026-10-13 09:38Z), so this is a pre-existing agreement problem and not an E
+   regression.
 2. ru CANCELLED "Ваш прием у Botox" and de CANCELLED "Ihr Termin bei Botox" (raw lines 80 and 69). The masked lines show
    the translator received "Your ⟦1⟧ on ..." (Merge outcomes block, execs 28843 and 28916); apparently because the
    service is a token, "Your {service} on …" became "your appointment with/at Botox", which reads as if Botox were a
-   person or a place. Evidence for E as the cause in ru: the pre-E ru CANCELLED in the 2026-10-12 log was "Ваш Botox на
-   пн, 7 янв., 10:00 был отменён" (line 132), with no invented noun. There is no pre-E de CANCELLED to compare, so the
-   de case is assumed to be the same mechanism. Candidate fix: rephrase the English CANCEL_PENDING/CANCELLED templates
+   person or a place. This is consistent with E being the cause in ru, on one sample only: the single pre-E ru CANCELLED
+   in the 2026-10-12 log was "Ваш Botox на пн, 7 янв., 10:00 был отменён" (line 132), with no invented noun, and LLM
+   output varies from run to run. There is no pre-E de CANCELLED to compare, so the de case is assumed to be the same
+   mechanism. Candidate fix: rephrase the English CANCEL_PENDING/CANCELLED templates
    as "your {service} appointment".
 3. The agent's own ru replies write the service as "ботокс" (dialog 12 raw lines 14 and 21). Those replies are not
    translated, so E does not touch them, and dialog 12 checks the brand only at steps 4-7.
