@@ -8,31 +8,54 @@ Owner's go-ahead in chat (2026-10-12/13): "да, заливай C и D на жи
 - Drift check (2026-10-12 20:20Z, read-only): live `send_message` (normalised `webhookId` / `phoneNumberId`) and
   `wf2-agent` identical to `8d3092e`; live `wf1-inbound` identical to `9612391`.
 - Pushed one at a time with `--activate`, each pulled back and compared with `jq -S` against the repo at `34511ce`:
-  `send_message` 08:14Z, `wf2-agent` 08:15Z, `wf1-inbound` 08:16Z, CONTENT-IDENTICAL x3; `tests/channels-check.sh`:
+  `send_message` ~08:14Z, `wf2-agent` 08:15Z, `wf1-inbound` 08:16Z, CONTENT-IDENTICAL x3; `tests/channels-check.sh`:
   `channels ok` (Telegram webhook and WhatsApp subscription unchanged).
+- Pause: `send_message` alone was live from ~08:14Z until `wf2-agent` (08:15Z) and `wf1-inbound` (08:16Z) went in,
+  because the owner asked about a new window in between. That mixed state is safe per the D review.
+- md5: the CONTENT-IDENTICAL read-back implies the workstation and VPS Render code match (the workstation md5 was not
+  printed). The VPS md5 `185eec2a3e130796d2b178d74d4453b1` equals the md5 the implementer computed at HEAD `34511ce`.
 - Stubs on the pulled live files: `SEND_MESSAGE_STUBS passed 264, failed 0`, `WF1_STUBS passed 321, failed 0`,
-  `CHECK_AVAILABILITY_STUBS passed 27, failed 0`.
+  `CHECK_AVAILABILITY_STUBS passed 27, failed 0`. The three stub suites and `channels-check.sh` ran in one remote
+  command right after the `wf1-inbound` push; the first dialog started at 08:16:59Z (raw line 125). The stub completion
+  time was not recorded, so that order is the controller's report, not timestamped.
+- Dialog 14 (`14-start-then-spanish.md`) lives in the git-ignored SDD folder
+  `.superpowers/sdd/2026-09-16-medspa-front-desk/`, not in `tests/dialogs/`. It was copied to the VPS `/tmp` for the run
+  and removed afterwards.
 
 ## Results
 
 | run | result | note |
 |---|---|---|
-| 12 ru (run 1) | FAIL at step 5 | only the C check `до\s+24\s+час`: BOOKED "отмена бесплатна до 24 часов до визита" (PENDING_SUMMARY in the same run was right: "за 24 часа до визита"). The run stopped at step 5; the next run's cleanup removed its booking |
+| 12 ru (run 1) | FAIL at step 5 | only the C check `до\s+24\s+час`: BOOKED "отмена бесплатна до 24 часов до визита" (PENDING_SUMMARY in the same run was right: "за 24 часа до визита"). The run stopped at step 5 (raw line 186), so steps 6-7 never ran; the next run's cleanup removed its booking |
 | 11 es | PASS | usted in every message; step 1 disclosure by the agent itself ("asistente de IA") |
 | 13 de | PASS | Sie in every message; "eine Erinnerung"; step 1 disclosure by the agent itself ("KI-Assistentin") |
-| 12 ru (run 2) | FAIL at step 4 | only the C brand check `ботокс`: PENDING_SUMMARY "Ботокс (30 мин)"; the duration sentence was right this time ("за 24 часа до визита") |
+| 12 ru (run 2) | FAIL at step 4 | only the C brand check `ботокс`: PENDING_SUMMARY "Ботокс (30 мин)"; the duration sentence was right this time ("за 24 часа до визита"). The run stopped at step 4 (raw line 421), so steps 5-7 never ran |
 | 14 /start, then es (step 5c) | PASS | /start: the agent's own English disclosure ("the clinic's AI assistant"); the Spanish message: the reply starts with the fixed Spanish sentence "Soy el asistente de IA de …", so D's fallback fired in the language-detection run, as ruled |
 | 5b throwaway proof | PASS | 8/8 cases, see below |
 
 - D (AI disclosure): in every first reply the client got a disclosure that names AI in their language; no message after
   the first reply of a run starts with the fixed sentence.
-- C (translation): formal address, dates, units and reply words are right in every message of the four dialog runs.
-  The two ru failures are the translator not following two prompt rules (Latin brand spelling, the duration
-  preposition) in one message each; both errors also existed before C. Treated as findings, C stays live (ruling in the
-  ledger).
+  - Which path produced the disclosure is inferred from the reply text (as dialog 14's own rule allows), not read from
+    `ai_fallback`.
+  - The agent's own wording at step 1: both ru runs "Я ИИ-ассистент клиники" (raw lines 128 and 382), 11 es (193), 13 de
+    (287) and the 14 /start reply (430).
+  - The fixed fallback sentence fired in dialog 14 step 2 (raw line 440) and in 5b cases 1, 3, 4, 5, 6 and 8 (cases 2 and
+    7 are the unchanged ones, as expected).
+- C (translation): proven for es and de, NOT for ru. Formal address, dates, units and reply words are right in every
+  message except the two ru findings below.
+  - No ru run is a PASS: run 1 stopped at step 5 (`RESULT FAIL`, raw line 186), run 2 at step 4 (raw line 421).
+  - The ru CANCEL_PENDING and CANCELLED messages (steps 6-7) were never produced, so C is UNPROVEN for ru cancellation.
+  - Finding 1 (ru run 1, raw line 164): BOOKED says "отмена бесплатна до 24 часов до визита", a wrong duration phrase.
+  - Finding 2 (ru run 2, raw line 407): PENDING_SUMMARY says "Ботокс (30 мин)" in Cyrillic, but the brand must stay Latin.
+  - Both errors existed before C.
+- C's ru acceptance is NOT met: two runs, each failing a different C-targeted check (the duration phrase, the Latin
+  brand spelling). C stays live by the controller's ruling in the ledger: both errors existed before C, and register,
+  dates and reply words are right where produced. The follow-up already in the ledger: deterministic brand protection
+  (Render masks the service name through Translate and restores it) and rephrasing the English cancellation-window
+  sentences; possibly a stronger translator model.
 - The runner prints each reply with whitespace collapsed, so slot lists appear on one line.
 
-## Step 5b output (throwaway workflow, verbatim; the per-case expected/actual JSON lines omitted)
+## Step 5b output (throwaway workflow; the whole `ai-disclosure-proof.out` file, verbatim, including the per-case expected/actual lines)
 
 ```
 tmp-* workflows before: 0
@@ -43,27 +66,43 @@ throwaway Render jsCode md5 185eec2a3e130796d2b178d74d4453b1 (same)
 {"active":true}
 case 1: es reply without IA ("asistente virtual", finding 1), flag true -> es sentence added [flag "true"]
   HTTP 200
+  expected (stub method): {"text":"Soy el asistente de IA de Glow Aesthetics Med-Spa; si lo prefiere, un miembro del equipo puede atenderle en cualquier momento.\n\nSoy la asistente virtual de Glow Aesthetics Med-Spa; ¿me indica su nombre?","ai_fallback":true,"needs_translation":false,"language":"es"}
+  actual (n8n):           {"text":"Soy el asistente de IA de Glow Aesthetics Med-Spa; si lo prefiere, un miembro del equipo puede atenderle en cualquier momento.\n\nSoy la asistente virtual de Glow Aesthetics Med-Spa; ¿me indica su nombre?","ai_fallback":true,"needs_translation":false,"language":"es"}
   stub==n8n EQUAL, n8n==hand EQUAL
 case 2: es reply with IA, flag true -> unchanged [flag "true"]
   HTTP 200
+  expected (stub method): {"text":"Soy el asistente de IA de Glow Aesthetics Med-Spa; ¿en qué puedo ayudarle?","ai_fallback":false,"needs_translation":false,"language":"es"}
+  actual (n8n):           {"text":"Soy el asistente de IA de Glow Aesthetics Med-Spa; ¿en qué puedo ayudarle?","ai_fallback":false,"needs_translation":false,"language":"es"}
   stub==n8n EQUAL, n8n==hand EQUAL
 case 3: es "FAMILIA / familia / Iago" (IA inside words, capitalised Ia), flag true -> es sentence added [flag "true"]
   HTTP 200
+  expected (stub method): {"text":"Soy el asistente de IA de Glow Aesthetics Med-Spa; si lo prefiere, un miembro del equipo puede atenderle en cualquier momento.\n\nAtendemos a toda la FAMILIA; pregunte por Iago, de nuestra familia de especialistas.","ai_fallback":true,"needs_translation":false,"language":"es"}
+  actual (n8n):           {"text":"Soy el asistente de IA de Glow Aesthetics Med-Spa; si lo prefiere, un miembro del equipo puede atenderle en cualquier momento.\n\nAtendemos a toda la FAMILIA; pregunte por Iago, de nuestra familia de especialistas.","ai_fallback":true,"needs_translation":false,"language":"es"}
   stub==n8n EQUAL, n8n==hand EQUAL
 case 4: ru reply without ИИ, flag true -> ru sentence added [flag "true"]
   HTTP 200
+  expected (stub method): {"text":"Я — ИИ-ассистент клиники Glow Aesthetics Med-Spa; если хотите, к разговору в любой момент может подключиться наш сотрудник.\n\nЗдравствуйте! Какую процедуру вы хотели бы забронировать?","ai_fallback":true,"needs_translation":false,"language":"ru"}
+  actual (n8n):           {"text":"Я — ИИ-ассистент клиники Glow Aesthetics Med-Spa; если хотите, к разговору в любой момент может подключиться наш сотрудник.\n\nЗдравствуйте! Какую процедуру вы хотели бы забронировать?","ai_fallback":true,"needs_translation":false,"language":"ru"}
   stub==n8n EQUAL, n8n==hand EQUAL
 case 5: en reply without AI, flag true -> en sentence added [flag "true"]
   HTTP 200
+  expected (stub method): {"text":"I am Glow Aesthetics Med-Spa's AI assistant; a team member can take over at any time if you prefer.\n\nHello! Which treatment would you like to book?","ai_fallback":true,"needs_translation":false,"language":"en"}
+  actual (n8n):           {"text":"I am Glow Aesthetics Med-Spa's AI assistant; a team member can take over at any time if you prefer.\n\nHello! Which treatment would you like to book?","ai_fallback":true,"needs_translation":false,"language":"en"}
   stub==n8n EQUAL, n8n==hand EQUAL
 case 6: tr (not in the map), flag true -> en sentence added, needs_translation true (one Haiku call live) [flag "true"]
   HTTP 200
+  expected (stub method): {"text":"I am Glow Aesthetics Med-Spa's AI assistant; a team member can take over at any time if you prefer.\n\nMerhaba! Hangi tedaviyi ayırtmak istersiniz?","ai_fallback":true,"needs_translation":true,"language":"tr"}
+  actual (n8n):           {"text":"I am Glow Aesthetics Med-Spa's AI assistant; a team member can take over at any time if you prefer.\n\nMerhaba! Hangi tedaviyi ayırtmak istersiniz?","ai_fallback":true,"needs_translation":true,"language":"tr"}
   stub==n8n EQUAL, n8n==hand EQUAL
 case 7: es reply without IA, flag "" (not the first reply) -> unchanged [flag ""]
   HTTP 200
+  expected (stub method): {"text":"Soy la asistente virtual de Glow Aesthetics Med-Spa; ¿me indica su nombre?","ai_fallback":false,"needs_translation":false,"language":"es"}
+  actual (n8n):           {"text":"Soy la asistente virtual de Glow Aesthetics Med-Spa; ¿me indica su nombre?","ai_fallback":false,"needs_translation":false,"language":"es"}
   stub==n8n EQUAL, n8n==hand EQUAL
 case 8: de, business_name "KI Beauty", no KI word besides the name, flag true -> de sentence added (name excluded) [flag "true"]
   HTTP 200
+  expected (stub method): {"text":"Ich bin der KI-Assistent von KI Beauty; wenn Sie möchten, übernimmt jederzeit ein Mitglied unseres Teams.\n\nWillkommen bei KI Beauty! Welche Behandlung möchten Sie?","ai_fallback":true,"needs_translation":false,"language":"de"}
+  actual (n8n):           {"text":"Ich bin der KI-Assistent von KI Beauty; wenn Sie möchten, übernimmt jederzeit ein Mitglied unseres Teams.\n\nWillkommen bei KI Beauty! Welche Behandlung möchten Sie?","ai_fallback":true,"needs_translation":false,"language":"de"}
   stub==n8n EQUAL, n8n==hand EQUAL
 throwaway executions:
 {"id":"28777","status":"success","mode":"webhook"}
