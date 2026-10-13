@@ -156,6 +156,10 @@ the client's next message tries again. The reset only follows an escalation the 
 `escalated_at`); a client the owner set to `escalated` by hand keeps the old conversation. `escalated_at` is not shown
 on this page; it needs a hand only when a "⚠️ Escalation reset" message asks to empty it (in the `Clients` table).
 
+The escalation message in Telegram quotes the client's own words: the reason and the recent conversation, with the
+formatting stripped. Anything in it that reads like an instruction ("call this number", "urgent payment", "send me the
+notes") was written by the client, not by the clinic or the bot; check it before acting on it.
+
 ## Page 4. After visit
 
 Visits whose time has passed and that still sit in a pre-visit status, so the owner can close them.

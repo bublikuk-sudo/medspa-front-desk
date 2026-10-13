@@ -169,7 +169,10 @@ conversation when the status is changed back.
 - **No medical questionnaire.** Allergies, medication, pregnancy and diagnoses are special-category health data. The
   agent is instructed never to ask for them and not to repeat them back if a client volunteers them. On the first booking the client
   gets a link to the clinic's own intake and consent form (`Settings.intake_form_url`; in a real deployment the clinic's
-  EMR form). The clinic ticks `Clients.intake_completed`; the answers live in the EMR, not in Airtable or the chat.
+  EMR form). The clinic ticks `Clients.intake_completed`; the form's answers live in the EMR, not in Airtable or the
+  chat. What a client volunteers in the chat is another matter: it stays in the conversation history in Postgres
+  (`n8n_chat_histories`, no retention job yet, see GDPR) and is forwarded verbatim, after cleaning, in an escalation
+  message to the owner's Telegram (the recent history goes with it).
 - **Short-lived run logs.** n8n stores every node's input and output for every run, including message texts and
   numbers. `EXECUTIONS_DATA_PRUNE=true` and `EXECUTIONS_DATA_MAX_AGE=168` delete run records older than 7 days.
 - **Calendar events without attendees.** The event is `{service} — {client name}` with the `appt_id` as description.
@@ -304,11 +307,18 @@ and a licence (see the contract checklist in the onboarding document).
 
 - **Level 1, tools** (`tests/tool-cases.sh`, cases in `tests/tool-cases.tsv`, described in `tests/tool-cases.md`):
   every sub-workflow called alone with fixed inputs through a key-protected test harness, compared against a regular
-  expression; each case builds and removes its own data. 105 cases: 105 passed on 2026-10-09
+  expression; each case builds and removes its own data. 106 cases. The 105 that existed on 2026-10-09 passed then
   (`tests/dialog-runs/2026-10-09-free-airtable-level1.md`); the 96 cases before `escalate_already_escalated` was added passed twice
-  in a row on 2026-10-03 (`tests/dialog-runs/2026-10-03-level1.md`). Code nodes also have stub suites (`tests/*-stubs.sh`).
-- **Level 2, dialogs** (`tests/dialogs.sh`, scripts in `tests/dialogs/`): 13 end-to-end dialogs through the real WF-1,
-  in Telegram and WhatsApp payload formats (dialogs 09 and 10 run once), 24 runs per pass. A key-protected test inbound
+  in a row on 2026-10-03 (`tests/dialog-runs/2026-10-03-level1.md`). The final review's fixes (2026-10-13) changed
+  `reminder_no` (a reminder "no" outside the cancellation window is free), added `reminder_no_late`, and moved the
+  WhatsApp number of `escalate_whatsapp_client` and `escalate_tg_no_digits` into the test range; these have not run yet.
+- **Stub suites** (`tests/*-stubs.sh`): the real Code-node code, IF expressions and wiring, read from the workflow JSON
+  and run with stubbed inputs. They run inside the live n8n container over SSH (`docker compose exec -T n8n node -`,
+  for its Node and ICU version) and write nothing; each script's header gives the offline command for a local Node,
+  which is the better default for a deployment of your own.
+- **Level 2, dialogs** (`tests/dialogs.sh`, scripts in `tests/dialogs/`): 14 end-to-end dialogs through the real WF-1,
+  in Telegram and WhatsApp payload formats (dialogs 09, 10 and 15 run once, in Telegram), 25 runs per pass; a run
+  without numbers plays the first 13 in the plan's order, dialog 15 runs by number (`tests/dialogs.sh 15`). A key-protected test inbound
   feeds the same `Normalize` as the real triggers; `send_message` writes outbound messages for test contacts to a
   Postgres table `test_outbox` instead of sending them. Checks are on state, template keys and language, never on the
   model's wording. Dialog 13 (German client) and the cancellation legs of dialogs 11 (Spanish) and 12 (Russian) were
@@ -319,7 +329,12 @@ and a licence (see the contract checklist in the onboarding document).
   - a set of English words (hours, minutes, days, reply, yes, cancel, booked, your, you, the, would, which).
 
   For the Russian dialog, any Latin word of three or more letters other than the clinic's name, HydraFacial, Botox and
-  the parts of a link counts. They have not run yet; the results below are for the 12 dialogs before that. Run 1 (2026-10-05): 22 passed. Run 2 (2026-10-05): 20 passed, 2 failed, both because the Anthropic
+  the parts of a link counts. Dialogs 11, 12 and 13 have since run live on Telegram in the proofs of the language work
+  (`tests/dialog-runs/2026-10-12-client-language-tg.md`, `2026-10-13-translation-quality-tg.md`,
+  `2026-10-13-brand-protection-tg.md`, `2026-10-13-cancel-phrasing-tg.md`); the latest run of each passed (11 in the
+  translation-quality log, 12 and 13 in the cancel-phrasing log), but not as two formal consecutive passes of the whole
+  suite and not in the WhatsApp format. Dialog 15 (change of mind after the summary, added 2026-10-13 by the final
+  review) has not run yet. The results below are for the 12 dialogs before that. Run 1 (2026-10-05): 22 passed. Run 2 (2026-10-05): 20 passed, 2 failed, both because the Anthropic
   credit ran out mid-run, not because of a bot defect.
   Final runs on the final configuration (two-step cancel, day-before reminders, free-Airtable budget): run 1
   (2026-10-09, `tests/dialog-runs/2026-10-09-dialogs-run-1.md`) passed 21 of 22 runs; the one failure was dialog 05 on
@@ -333,7 +348,8 @@ and a licence (see the contract checklist in the onboarding document).
   caveat that run 1's dialog 05 was judged from its log.
 - **Level 3, the owner as a client.** Live runs from a phone: a Telegram booking and cancellation and a Spanish
   WhatsApp booking and cancellation (2026-10-03), and both WhatsApp templates delivered (2026-10-05). The owner's
-  final acceptance run is still open.
+  final acceptance run passed on 2026-10-11 on WhatsApp, on the second attempt: she booked and cancelled herself after
+  a knowledge-base gap found on the first attempt was fixed that morning (`tests/dialog-runs/2026-10-11-owner-acceptance.md`).
 
 ## Lessons carried over from the Make.com version
 
@@ -385,7 +401,13 @@ silent for everyone; here a workflow that throws stays active, the owner gets an
   and 09:05 in summer (the booking confirmation says "We'll send you a reminder the day before"). A visit booked after
   that run but still at least `reminder_hours_before` ahead is reminded on the morning of the visit day, so the run
   hour must come before the clinic's first appointment of the day. Expired `pending` offers are marked
-  cancelled by the same daily run; until then a late YES gets "That offer has expired" from `confirm_booking`.
+  cancelled by the same daily run; until then a YES after the offer expired is an ordinary message for the agent.
+- A YES confirms the pending booking only while its summary is the bot's last message and unexpired. WF-1 decides
+  "last message" from two timestamps of the summary's own run: `Clients.last_agent_reply_at` must be blank or at most
+  3 s after the row's `summary_sent_at` (0.55-1.0 s apart in 25 live runs, while an agent reply took at least 6.3 s
+  from the client's message in 135 live runs). If `Mark Replied` needs its 5-second retry in the summary run, the client's YES goes to
+  the agent instead, which proposes the slot again. Messages that are not agent replies (an ERROR, the escalation hold,
+  a rate-limit notice) do not move `last_agent_reply_at`, so a YES after one of them still confirms the summary.
 - A Knowledge edit reaches the bot after `scripts/n8n-run.sh wf4-knowledge-ingest`, or with the next daily WF-4 run.
 - An exhausted Anthropic credit is named in the WF-6 alert for `wf2-agent` ("Bad request - please check your parameters —
   Your credit balance is too low ..."). WF-1's own "Reply failed ... (step: Agent)" alert shows only n8n's generic

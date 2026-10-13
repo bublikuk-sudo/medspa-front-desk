@@ -15,8 +15,8 @@ knowledge base does not answer (on the final measurement, 1 of 90 unanswerable t
 compare treatments, which the agent is now told to hand to a person). Six workflow groups: inbound, agent, booking tools, knowledge, reminders, error handler. The agent
 can only propose a booking; the client's YES goes through a deterministic gate in n8n, which re-checks the calendar
 before it writes the event. A failing workflow alerts the owner and stays active, so one error does not silence the
-bot. Tested at two levels: 97 tool cases, and 12 end-to-end dialogs in both channel formats that check calendar and
-database state rather than the model's wording.
+bot. Tested at two levels: 106 tool cases, and 14 end-to-end dialogs in Telegram and WhatsApp payload formats that
+check calendar and database state rather than the model's wording.
 
 **What the clinic gets.** A template deployed per clinic from a checklist (one settings row, the price list, the
 clinic's knowledge text, and its own keys), with every account on the clinic's card and a written handover. Full

@@ -3,6 +3,8 @@
 # Runs from the workstation, NOT through scripts/remote.sh (that syncs the whole repo): the workflow JSON and the test
 # are piped into the n8n container's Node over ssh. No network call by the test, no workflow run, nothing is written.
 #   tests/wf5-code-stubs.sh [path to another workflow file]
+# Offline, without the live container, with any local Node, from the project root:
+#   { printf 'const WF = '; cat workflows/wf5-reminders.json; printf ';\nconst LIB = Buffer.from("'; base64 -w0 tests/lib/airtable.sh; printf '", "base64").toString();\n'; cat tests/wf5-code-stubs.js; } | node -
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 wf="${1:-$here/../workflows/wf5-reminders.json}"

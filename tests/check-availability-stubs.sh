@@ -5,6 +5,9 @@
 # test are piped into the n8n container's Node over ssh. Its ICU (78.3) is the wording the checks expect. No network call by
 # the test, no workflow run, nothing is written.
 #   tests/check-availability-stubs.sh [check_availability file] [wf2-agent file] [prompt file]
+# Offline, without the live container, with a Node whose ICU is 78.3 (another ICU fails only the slots_local wording), from
+# the project root:
+#   { printf 'const WF = '; cat workflows/wf3-tools/check_availability.json; printf ';\nconst WF2 = '; cat workflows/wf2-agent.json; printf ';\nconst PROMPT = Buffer.from("'; base64 -w0 prompts/agent-system-prompt.md; printf '", "base64").toString();\n'; cat tests/check-availability-stubs.js; } | node -
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 ca="${1:-$here/../workflows/wf3-tools/check_availability.json}"

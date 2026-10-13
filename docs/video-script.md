@@ -8,7 +8,7 @@ client name, and crop or blur the phone's own number and the WhatsApp header if 
 |---|---|---|---|
 | 0-10 s | Phone, WhatsApp chat with the clinic | The client types "Hi! I'd like to book Botox." The bot answers that it is the clinic's AI assistant and asks for the name. | "A client writes to the clinic on WhatsApp." |
 | 10-40 s | Phone, same chat | Name, then a day and part of day; the bot lists free times; the client picks one; the bot sends the summary "Botox (30 min) — ... Reply YES to confirm."; the client replies YES; the confirmation and the intake-form link arrive. | "Real free slots. The client confirms, not the AI." |
-| 40-60 s | Screen: Google Calendar, then Airtable | The new event `Botox — <client name>` with no attendees; the `Appointments` row with status `booked` and the client row. | "Calendar and database updated, no double booking." |
+| 40-60 s | Screen: Google Calendar, then Airtable | The new event `Botox — <client name>` with no attendees; the `Appointments` row with status `booked` and the client row. | "Calendar and database updated; it re-checks the calendar before booking." |
 | 60-80 s | Phone, same chat | The reminder arrives ("Reminder: Botox — ... Reply YES to confirm or NO to cancel."), the client replies YES, the bot thanks them. | "Reminder before the visit, answered in one word." |
 | 80-90 s | Screen: Airtable Interface, page "Today" | The visit in today's list with status `confirmed`. | "The clinic's dashboard. Self-hosted n8n, Claude, Airtable, Google Calendar." |
 

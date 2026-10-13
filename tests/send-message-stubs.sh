@@ -13,6 +13,8 @@
 # The JSON is piped in whole (no jq), so it also runs from the workstation, piped into the container's Node over ssh, from
 # the project root:
 #   { printf 'const WF = '; cat workflows/shared/send_message.json; printf ';\nconst TEMPLATES = '; cat templates/messages.en.json; printf ';\nconst CONFIRM = '; cat workflows/wf3-tools/confirm_booking.json; printf ';\nconst WF1 = '; cat workflows/wf1-inbound.json; printf ';\n'; cat tests/send-message-stubs.js; } | ssh medspa 'cd /opt/medspa/deploy && docker compose exec -T n8n node -'
+# Offline, without the live container: end that command with `| node -` instead of the ssh part (a Node with ICU 78.3;
+# another ICU fails only the language checks).
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 wf="${1:-/opt/medspa/workflows/shared/send_message.json}"
