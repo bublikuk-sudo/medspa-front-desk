@@ -7,8 +7,8 @@ answers questions from the clinic's own knowledge base, sends reminders, and han
 it should. It runs on self-hosted n8n with Claude, Airtable and Google Calendar, and is built as a template that is
 deployed once per clinic.
 
-![WhatsApp booking: summary, YES, confirmation](docs/img/demo.png)
-<!-- Placeholder: the owner adds a frame from the demo video as docs/img/demo.png. -->
+<!-- Placeholder: the image goes here once docs/img/demo.png is added (a frame from the demo video):
+![WhatsApp booking: summary, YES, confirmation](docs/img/demo.png) -->
 
 ## The problem it solves
 
@@ -21,7 +21,7 @@ requirements come up again and again:
 - **A reminder before the visit**, "e.g., 24 hours before the appointment".
 
 The same postings ask for a master template that a new client can be onboarded onto in 15-30 minutes, and for clean
-documentation. Source notes: [booking-bot client requirements](../wiki/market/booking-bot-client-requirements.md).
+documentation. Source notes: the author's notes on booking-bot client requirements.
 
 ## Architecture
 

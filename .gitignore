@@ -1,0 +1,5 @@
+deploy/.env
+deploy/secrets.env
+deploy/credentials.map.json
+deploy/workflow-ids.json
+airtable/ids.json

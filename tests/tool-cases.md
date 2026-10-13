@@ -702,5 +702,5 @@ called by WF-1 (Task 13), and only after the client answered YES to the summary 
 "wait for explicit confirmation" rule lived in the prompt, one disobedient turn would put a real appointment into a
 real calendar; here the model cannot call the write at all, and the worst it can do is a `pending` row that expires
 after `pending_ttl_min`. That is the gap left open in the Make version, where both write tools were agent tools and the
-confirmation step was pure instruction: [Case 4 — The confirmation gate, still open](../../wiki/agent-design/configuration-over-prompting.md#case-4--the-confirmation-gate-still-open).
+confirmation step was pure instruction: "Case 4 — The confirmation gate, still open" in the author's notes on configuration over prompting.
 
