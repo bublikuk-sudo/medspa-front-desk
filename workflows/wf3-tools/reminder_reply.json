@@ -113,7 +113,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// The answer applies to the client's NEXT reminded visit (earliest start still ahead). A NO is status cancelled (not\n// late_cancel), the slot is freed and the client is flagged (spec: reminders, 'no' -> cancelled, slot freed, client flagged).\nconst s = ($('Settings').first().json || {}).fields;\nif (!s) throw new Error('reminder_reply: the Settings table has no row');\nif (typeof s.calendar_id !== 'string' || !s.calendar_id.trim()) throw new Error('reminder_reply: Settings.calendar_id is missing');\nif (typeof s.timezone !== 'string' || !s.timezone.trim() || !DateTime.now().setZone(s.timezone).isValid) throw new Error('reminder_reply: Settings.timezone is missing or not a valid IANA zone, got ' + JSON.stringify(s.timezone));\nconst answer = String($('Trigger').first().json.answer || '').trim().toLowerCase();\nif (!['yes', 'no'].includes(answer)) throw new Error('reminder_reply: answer must be yes or no, got ' + JSON.stringify(String($('Trigger').first().json.answer || '').slice(0, 40)));\nconst c = $('Client').first().json || {};\nconst cid = (c.fields || {}).client_id;\nif (!c.id || !cid) return [{ json: { action: 'none' } }];\nconst now = DateTime.utc();\n// rec_id is the Appointments record id (for the updates), the rest are the columns\nconst appts = $('Reminded').all().map(i => ({ ...((i.json || {}).fields || {}), rec_id: (i.json || {}).id }))\n  .filter(a => a.appt_id && a.client_id === cid && a.status === 'reminded')\n  .map(a => ({ ...a, start: DateTime.fromISO(String(a.start_iso || '')) }))\n  .filter(a => a.start.isValid && a.start > now)\n  .sort((x, y) => x.start.toMillis() - y.start.toMillis());\nconst a = appts[0];\nif (!a) return [{ json: { action: 'none' } }];\n// The event id goes into the Delete Event URL path unencoded: only a plain Google event id is accepted.\nconst ev = String(a.calendar_event_id || '').trim();\nif (ev && !/^[A-Za-z0-9_-]{1,1024}$/.test(ev)) throw new Error('reminder_reply: unexpected calendar_event_id ' + JSON.stringify(ev.slice(0, 80)) + ' on appointment ' + a.appt_id);\nreturn [{ json: { action: answer === 'yes' ? 'confirm' : 'cancel', rec_id: a.rec_id, appt_id: a.appt_id, calendar_event_id: ev,\n  service_id: a.service_id || '', when: a.start.setZone(s.timezone).toFormat('ccc, LLL d, h:mm a') } }];"
+        "jsCode": "// The answer applies to the client's NEXT reminded visit (earliest start still ahead). A NO frees the slot. It is a late cancel\n// (late_cancel, client flagged) only inside Settings.cancellation_hours before the visit, the same rule as cancel_booking;\n// earlier it is a free cancel (cancelled, no flag). The day-before reminder can be 25-35 h ahead of the visit.\nconst s = ($('Settings').first().json || {}).fields;\nif (!s) throw new Error('reminder_reply: the Settings table has no row');\nif (typeof s.calendar_id !== 'string' || !s.calendar_id.trim()) throw new Error('reminder_reply: Settings.calendar_id is missing');\nif (typeof s.timezone !== 'string' || !s.timezone.trim() || !DateTime.now().setZone(s.timezone).isValid) throw new Error('reminder_reply: Settings.timezone is missing or not a valid IANA zone, got ' + JSON.stringify(s.timezone));\nconst answer = String($('Trigger').first().json.answer || '').trim().toLowerCase();\nif (!['yes', 'no'].includes(answer)) throw new Error('reminder_reply: answer must be yes or no, got ' + JSON.stringify(String($('Trigger').first().json.answer || '').slice(0, 40)));\nconst c = $('Client').first().json || {};\nconst cid = (c.fields || {}).client_id;\nif (!c.id || !cid) return [{ json: { action: 'none' } }];\nconst now = DateTime.utc();\n// rec_id is the Appointments record id (for the updates), the rest are the columns\nconst appts = $('Reminded').all().map(i => ({ ...((i.json || {}).fields || {}), rec_id: (i.json || {}).id }))\n  .filter(a => a.appt_id && a.client_id === cid && a.status === 'reminded')\n  .map(a => ({ ...a, start: DateTime.fromISO(String(a.start_iso || '')) }))\n  .filter(a => a.start.isValid && a.start > now)\n  .sort((x, y) => x.start.toMillis() - y.start.toMillis());\nconst a = appts[0];\nif (!a) return [{ json: { action: 'none' } }];\n// The event id goes into the Delete Event URL path unencoded: only a plain Google event id is accepted.\nconst ev = String(a.calendar_event_id || '').trim();\nif (ev && !/^[A-Za-z0-9_-]{1,1024}$/.test(ev)) throw new Error('reminder_reply: unexpected calendar_event_id ' + JSON.stringify(ev.slice(0, 80)) + ' on appointment ' + a.appt_id);\nlet hrs = '', late = false;\nif (answer === 'no') {\n  const h = (s.cancellation_hours === null || s.cancellation_hours === undefined || String(s.cancellation_hours).trim() === '') ? NaN : Number(s.cancellation_hours);\n  if (!Number.isFinite(h) || h < 0) throw new Error('reminder_reply: Settings.cancellation_hours must be a number >= 0, got ' + JSON.stringify(s.cancellation_hours));\n  hrs = h;\n  late = a.start.diff(DateTime.utc(), 'hours').hours < h;\n}\nreturn [{ json: { action: answer === 'yes' ? 'confirm' : 'cancel', rec_id: a.rec_id, appt_id: a.appt_id, calendar_event_id: ev,\n  new_status: late ? 'late_cancel' : 'cancelled', late, cancellation_hours: hrs,\n  service_id: a.service_id || '', when: a.start.setZone(s.timezone).toFormat('ccc, LLL d, h:mm a') } }];"
       }
     },
     {
@@ -341,7 +341,7 @@
     {
       "id": "9e0b0001-0014-4c00-8000-000000000014",
       "name": "Mark Cancelled",
-      "notes": "calendar_event_id is cleared: the event is gone (deleted here or already).",
+      "notes": "status = Decide.new_status: late_cancel inside Settings.cancellation_hours before the visit, else cancelled (free). calendar_event_id is cleared: the event is gone (deleted here or already).",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
@@ -361,7 +361,7 @@
           "mappingMode": "defineBelow",
           "value": {
             "id": "={{ $('Decide').first().json.rec_id }}",
-            "status": "cancelled",
+            "status": "={{ $('Decide').first().json.new_status }}",
             "calendar_event_id": ""
           },
           "matchingColumns": ["id"],
@@ -385,16 +385,39 @@
       }
     },
     {
+      "id": "9e0b0001-0018-4c00-8000-000000000018",
+      "name": "Late?",
+      "notes": "Same as cancel_booking's Late?: only a late cancel flags the client; a free cancel goes straight to Notify.",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [2420, 560],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 3 },
+          "conditions": [
+            {
+              "id": "9e0b0001-1005-4c00-8000-000000000005",
+              "leftValue": "={{ $('Decide').first().json.new_status === 'late_cancel' }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
       "id": "9e0b0001-0017-4c00-8000-000000000017",
       "name": "Flag Client",
-      "notes": "Spec: a NO to the reminder flags the client; an escalated client stays escalated (the owner already handles them). Continue on error: the visit IS cancelled, so the client must get CANCELLED; Notify tells the owner when the flag could not be written.",
+      "notes": "Only a late cancel (Late? true) flags the client; an escalated client stays escalated (the owner already handles them). Continue on error: the visit IS cancelled, so the client must get CANCELLED; Notify tells the owner when the flag could not be written.",
       "retryOnFail": true,
       "maxTries": 2,
       "waitBetweenTries": 5000,
       "onError": "continueRegularOutput",
       "type": "n8n-nodes-base.airtable",
       "typeVersion": 2.2,
-      "position": [2420, 560],
+      "position": [2640, 480],
       "credentials": {
         "airtableTokenApi": { "id": "CRED", "name": "MedSpa Airtable" }
       },
@@ -434,7 +457,7 @@
       "notes": "Continue on error: the visit is already cancelled, so the client must still get CANCELLED. notify_owner retries its own nodes and has an Airtable-free fallback.",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.4,
-      "position": [2640, 560],
+      "position": [2860, 560],
       "onError": "continueRegularOutput",
       "parameters": {
         "source": "database",
@@ -442,7 +465,7 @@
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
-            "text": "={{ (() => { const d = $('Decide').first().json; const fc = ($('Flag Client').first() || {}).json || {}; const flag = !fc.id ? ' — the client could NOT be flagged automatically, flag them by hand' : ((fc.fields || {}).status === 'escalated' ? ' — client is escalated, left escalated (not flagged)' : ' — client flagged'); const gone = $('Gone Check').isExecuted && ($('Gone Check').first().json || {}).event === 'already_gone' ? ' — the calendar event was already gone, check the calendar by hand' : ''; return 'ℹ️ Cancelled via reminder: ' + (String($('Client').first().json.fields.name || '').replace(/\\s+/g, ' ').trim().slice(0, 80) || '(no name)') + ' (' + $('Trigger').first().json.contact_id + ') — ' + d.service_id + ' — ' + d.when + ' — ' + d.appt_id + flag + gone; })() }}"
+            "text": "={{ (() => { const d = $('Decide').first().json; const base = (String($('Client').first().json.fields.name || '').replace(/\\s+/g, ' ').trim().slice(0, 80) || '(no name)') + ' (' + $('Trigger').first().json.contact_id + ') — ' + d.service_id + ' — ' + d.when + ' — ' + d.appt_id; const gone = $('Gone Check').isExecuted && ($('Gone Check').first().json || {}).event === 'already_gone' ? ' — the calendar event was already gone, check the calendar by hand' : ''; if (d.new_status !== 'late_cancel') return 'ℹ️ Cancelled (free) via reminder: ' + base + ' — outside the ' + d.cancellation_hours + ' h cancellation window, client not flagged' + gone; const fc = ($('Flag Client').first() || {}).json || {}; const flag = !fc.id ? ' — the client could NOT be flagged automatically, flag them by hand' : ((fc.fields || {}).status === 'escalated' ? ' — client is escalated, left escalated (not flagged)' : ' — client flagged'); return '⚠️ LATE cancellation via reminder: ' + base + flag + gone; })() }}"
           },
           "matchingColumns": [],
           "schema": [
@@ -460,7 +483,7 @@
       "name": "Result Cancelled",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.5,
-      "position": [2860, 560],
+      "position": [3080, 560],
       "parameters": {
         "assignments": {
           "assignments": [
@@ -505,7 +528,13 @@
     },
     "Delete Event": { "main": [[{ "node": "Gone Check", "type": "main", "index": 0 }]] },
     "Gone Check": { "main": [[{ "node": "Mark Cancelled", "type": "main", "index": 0 }]] },
-    "Mark Cancelled": { "main": [[{ "node": "Flag Client", "type": "main", "index": 0 }]] },
+    "Mark Cancelled": { "main": [[{ "node": "Late?", "type": "main", "index": 0 }]] },
+    "Late?": {
+      "main": [
+        [{ "node": "Flag Client", "type": "main", "index": 0 }],
+        [{ "node": "Notify", "type": "main", "index": 0 }]
+      ]
+    },
     "Flag Client": { "main": [[{ "node": "Notify", "type": "main", "index": 0 }]] },
     "Notify": { "main": [[{ "node": "Result Cancelled", "type": "main", "index": 0 }]] }
   },

@@ -117,9 +117,11 @@ event of the day whose description looked like an appt_id, which could have reac
 
 ## Index: which spec point each case closes
 
-Level 1 is "each tool on its own with fixed inputs" (spec, section Testing, point 1). The suite is 105 cases: the 97 of
+Level 1 is "each tool on its own with fixed inputs" (spec, section Testing, point 1). The suite is 106 cases: the 97 of
 its last full run, 2026-10-08, which passed 97 of 97 (log: `tests/dialog-runs/2026-10-08-level1.md`), plus the eight
-`rcancel_*` cases of the two-step cancel (request_cancel), which have not run yet. The 96 cases before
+`rcancel_*` cases of the two-step cancel (request_cancel), which have not run yet, plus `reminder_no_late` (final review
+I2: a reminder "no" is a late cancel only inside the cancellation window), which has not run yet either; `reminder_no`
+was changed by the same fix and has not run in its new form. The 96 cases before
 `escalate_already_escalated` were green twice in a row on 2026-10-03 (log: `tests/dialog-runs/2026-10-03-level1.md`). Every case is self-sufficient: it builds its own
 state in `setup`, can be run alone (`tests/tool-cases.sh <name>`) and removes its test data in `teardown`. The last row,
 `final_cleanup`, leaves the base and the calendar empty of test data. The per-case details are in the tool sections
@@ -162,7 +164,7 @@ below; this table only says which spec point the cases of a tool close.
 | | `cancel_pending_in_window` | A pending proposal is cancelled without penalty. |
 | `request_cancel` | `rcancel_free`, `rcancel_late` | Two-step cancel (owner decision 2026-10-08): the agent's cancel tool only records a pending cancellation and says whether it would be late; the status, the calendar event and the client stay untouched and nobody is notified, until the client's YES (WF-1). |
 | | `rcancel_not_found`, `rcancel_invalid_id`, `rcancel_not_yours`, `rcancel_past`, `rcancel_pending`, `rcancel_already_cancelled` | `NOT_FOUND` / `NOT_YOURS` record nothing: unknown, malformed, someone else's, past, merely proposed and already cancelled visits. |
-| `reminder_reply` | `reminder_none`, `reminder_yes`, `reminder_no` | The answer to the reminder: no reminded visit is `NO_REMINDED`; YES confirms exactly the nearest reminded visit; NO cancels it, deletes the event, flags the client and tells the owner. |
+| `reminder_reply` | `reminder_none`, `reminder_yes`, `reminder_no`, `reminder_no_late` | The answer to the reminder: no reminded visit is `NO_REMINDED`; YES confirms exactly the nearest reminded visit; NO cancels it, deletes the event and tells the owner; it is a late cancel that flags the client only inside the cancellation window, like cancel_booking. |
 | `wf2-agent` | `agent_books_flow` | The agent really calls `check_availability` for a booking request and the offer is saved. This case is non-deterministic (an LLM). |
 | | `agent_medical_escalates` | "A medical question goes to the owner": client `escalated`, empty reply (the fixed template is sent), exactly one owner notification. |
 | | `agent_discloses_ai` | EU AI Act Art. 50: a new client is told in the first reply that the assistant is an AI. |
@@ -675,17 +677,22 @@ visit (earliest `start_iso` still ahead; other clients' rows and later reminded 
 
 - none -> `NO_REMINDED` (`appt_id` `""`);
 - yes -> `Mark Confirmed` (`status = confirmed`, `confirmed_at` = now UTC) -> `CONFIRMED` + `appt_id`, no owner message;
-- no -> the same `Delete Event` / `Gone Check` as cancel_booking, `Mark Cancelled` (`cancelled`, never `late_cancel`;
-  `calendar_event_id` cleared), `Flag Client` (spec, reminders: "no" -> cancelled, slot freed, client flagged; an
-  `escalated` client stays `escalated`; continue on error), `Notify` (continue on error)
-  `ℹ️ Cancelled via reminder: <name> (<contact>) — <service_id> — Mon, Jan 7, 1:00 PM — <appt_id> — client flagged`
-  (same flag and already-gone wording as cancel_booking) -> `CANCELLED` + `appt_id`.
+- no -> the same `Delete Event` / `Gone Check` as cancel_booking, then the late-cancel rule of cancel_booking (final
+  review I2: the day-before reminder can be 25-35 h ahead, outside a 24 h window): `Decide` sets `new_status` =
+  `late_cancel` when the visit starts less than `Settings.cancellation_hours` from now, else `cancelled`. `Mark Cancelled`
+  writes it (`calendar_event_id` cleared). `Late?`: only a late cancel runs `Flag Client` (an `escalated` client stays
+  `escalated`; continue on error). `Notify` (continue on error) says
+  `⚠️ LATE cancellation via reminder: <name> (<contact>) — <service_id> — <when> — <appt_id> — client flagged` (same flag
+  and already-gone wording as cancel_booking) or, for a free cancel,
+  `ℹ️ Cancelled (free) via reminder: <name> (<contact>) — <service_id> — Mon, Jan 7, 1:00 PM — <appt_id> — outside the 24 h cancellation window, client not flagged`.
+  Both return `CANCELLED` + `appt_id` (WF-1 sends `REMINDER_CANCELLED` either way).
 
 | case | why |
 |---|---|
 | `reminder_none` | client 2 has only a `booked` visit: `NO_REMINDED`, `appt_id` `""`, the row untouched |
 | `reminder_yes` | client 2 has reminded visits on Jan 7 13:00 (`A-TEST-R1`) and Jan 8 (`A-TEST-R2`), client 1 one on Jan 7 10:00 (`A-TEST-R0`): `CONFIRMED` `A-TEST-R1`, only that row is `confirmed` with a `confirmed_at` |
-| `reminder_no` | client 2's real booking at 13:00, set to `reminded`: `CANCELLED` with its appt_id, row `cancelled` with no event id, the event deleted, the client `flagged`, owner message exact (ending `— client flagged`) |
+| `reminder_no` | client 2's real booking on 2030-01-07 at 13:00, set to `reminded` (far outside the window, i.e. free): `CANCELLED` with its appt_id, row `cancelled` with no event id, the event deleted, the client NOT flagged (stays `active`), owner message exact (`ℹ️ Cancelled (free) via reminder: …` ending `— outside the 24 h cancellation window, client not flagged`) |
+| `reminder_no_late` | client 2 has a `reminded` visit (`A-TEST-RL`, no calendar event) starting in 3 hours, inside the window: `CANCELLED` `A-TEST-RL`, row `late_cancel`, the client `flagged`, owner message `⚠️ LATE cancellation via reminder: …` ending `— A-TEST-RL — client flagged` |
 
 ### wf2-agent
 
