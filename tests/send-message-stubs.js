@@ -95,15 +95,15 @@ R('BOOKED names how to cancel and the free-cancellation rule (Settings.cancellat
 R('BOOKED renders without Settings.reminder_hours_before (REQ.BOOKED no longer needs reminder_hours)', 'BOOKED', "You're booked: Botox (30 min) — Mon, Jan 7, 12:00 PM. We'll send you a reminder the day before. To change or cancel, just message me here; you can cancel free of charge no later than 24 hours before your visit.", { settings: { ...SETTINGS, reminder_hours_before: undefined } });
 check('BOOKED template has no {reminder_hours} placeholder', !/\{reminder_hours\}/.test(TEMPLATES.BOOKED || ''), TEMPLATES.BOOKED);
 THROWS('BOOKED without Settings.cancellation_hours throws (REQ)', 'BOOKED', /BOOKED needs "cancellation_hours"/, { settings: { ...SETTINGS, cancellation_hours: undefined } });
-R('CANCEL_PENDING asks for YES, built from the row', 'CANCEL_PENDING', 'Cancel your Botox appointment on Mon, Jan 7, 12:00 PM? Reply YES to cancel.');
-R('LATE_CANCEL_PENDING names the window and the late cancellation', 'LATE_CANCEL_PENDING', 'Cancel your Botox appointment on Mon, Jan 7, 12:00 PM? Free cancellation ends 24 hours before the visit, so this will be recorded as a late cancellation. Reply YES to cancel.');
+R('CANCEL_PENDING asks for YES, built from the row', 'CANCEL_PENDING', 'Cancel your appointment for Botox on Mon, Jan 7, 12:00 PM? Reply YES to cancel.');
+R('LATE_CANCEL_PENDING names the window and the late cancellation', 'LATE_CANCEL_PENDING', 'Cancel your appointment for Botox on Mon, Jan 7, 12:00 PM? Free cancellation ends 24 hours before the visit, so this will be recorded as a late cancellation. Reply YES to cancel.');
 THROWS('LATE_CANCEL_PENDING without cancellation_hours throws (REQ)', 'LATE_CANCEL_PENDING', /LATE_CANCEL_PENDING needs "cancellation_hours"/, { settings: { ...SETTINGS, cancellation_hours: null } });
-R('CANCELLED confirms the cancellation', 'CANCELLED', 'Your Botox appointment on Mon, Jan 7, 12:00 PM has been cancelled. Message me any time to book again.');
-R('LATE_CANCEL confirms it and says it is recorded as late', 'LATE_CANCEL', 'Your Botox appointment on Mon, Jan 7, 12:00 PM has been cancelled. Free cancellation ends 24 hours before the visit, so it is recorded as a late cancellation. Message me any time to book again.');
+R('CANCELLED confirms the cancellation', 'CANCELLED', 'Your appointment for Botox on Mon, Jan 7, 12:00 PM has been cancelled. Message me any time to book again.');
+R('LATE_CANCEL confirms it and says it is recorded as late', 'LATE_CANCEL', 'Your appointment for Botox on Mon, Jan 7, 12:00 PM has been cancelled. Free cancellation ends 24 hours before the visit, so it is recorded as a late cancellation. Message me any time to book again.');
 // Mini-task F (2026-10-13): the six service-on-date templates name the noun ("appointment"), so a masked brand token
 // (send_message Render, mini-task E) is a modifier of a known noun in every language.
-R('REMINDER_CONFIRMED names the appointment', 'REMINDER_CONFIRMED', 'Thank you — your Botox appointment on Mon, Jan 7, 12:00 PM is confirmed. See you soon!');
-R('REMINDER_CANCELLED names the appointment', 'REMINDER_CANCELLED', 'Your Botox appointment on Mon, Jan 7, 12:00 PM has been cancelled. Message me any time to book again.');
+R('REMINDER_CONFIRMED names the appointment', 'REMINDER_CONFIRMED', 'Thank you — your appointment for Botox on Mon, Jan 7, 12:00 PM is confirmed. See you soon!');
+R('REMINDER_CANCELLED names the appointment', 'REMINDER_CANCELLED', 'Your appointment for Botox on Mon, Jan 7, 12:00 PM has been cancelled. Message me any time to book again.');
 THROWS('LATE_CANCEL without cancellation_hours throws (REQ)', 'LATE_CANCEL', /LATE_CANCEL needs "cancellation_hours"/, { settings: { ...SETTINGS, cancellation_hours: '' } });
 for (const k of ['CANCEL_PENDING', 'LATE_CANCEL_PENDING', 'CANCELLED', 'LATE_CANCEL']) {
   THROWS(k + ' without a visit (no service, no time) throws instead of sending an empty question', k, /needs "(service|when)"/, { appt: {} });
@@ -172,18 +172,18 @@ L('lang pl (no special handling anywhere in the code, ICU alone): Polish date an
 L('lang xx (unknown to ICU): falls back to English formatting, no throw (still sent for translation)', { key: 'PENDING_SUMMARY', language: 'xx' },
   'Consultation (20 min) — Mon, Oct 12, 10:30 AM. You can cancel free of charge no later than 24 hours before the visit. Reply YES to confirm.', true);
 L('lang "e n!" (not a language tag): falls back to English formatting, no throw', { key: 'CANCEL_PENDING', language: 'e n!' },
-  'Cancel your Consultation appointment on Mon, Oct 12, 10:30 AM? Reply YES to cancel.');
+  'Cancel your appointment for Consultation on Mon, Oct 12, 10:30 AM? Reply YES to cancel.');
 L('lang ru: BOOKED (the owner saw "Mon, Oct 12, 10:30 AM" and "24 hours" in it)', { key: 'BOOKED', language: 'ru' },
   "You're booked: Consultation (20 мин) — пн, 12 окт., 10:30. We'll send you a reminder the day before. To change or cancel, just message me here; you can cancel free of charge no later than 24 часа before your visit.", true);
-L('lang ru: CANCEL_PENDING', { key: 'CANCEL_PENDING', language: 'ru' }, 'Cancel your Consultation appointment on пн, 12 окт., 10:30? Reply ДА to cancel.', true);
-L('lang ru: CANCELLED', { key: 'CANCELLED', language: 'ru' }, 'Your Consultation appointment on пн, 12 окт., 10:30 has been cancelled. Message me any time to book again.', true);
-L('lang de: CANCELLED', { key: 'CANCELLED', language: 'de' }, 'Your Consultation appointment on Mo., 12. Okt., 10:30 has been cancelled. Message me any time to book again.', true);
+L('lang ru: CANCEL_PENDING', { key: 'CANCEL_PENDING', language: 'ru' }, 'Cancel your appointment for Consultation on пн, 12 окт., 10:30? Reply ДА to cancel.', true);
+L('lang ru: CANCELLED', { key: 'CANCELLED', language: 'ru' }, 'Your appointment for Consultation on пн, 12 окт., 10:30 has been cancelled. Message me any time to book again.', true);
+L('lang de: CANCELLED', { key: 'CANCELLED', language: 'de' }, 'Your appointment for Consultation on Mo., 12. Okt., 10:30 has been cancelled. Message me any time to book again.', true);
 L('lang es: LATE_CANCEL_PENDING names the window in Spanish', { key: 'LATE_CANCEL_PENDING', language: 'es' },
-  'Cancel your Consultation appointment on lun, 12 oct, 10:30? Free cancellation ends 24 horas before the visit, so this will be recorded as a late cancellation. Reply SÍ to cancel.', true);
+  'Cancel your appointment for Consultation on lun, 12 oct, 10:30? Free cancellation ends 24 horas before the visit, so this will be recorded as a late cancellation. Reply SÍ to cancel.', true);
 L('lang ru: LATE_CANCEL with a 1-hour window uses the singular ("1 час")', { key: 'LATE_CANCEL', language: 'ru', settings: { cancellation_hours: 1 } },
-  'Your Consultation appointment on пн, 12 окт., 10:30 has been cancelled. Free cancellation ends 1 час before the visit, so it is recorded as a late cancellation. Message me any time to book again.', true);
+  'Your appointment for Consultation on пн, 12 окт., 10:30 has been cancelled. Free cancellation ends 1 час before the visit, so it is recorded as a late cancellation. Message me any time to book again.', true);
 L('lang en: LATE_CANCEL with a 1-hour window says "1 hour"', { key: 'LATE_CANCEL', language: 'en', settings: { cancellation_hours: 1 } },
-  'Your Consultation appointment on Mon, Oct 12, 10:30 AM has been cancelled. Free cancellation ends 1 hour before the visit, so it is recorded as a late cancellation. Message me any time to book again.', false);
+  'Your appointment for Consultation on Mon, Oct 12, 10:30 AM has been cancelled. Free cancellation ends 1 hour before the visit, so it is recorded as a late cancellation. Message me any time to book again.', false);
 L('lang ru: EXPIRED states the hold time in Russian', { key: 'EXPIRED', language: 'ru' },
   "That offer has expired (we hold offers for 15 минут). Tell me the service and day again and I'll check availability.", true);
 L('lang en: EXPIRED unchanged', { key: 'EXPIRED', language: 'en' },
@@ -193,17 +193,17 @@ L('lang ru: BOOKED_INTAKE states the form time in Russian', { key: 'BOOKED_INTAK
 L('lang de: REVISIT on Telegram (outside_window=true, not WhatsApp) counts the days in German', { key: 'REVISIT', language: 'de', outside_window: 'true' },
   'Hi Carl, it has been 30 Tage since your Consultation at Glow Aesthetics Med-Spa. Would you like to book your next visit?', true);
 L('lang de: 24-hour clock (14:00, not 2:00 PM)', { key: 'CANCEL_PENDING', language: 'de', start_iso: '2026-10-12T14:00:00+02:00' },
-  'Cancel your Consultation appointment on Mo., 12. Okt., 14:00? Reply JA to cancel.');
+  'Cancel your appointment for Consultation on Mo., 12. Okt., 14:00? Reply JA to cancel.');
 L('lang en: 12-hour clock kept (2:00 PM)', { key: 'CANCEL_PENDING', language: 'en', start_iso: '2026-10-12T14:00:00+02:00' },
-  'Cancel your Consultation appointment on Mon, Oct 12, 2:00 PM? Reply YES to cancel.');
+  'Cancel your appointment for Consultation on Mon, Oct 12, 2:00 PM? Reply YES to cancel.');
 L('Settings.timezone decides the local time (a UTC start_iso shows as 10:30 Berlin)', { key: 'CANCEL_PENDING', language: 'ru', start_iso: '2026-10-12T08:30:00.000Z' },
-  'Cancel your Consultation appointment on пн, 12 окт., 10:30? Reply ДА to cancel.');
+  'Cancel your appointment for Consultation on пн, 12 окт., 10:30? Reply ДА to cancel.');
 L('Settings.timezone decides the local time (America/New_York shows 4:30 AM)', { key: 'CANCEL_PENDING', language: 'en', start_iso: '2026-10-12T08:30:00.000Z', settings: { timezone: 'America/New_York' } },
-  'Cancel your Consultation appointment on Mon, Oct 12, 4:30 AM? Reply YES to cancel.');
+  'Cancel your appointment for Consultation on Mon, Oct 12, 4:30 AM? Reply YES to cancel.');
 L('lang ru: Telegram REMINDER (WF-5, outside_window=true on tg) is localized and translated', { key: 'REMINDER', language: 'ru', outside_window: 'true' },
   'Reminder: Consultation — пн, 12 окт., 10:30 at Glow Aesthetics Med-Spa. Reply ДА to confirm or НЕТ to cancel.', true);
 L('lang ru: WhatsApp inside the 24-hour window (outside_window empty) is localized and translated', { key: 'CANCELLED', language: 'ru', contact_id: 'wa:+15550000104' },
-  'Your Consultation appointment on пн, 12 окт., 10:30 has been cancelled. Message me any time to book again.', true);
+  'Your appointment for Consultation on пн, 12 окт., 10:30 has been cancelled. Message me any time to book again.', true);
 try {
   const j = run({ key: 'REMINDER', language: 'ru', contact_id: 'wa:+15550000104', outside_window: 'true' });
   check('lang ru: WhatsApp REMINDER outside the window stays English (owner decision: Meta templates are English only): when is English, not translated',

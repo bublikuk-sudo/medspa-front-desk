@@ -47,9 +47,11 @@ Step 1's «KI» check is also the live check of the agent prompt's AI-disclosure
 **The appointment is named in the template (mini-task F, 2026-10-13).** From the live proof of E
 (`tests/dialog-runs/2026-10-13-brand-protection-tg.md`, "Findings"): with the service masked as a token, the English
 "Your {service} on {when}" no longer told the translator what the noun was, and it wrote CANCELLED «Ihr Termin bei Botox
-am Mo., 7. Jan., 10:00 wurde storniert» (reads as if Botox were a person). The six service-on-date templates now say
-"your {service} appointment on {when}", so the token is a modifier of a known noun («Ihr Botox-Termin am …», «Ihr Termin
-für Botox am …»). Step 7 rejects «bei Botox».
+am Mo., 7. Jan., 10:00 wurde storniert» (reads as if Botox were a person). The first fix, "your {service} appointment on
+{when}", failed live in the ru dialog on 2026-10-13 (Haiku kept the English noun-adjunct order and wrote «вашу Botox
+запись»). So the six service-on-date templates name the appointment first and make the service the object of a
+preposition, "your appointment for {service} on {when}" («Ihr Termin für Botox am …», «Ihr Botox-Termin am …»). Step 7
+rejects «bei Botox».
 
 `expect lang: de` was added to `tests/dialog.sh` for this dialog.
 

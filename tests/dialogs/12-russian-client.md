@@ -56,8 +56,10 @@ see it. This needs `Settings.untranslated_terms` to contain `Botox` (the seed do
 (`tests/dialog-runs/2026-10-13-brand-protection-tg.md`, "Findings"): with the service masked as a token, the English
 "Your {service} on {when}" no longer told the translator what the noun was, and it wrote CANCELLED «Ваш прием у Botox на
 пн, 7 янв., 10:00 был отменен» (reads as if Botox were a person) and CANCEL_PENDING «Отменить вашу Botox на …» (a
-guessed gender). The six service-on-date templates now say "your {service} appointment on {when}", so the token is a
-modifier of a known noun («запись на Botox»). Steps 6 and 7 reject the two faulty forms: «у Botox» and «вашу Botox». Correct
+guessed gender). The first fix, "your {service} appointment on {when}", still failed live on 2026-10-13: Haiku kept the
+English noun-adjunct order and wrote CANCEL_PENDING «Отменить вашу Botox запись на пн, 7 янв., 10:00?». So the six
+service-on-date templates name the appointment first and make the service the object of a preposition,
+"your appointment for {service} on {when}", which reads «запись на Botox». Steps 6 and 7 reject the two faulty forms: «у Botox» and «вашу Botox». Correct
 forms such as «вашу запись на Botox» and «Ваша запись на Botox … отменена» pass. These two checks are not a grammar check; they
 catch the two forms seen live.
 

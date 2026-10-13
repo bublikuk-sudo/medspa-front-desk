@@ -81,7 +81,7 @@ confirms is exactly what gets written.
 
 Cancelling works the same way: the agent cannot cancel. `request_cancel` checks that the visit is the client's own
 and still ahead, records a pending cancellation and says whether it would be late (inside
-`Settings.cancellation_hours`). WF-1 sends the question built from the row ("Cancel your Botox appointment on Mon, Jan 7, 10:00 AM?
+`Settings.cancellation_hours`). WF-1 sends the question built from the row ("Cancel your appointment for Botox on Mon, Jan 7, 10:00 AM?
 Reply YES to cancel.", with the late-cancellation notice when it applies), and only a YES to that question, while it is
 the bot's last message and has not expired, makes n8n run `cancel_booking` (event deleted, `cancelled` or
 `late_cancel`, a late canceller flagged, the owner notified). NO or anything else goes to the agent and the visit stays
