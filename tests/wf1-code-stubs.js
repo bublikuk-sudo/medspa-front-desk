@@ -304,6 +304,68 @@ g = guard([step('request_cancel', obs("CANCEL_PENDING A-TEST-1'}", ''))]);
 T('Guardrail: a malformed appt_id is not taken', () => g.cancel_appt_id === '' || g);
 g = guard([]);
 T('Guardrail: no tool call -> empty cancel fields, the old fields unchanged', () => g.cancel_appt_id === '' && g.cancel_verdict === '' && g.reply === 'ok' && g.violation === false && same(g.tools_used, []) || g);
+
+// ---- Final review I4: the medical backstop in the client's language (a deterministic keyword list, not a classifier) ----
+// Medical lines (a dose, a unit count, a dosage word) in each supported language must set violation; ordinary booking
+// replies must not: durations, times, dates, prices, brand names and the slot lists / templates of the real dialog logs
+// (tests/dialog-runs/2026-10-13-*.md, whitespace collapsed as the runner prints them).
+const medLines = {
+  en: ['The usual dose is 20 units.', 'We typically inject 2 ml of hyaluronic filler.'],
+  de: ['Üblich sind 20 Einheiten pro Zone.', 'Die Dosis hängt von der Zone ab.', 'Die Dosierung legt die Ärztin fest.', 'Meist 20 IE Botulinumtoxin.', 'Etwa 1 ml Filler.'],
+  es: ['Normalmente se aplican 20 unidades.', 'La dosis depende de la zona.', 'La dosificación la decide el médico.', 'Se usan 2 ml.'],
+  fr: ['On injecte en général 20 unités.', 'La posologie est fixée par le médecin.', 'Les doses varient selon la zone.', 'Environ 20 UI.'],
+  it: ['Di solito si usano 20 unità.', 'Il dosaggio dipende dalla zona.', 'Si iniettano 2 ml.'],
+  pt: ['Normalmente são 20 unidades.', 'A dosagem depende da área.', 'A posologia é definida pelo médico.'],
+  nl: ['Meestal 20 eenheden.', 'De dosis hangt af van de zone.', 'De dosering bepaalt de arts.'],
+  pl: ['Zwykle podaje się 20 jednostek.', 'Dawka zależy od okolicy.', 'Dawkowanie ustala lekarz.', 'Wstrzykujemy 2 ml.'],
+  ru: ['Обычно вводят 20 ЕД.', 'Обычно 20 ед. на зону.', 'Доза зависит от зоны.', 'Дозировку подбирает врач.', 'Вводят 20 единиц препарата.', 'Объём 1 мл филлера.', 'Около 50 МЕ.', 'Используем ботулинический токсин.'],
+  uk: ['Зазвичай вводять 20 ОД.', 'Доза залежить від зони.', 'Дозування визначає лікар.', 'Вводять 20 одиниць препарату.'],
+  ar: ['الجرعة المعتادة 20 وحدة.', 'عادة ٢٠ وحدة.'],
+  he: ['המינון נקבע על ידי הרופא.', 'בדרך כלל 20 יחידות.'],
+  zh: ['剂量取决于部位。', '通常注射20单位。'],
+  ja: ['用量は部位によります。', '通常20単位を注射します。'],
+};
+const okLines = {
+  de: ['Gern, für Botox sind an diesem Tag folgende Zeiten frei: Mo., 7. Jan. 2030, 10:00 Mo., 7. Jan. 2030, 10:30 Mo., 7. Jan. 2030, 11:00 Mo., 7. Jan. 2030, 11:30 Welche Uhrzeit passt Ihnen am besten?',
+    'Sie sind gebucht: Botox (30 Min.) — Mo., 7. Jan., 10:00. Wir senden Ihnen eine Erinnerung am Tag vor Ihrem Termin. Um zu ändern oder abzusagen, schreiben Sie mir einfach hier – die Stornierung ist bis 24 Stunden vor Ihrem Besuch kostenlos.',
+    'Bitte füllen Sie vor Ihrem ersten Besuch unser kurzes Aufnahme- und Einwilligungsformular aus (etwa 5 Minuten): https://example.com/intake-form-demo',
+    'Botox (30 Min.) — Mo., 7. Jan., 10:00. Kostenlose Stornierung bis 24 Stunden vor dem Termin. Antworten Sie mit JA zur Bestätigung.',
+    'Eine Botox-Behandlung kostet 250 € pro Zone und dauert 30 Minuten; HydraFacial kostet 150 EUR (60 Min.).',
+    'Danke, Herr Testmann! An welchem Tag und zu welcher Tageszeit hätten Sie gern Ihren Botox-Termin?', 'Sie finden uns in der Musterstraße 5 E, 2. Stock.'],
+  es: ['Tengo estos horarios disponibles para Botox: lun, 7 ene 2030, 10:00 lun, 7 ene 2030, 10:30 lun, 7 ene 2030, 11:00 lun, 7 ene 2030, 11:30 ¿Cuál prefiere?',
+    'Botox (30 min) — lun, 7 ene, 10:00. Cancelación gratuita hasta 24 horas antes. Responda SÍ para confirmar.',
+    'El precio de HydraFacial es 150 €, dura 60 minutos; visite nuestra unidad de estética.'],
+  fr: ['Le HydraFacial coûte 150 € et dure 60 minutes. Rendez-vous lun. 7 janv. à 10:00 ?'],
+  it: ['HydraFacial costa 150 € e dura 60 minuti. Le va bene lun 7 gen alle 10:00?'],
+  pt: ['O HydraFacial custa 150 € e dura 60 minutos; a nossa unidade fica no centro.'],
+  nl: ['HydraFacial kost 150 € en duurt 60 minuten. Past ma 7 jan om 10:00?'],
+  pl: ['HydraFacial kosztuje 150 zł i trwa 60 minut. Dziękuję, panie Dawkins!'],
+  ru: ['Есть свободные окна на ботокс: пн, 7 янв. 2030 г., 10:00 пн, 7 янв. 2030 г., 10:30 пн, 7 янв. 2030 г., 11:00 пн, 7 янв. 2030 г., 11:30 Какое время вам подходит?',
+    'Botox (30 мин) — пн, 7 янв., 10:00. Бесплатная отмена за 24 часа до визита. Ответьте ДА для подтверждения.',
+    'Вы записаны: Botox (30 мин) — пн, 7 янв., 10:00. Мы отправим вам напоминание за день до визита.',
+    'Отменить Вашу запись на Botox на пн, 7 янв., 10:00? Ответьте ДА для отмены.',
+    'Ботокс стоит 250 € за зону, процедура длится 30 мин, HydraFacial — 60 минут.',
+    'Не смогли дозвониться? Напишите нам здесь. Мы находимся по адресу ул. Мира, 5Е, 2 этаж.'],
+  uk: ['HydraFacial коштує 150 € і триває 60 хв. Чи зручно вам пн, 7 січ., 10:00?'],
+  ar: ['سعر هيدرافيشل 150 يورو والمدة 60 دقيقة.'],
+  he: ['המחיר 150 € והטיפול נמשך 60 דקות.'],
+  zh: ['HydraFacial 价格150欧元，时长60分钟。'],
+  ja: ['HydraFacialは150ユーロ、60分です。'],
+  en: ['Botox (30 min) — Mon, Jan 7, 10:00 AM. Reply YES to confirm.', 'HydraFacial costs €150 and takes 60 minutes.'],
+};
+for (const [lang, lines] of Object.entries(medLines)) {
+  const miss = lines.filter((l) => guard([], l).violation !== true);
+  T('Guardrail (I4) ' + lang + ': dose / unit lines set violation (' + lines.length + ')', () => miss.length === 0 || miss);
+}
+for (const [lang, lines] of Object.entries(okLines)) {
+  const hit = lines.filter((l) => guard([], l).violation !== false);
+  T('Guardrail (I4) ' + lang + ': ordinary booking replies do not (' + lines.length + ')', () => hit.length === 0 || hit);
+}
+{
+  const found = [step('search_knowledge', JSON.stringify([{ verdict: 'FOUND\n[Botox] ...' }]))];
+  const g4 = ['Обычно вводят 20 ЕД.', 'Die Dosis hängt von der Zone ab.', '通常注射20单位。'].map((l) => guard(found, l).violation);
+  T('Guardrail (I4): a dose line answered from the knowledge base (search_knowledge FOUND this turn) is not a violation (unchanged rule)', () => g4.every((v) => v === false) || g4);
+}
 const res2 = (n, field) => ((((w2node(n).parameters || {}).assignments || {}).assignments) || []).find((a) => a.name === field) || {};
 T('WF-2 Result passes cancel_appt_id / cancel_verdict, blanked when the turn escalated', () =>
   ev(res2('Result', 'cancel_appt_id').value, { escalated: false, cancel_appt_id: 'A-TEST-1' }) === 'A-TEST-1' &&

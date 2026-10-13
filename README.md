@@ -362,6 +362,12 @@ silent for everyone; here a workflow that throws stays active, the owner gets an
 - The English-line guard on agent replies counts English function words per line, so a short English line ("Thank
   you!") is not caught, and a line that mixes English with the client's script ("On which day? Какой день?") is never
   treated as English; the agent is still told to reply in the client's language.
+- The medical guardrail on agent replies (WF-2 `Guardrail`, the second layer behind the prompt) is a deterministic
+  keyword backstop, not a classifier. It escalates a reply that names a dose with a unit (20 units, 20 ЕД, 2 ml,
+  20 Einheiten, 20 unidades, 20単位, ...), a dosage word (dose, Dosis, dosage, posologie, dawka, доза, дозировка, جرعة,
+  מינון, 剂量, 用量, ...) or a listed drug, in English, German, Spanish, French, Italian, Portuguese, Dutch, Polish, Russian,
+  Ukrainian, Arabic, Hebrew, Chinese and Japanese. Medical advice without such a word passes it, and it is off for a
+  turn in which `search_knowledge` returned FOUND.
 - Italian clients are asked to reply "SI" (WF-1's word list has `si`, not `sì`); Turkish clients keep YES / NO (WF-1's
   `hayır` cannot be shown in capitals that lower-case back to it).
 - A Google OAuth app in Testing mode issues a token that expires every 7 days; publish the app (it needs a home page
